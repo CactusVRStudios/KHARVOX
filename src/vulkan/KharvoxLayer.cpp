@@ -753,12 +753,22 @@ VKAPI_ATTR VkResult VKAPI_CALL vkNegotiateLoaderLayerInterfaceVersion(VkNegotiat
     TerminateProcess(GetCurrentProcess(),0x4B480003);
     for(;;)Sleep(INFINITE);
 }
+static bool matchCoreWindow(HWND window,VkExtent2D extent) {
+    kharvox::CoreSurfaceResize detail{};
+    const bool matched=kharvox::matchCoreSurfaceWindow(window,extent,&detail);
+    if(detail.attempts||!matched)logLine("[WSI-RESIZE] requested="+
+        std::to_string(extent.width)+"x"+std::to_string(extent.height)+
+        " actual="+std::to_string(detail.width)+"x"+std::to_string(detail.height)+
+        " attempts="+std::to_string(detail.attempts)+" win32Error="+std::to_string(detail.error)+
+        " matched="+(matched?"yes":"no"),true);
+    return matched;
+}
 static void ensureCoreSurface(const InstanceDispatch& dispatch,VkSurfaceKHR surface) {
     HWND window{};
     {std::lock_guard<std::mutex> lock(surfaceWindowMutex);
      const auto found=surfaceWindows.find(reinterpret_cast<uint64_t>(surface));
      if(found!=surfaceWindows.end())window=found->second;}
-    if(window&&!kharvox::matchCoreSurfaceWindow(window,dispatch.sourceExtent))
+    if(window&&!matchCoreWindow(window,dispatch.sourceExtent))
         stopVulkanStartup("Cannot size the DOOM window to the requested VR render resolution.");
 }
 
@@ -944,7 +954,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateWin32SurfaceKHR(VkInstance instance,const
     auto dispatch=instanceState(key(instance));
     if(!dispatch.createWin32Surface)return VK_ERROR_EXTENSION_NOT_PRESENT;
     if(extendedLoggingEnabled()&&info)logExtended(windowSnapshot(info->hwnd,"surface-create-entry"));
-    if(dispatch.coreSurface&&info&&!kharvox::matchCoreSurfaceWindow(info->hwnd,dispatch.sourceExtent))stopVulkanStartup("Cannot size the DOOM window to the requested VR render resolution.");
+    if(dispatch.coreSurface&&info&&!matchCoreWindow(info->hwnd,dispatch.sourceExtent))stopVulkanStartup("Cannot size the DOOM window to the requested VR render resolution.");
     LARGE_INTEGER begin{},end{};QueryPerformanceCounter(&begin);
     const VkResult result=dispatch.createWin32Surface(instance,info,allocator,surface);
     QueryPerformanceCounter(&end);

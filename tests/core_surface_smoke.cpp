@@ -12,6 +12,14 @@
 void check(VkResult result,const char* name){if(result!=VK_SUCCESS){std::printf("FAIL %s result=%d\n",name,result);throw std::runtime_error(name);}}
 void presentCheck(VkResult result,const char* name){if(result==VK_SUBOPTIMAL_KHR){std::printf("INFO %s SUBOPTIMAL; continuing explicitly scaled swapchain\n",name);return;}check(result,name);}
 #define CALL(name, ...) check(name(__VA_ARGS__),#name)
+bool lockWindowSize=false;
+LRESULT CALLBACK constrainedWindow(HWND window,UINT message,WPARAM w,LPARAM l) {
+    if(message==WM_WINDOWPOSCHANGING && lockWindowSize) {
+        reinterpret_cast<WINDOWPOS*>(l)->flags|=SWP_NOSIZE;
+        return 0;
+    }
+    return DefWindowProcW(window,message,w,l);
+}
 int main(){try{
     auto library=LoadLibraryW(L"vulkan-1.dll");
     auto gipa=reinterpret_cast<PFN_vkGetInstanceProcAddr>(GetProcAddress(library,"vkGetInstanceProcAddr"));
@@ -23,9 +31,10 @@ int main(){try{
     VkInstance instance{};CALL(vkCreateInstance,&create,nullptr,&instance);
 #define INSTANCE(name) auto name=reinterpret_cast<PFN_##name>(gipa(instance,#name));if(!name)throw std::runtime_error(#name)
     INSTANCE(vkDestroyInstance);INSTANCE(vkEnumeratePhysicalDevices);INSTANCE(vkGetPhysicalDeviceQueueFamilyProperties);INSTANCE(vkGetPhysicalDeviceSurfaceSupportKHR);INSTANCE(vkGetPhysicalDeviceSurfaceCapabilitiesKHR);INSTANCE(vkCreateWin32SurfaceKHR);INSTANCE(vkDestroySurfaceKHR);INSTANCE(vkGetPhysicalDeviceSurfaceFormatsKHR);INSTANCE(vkCreateDevice);INSTANCE(vkGetDeviceProcAddr);
-    WNDCLASSW windowClass{};windowClass.lpfnWndProc=DefWindowProcW;windowClass.hInstance=GetModuleHandleW(nullptr);windowClass.lpszClassName=L"KharvoxCoreSurfaceSmoke";RegisterClassW(&windowClass);
-    HWND window=CreateWindowW(windowClass.lpszClassName,L"KHARVOX presentation test",WS_POPUP,0,0,640,360,nullptr,nullptr,windowClass.hInstance,nullptr);
+    WNDCLASSW windowClass{};windowClass.lpfnWndProc=constrainedWindow;windowClass.hInstance=GetModuleHandleW(nullptr);windowClass.lpszClassName=L"KharvoxCoreSurfaceSmoke";RegisterClassW(&windowClass);
+    HWND window=CreateWindowW(windowClass.lpszClassName,L"KHARVOX presentation test",WS_OVERLAPPEDWINDOW,0,0,640,360,nullptr,nullptr,windowClass.hInstance,nullptr);
     if(!window)throw std::runtime_error("CreateWindow");
+    lockWindowSize=true;
     VkWin32SurfaceCreateInfoKHR win32{VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR};win32.hinstance=windowClass.hInstance;win32.hwnd=window;
     VkSurfaceKHR surface{};CALL(vkCreateWin32SurfaceKHR,instance,&win32,nullptr,&surface);
     uint32_t count{};CALL(vkEnumeratePhysicalDevices,instance,&count,nullptr);std::vector<VkPhysicalDevice> physicals(count);CALL(vkEnumeratePhysicalDevices,instance,&count,physicals.data());
@@ -40,7 +49,8 @@ int main(){try{
     DEVICE(vkDestroyDevice);DEVICE(vkGetDeviceQueue);DEVICE(vkCreateSwapchainKHR);DEVICE(vkDestroySwapchainKHR);DEVICE(vkGetSwapchainImagesKHR);DEVICE(vkAcquireNextImageKHR);DEVICE(vkQueuePresentKHR);DEVICE(vkCreateCommandPool);DEVICE(vkDestroyCommandPool);DEVICE(vkAllocateCommandBuffers);DEVICE(vkResetCommandBuffer);DEVICE(vkBeginCommandBuffer);DEVICE(vkEndCommandBuffer);DEVICE(vkCmdPipelineBarrier);DEVICE(vkCmdClearColorImage);DEVICE(vkQueueSubmit);DEVICE(vkQueueWaitIdle);DEVICE(vkCreateSemaphore);DEVICE(vkDestroySemaphore);DEVICE(vkCreateFence);DEVICE(vkDestroyFence);DEVICE(vkWaitForFences);DEVICE(vkResetFences);
     VkQueue queue{};vkGetDeviceQueue(device,family,0,&queue);
     const auto source=kharvox::independentSourceExtent(3060,3264,1.f,16384);
-    if(!kharvox::matchCoreSurfaceWindow(window,source))throw std::runtime_error("Core window size");
+    kharvox::CoreSurfaceResize resize{};
+    if(!kharvox::matchCoreSurfaceWindow(window,source,&resize)||resize.attempts!=2)throw std::runtime_error("Core window retry");
     VkSurfaceCapabilitiesKHR actual{};CALL(vkGetPhysicalDeviceSurfaceCapabilitiesKHR,physical,surface,&actual);
     if(actual.currentExtent.width!=source.width||actual.currentExtent.height!=source.height)throw std::runtime_error("Core WSI extent differs");
     CALL(vkGetPhysicalDeviceSurfaceFormatsKHR,physical,surface,&count,nullptr);std::vector<VkSurfaceFormatKHR> formats(count);CALL(vkGetPhysicalDeviceSurfaceFormatsKHR,physical,surface,&count,formats.data());
@@ -53,7 +63,9 @@ int main(){try{
     VkCommandBuffer commands{};CALL(vkAllocateCommandBuffers,device,&allocation,&commands);
     VkSemaphoreCreateInfo semaphoreInfo{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};VkSemaphore available{},ready{};CALL(vkCreateSemaphore,device,&semaphoreInfo,nullptr,&available);CALL(vkCreateSemaphore,device,&semaphoreInfo,nullptr,&ready);
     for(auto size:{VkExtent2D{640,360},VkExtent2D{1280,720},VkExtent2D{1920,1080},VkExtent2D{2560,1440}}){
+        lockWindowSize=false;
         SetWindowPos(window,nullptr,0,0,size.width,size.height,SWP_NOACTIVATE|SWP_NOZORDER);MSG message{};while(PeekMessageW(&message,nullptr,0,0,PM_REMOVE)){TranslateMessage(&message);DispatchMessageW(&message);}
+        lockWindowSize=true;
         if(!kharvox::matchCoreSurfaceWindow(window,source))throw std::runtime_error("Core resize failed");
         // WSI may require recreation after a native window change. The render
         // extent must remain headset-sized across every such recreation.

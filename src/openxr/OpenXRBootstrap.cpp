@@ -3259,7 +3259,9 @@ bool KharvoxXRCreateVulkanInstance(PFN_vkGetInstanceProcAddr g,const VkInstanceC
     std::lock_guard<std::mutex> l(mutex);
     if(!s.enable2||!s.createVulkanInstance)return false;
     if(!out||!vr)return true;
-    *out=VK_NULL_HANDLE;*vr=VK_ERROR_INITIALIZATION_FAILED;
+    // The Vulkan layer chain can carry a loader-owned object in *out.
+    // Only clear failed outputs AFTER runtime creation returns.
+    *vr=VK_ERROR_INITIALIZATION_FAILED;
     if(!ci||!g||!s.requirements2)return true;
     XrGraphicsRequirementsVulkanKHR req{XR_TYPE_GRAPHICS_REQUIREMENTS_VULKAN_KHR};
     auto rr=s.requirements2(s.instance,s.system,&req);
@@ -3285,7 +3287,9 @@ bool KharvoxXRCreateVulkanDevice(PFN_vkGetInstanceProcAddr g,VkPhysicalDevice do
     std::lock_guard<std::mutex> l(mutex);
     if(!s.enable2||!s.createVulkanDevice)return false;
     if(!out||!vr)return true;
-    *out=VK_NULL_HANDLE;*vr=VK_ERROR_INITIALIZATION_FAILED;
+    // The Vulkan layer chain can carry a loader-owned object in *out.
+    // Only clear failed outputs AFTER runtime creation returns.
+    *vr=VK_ERROR_INITIALIZATION_FAILED;
     if(!g||!s.vkInstance||!doomPhysical||!s.graphicsDevice2)return true;
     if(!s.xrPhysical){
         XrVulkanGraphicsDeviceGetInfoKHR gi{XR_TYPE_VULKAN_GRAPHICS_DEVICE_GET_INFO_KHR};

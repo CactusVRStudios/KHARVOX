@@ -21,12 +21,14 @@ VkResult downstreamResult = VK_SUCCESS;
 int instanceDestroyed{}, deviceDestroyed{};
 VKAPI_ATTR VkResult VKAPI_CALL createInstance(const VkInstanceCreateInfo* info, const VkAllocationCallbacks* allocator, VkInstance* out) {
     require(info == expectedInstance && allocator == expectedAllocator);
+    require(*out == instance); // Loader-owned seed must survive layer forwarding.
     require(info->enabledExtensionCount == 0 && info->pApplicationInfo->apiVersion == VK_API_VERSION_1_0);
     if (downstreamResult == VK_SUCCESS) *out = instance;
     return downstreamResult;
 }
 VKAPI_ATTR VkResult VKAPI_CALL createDevice(VkPhysicalDevice gpu, const VkDeviceCreateInfo* info, const VkAllocationCallbacks* allocator, VkDevice* out) {
     require(gpu == physical && info == expectedDevice && allocator == expectedAllocator);
+    require(*out == device); // Do not zero loader-owned storage before the call.
     require(info->enabledExtensionCount == 0);
     if (downstreamResult == VK_SUCCESS) *out = device;
     return downstreamResult;
@@ -110,7 +112,7 @@ int main(int argc, char** argv) {
     expectedInstance = &info;
     for (auto result : {VK_ERROR_INCOMPATIBLE_DRIVER, VK_SUCCESS}) {
         downstreamResult = result; instanceChain.u.pLayerInfo = &instanceLink;
-        VkInstance output{}; require(create(&info, &allocator, &output) == result);
+        VkInstance output=instance; require(create(&info, &allocator, &output) == result);
         require(instanceChain.u.pLayerInfo == nullptr);
         if (result == VK_SUCCESS) require(output == instance);
     }
@@ -121,7 +123,7 @@ int main(int argc, char** argv) {
     VkDeviceCreateInfo gpuInfo{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO}; gpuInfo.pNext = &deviceChain; expectedDevice = &gpuInfo;
     for (auto result : {VK_ERROR_FEATURE_NOT_PRESENT, VK_SUCCESS}) {
         downstreamResult = result; deviceChain.u.pLayerInfo = &deviceLink;
-        VkDevice output{}; require(createGpu(physical, &gpuInfo, &allocator, &output) == result);
+        VkDevice output=device; require(createGpu(physical, &gpuInfo, &allocator, &output) == result);
         require(deviceChain.u.pLayerInfo == nullptr);
         if (result == VK_SUCCESS) require(output == device);
     }

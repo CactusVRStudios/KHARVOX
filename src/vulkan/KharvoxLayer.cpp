@@ -855,7 +855,7 @@ VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(VkDevice d,const ch
 
 VKAPI_ATTR VkResult VKAPI_CALL vkCreateInstance(const VkInstanceCreateInfo* ci,const VkAllocationCallbacks* a,VkInstance* out){
     if(!ci||!out)return VK_ERROR_INITIALIZATION_FAILED;
-    *out=VK_NULL_HANDLE;
+    // The loader may seed *out with its dispatch object. Preserve it downstream.
     if(!isDoomProcess()) {
         auto chain=findLinkChain<VkLayerInstanceCreateInfo*>(ci->pNext,VK_STRUCTURE_TYPE_LOADER_INSTANCE_CREATE_INFO);
         if(!chain||chain->function!=VK_LAYER_LINK_INFO||!chain->u.pLayerInfo)return VK_ERROR_INITIALIZATION_FAILED;
@@ -965,7 +965,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateWin32SurfaceKHR(VkInstance instance,const
 
 VKAPI_ATTR VkResult VKAPI_CALL vkCreateDevice(VkPhysicalDevice p,const VkDeviceCreateInfo* ci,const VkAllocationCallbacks* a,VkDevice* out){
     if(!ci||!out||!p)return VK_ERROR_INITIALIZATION_FAILED;
-    *out=VK_NULL_HANDLE;
+    // Preserve loader-owned create-chain output storage until the call returns.
     if(isDoomProcess())logLine("vkCreateDevice"); auto chain=findLinkChain<VkLayerDeviceCreateInfo*>(ci->pNext,VK_STRUCTURE_TYPE_LOADER_DEVICE_CREATE_INFO);
     if(!chain||chain->function!=VK_LAYER_LINK_INFO||!chain->u.pLayerInfo)return VK_ERROR_INITIALIZATION_FAILED;
     auto link=chain->u.pLayerInfo;auto nextGipa=link->pfnNextGetInstanceProcAddr;auto nextGdpa=link->pfnNextGetDeviceProcAddr;chain->u.pLayerInfo=link->pNext;

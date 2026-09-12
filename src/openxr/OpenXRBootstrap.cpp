@@ -3405,7 +3405,29 @@ bool KharvoxXRRecommendedSourceSize(uint32_t* width, uint32_t* height) {
     return *width && *height;
 }
 
-void KharvoxXRSetQueue(VkQueue q,uint32_t f,uint32_t i){std::unique_lock<std::mutex>l(mutex,std::try_to_lock);if(!l.owns_lock()){log("Ignoring reentrant/auxiliary Vulkan queue callback family="+std::to_string(f));return;}if(s.queue&&f!=s.queueFamily&&s.vk.getPhysicalDeviceQueueFamilyProperties){uint32_t count{};s.vk.getPhysicalDeviceQueueFamilyProperties(s.physical,&count,nullptr);std::vector<VkQueueFamilyProperties> properties(count);if(count)s.vk.getPhysicalDeviceQueueFamilyProperties(s.physical,&count,properties.data());if(f<count&&(properties[f].queueFlags&VK_QUEUE_OPTICAL_FLOW_BIT_NV)){log("Ignoring auxiliary NVIDIA optical-flow queue family="+std::to_string(f));return;}}s.queue=q;s.queueFamily=f;s.queueIndex=i;log("DOOM VkQueue="+std::to_string(reinterpret_cast<uintptr_t>(q))+" family="+std::to_string(f)+" index="+std::to_string(i));if(GetFileAttributesW(kharvox::runtimePath(L"enable_xr_session").c_str())!=INVALID_FILE_ATTRIBUTES)log("[XR] Session start deferred until vkGetDeviceQueue has returned through the Vulkan Loader");else log("XR session gated off (place enable_xr_session beside the KHARVOX module to enable)");}
+void KharvoxXRSetQueue(VkQueue q,uint32_t f,uint32_t i) {
+    std::unique_lock<std::mutex> l(mutex,std::try_to_lock);
+    if(!l.owns_lock()){log("Ignoring reentrant/auxiliary Vulkan queue callback family="+std::to_string(f));return;}
+    if(!q||!s.physical||!s.vk.getPhysicalDeviceQueueFamilyProperties){log("[XR-QUEUE] missing physical queue dispatch",true);return;}
+    uint32_t count{};
+    s.vk.getPhysicalDeviceQueueFamilyProperties(s.physical,&count,nullptr);
+    std::vector<VkQueueFamilyProperties> properties(count);
+    if(count)s.vk.getPhysicalDeviceQueueFamilyProperties(s.physical,&count,properties.data());
+    if(f>=count){log("[XR-QUEUE] invalid family="+std::to_string(f),true);return;}
+    const auto flags=properties[f].queueFlags;
+    const bool selected=kharvox::selectXrGraphicsQueue(s.queue,q,flags);
+    log("[XR-QUEUE] candidate="+std::to_string(reinterpret_cast<uintptr_t>(q))+
+        " family="+std::to_string(f)+" index="+std::to_string(i)+" flags="+std::to_string(flags)+
+        " graphics="+((flags&VK_QUEUE_GRAPHICS_BIT)?"yes":"no")+
+        " selected="+(selected?"yes":"no"),true);
+    if(!selected)return;
+    // Keep the queue/family consistent with the XR binding and command pools.
+    s.queue=q;s.queueFamily=f;s.queueIndex=i;
+    log("DOOM VkQueue="+std::to_string(reinterpret_cast<uintptr_t>(q))+" family="+std::to_string(f)+" index="+std::to_string(i));
+    if(GetFileAttributesW(kharvox::runtimePath(L"enable_xr_session").c_str())!=INVALID_FILE_ATTRIBUTES)
+        log("[XR] Session start deferred until vkGetDeviceQueue has returned through the Vulkan Loader");
+    else log("XR session gated off (place enable_xr_session beside the KHARVOX module to enable)");
+}
 bool KharvoxXRStartSessionIfReady(){
     std::unique_lock<std::mutex>l(mutex);
     const bool steamRuntime=kharvox::isSteamBackedOpenXRRuntime(s.runtimeKind);

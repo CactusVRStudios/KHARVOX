@@ -25,6 +25,16 @@ VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL loader(VkInstance i, const char* n) {
 }
 int main() {
     using namespace kharvox;
+    auto graphics=reinterpret_cast<VkQueue>(uintptr_t(10));
+    auto auxiliary=reinterpret_cast<VkQueue>(uintptr_t(11));
+    require(!selectXrGraphicsQueue(nullptr,auxiliary,VK_QUEUE_COMPUTE_BIT|VK_QUEUE_TRANSFER_BIT));
+    require(selectXrGraphicsQueue(nullptr,graphics,VK_QUEUE_GRAPHICS_BIT|VK_QUEUE_COMPUTE_BIT));
+    require(!selectXrGraphicsQueue(graphics,auxiliary,VK_QUEUE_COMPUTE_BIT));
+    require(!selectXrGraphicsQueue(graphics,auxiliary,VK_QUEUE_OPTICAL_FLOW_BIT_NV));
+    require(!selectXrGraphicsQueue(graphics,auxiliary,VK_QUEUE_GRAPHICS_BIT));
+    require(selectXrGraphicsQueue(graphics,graphics,VK_QUEUE_GRAPHICS_BIT));
+    require(!selectXrGraphicsQueue(nullptr,nullptr,VK_QUEUE_GRAPHICS_BIT));
+
     require(!resolveLayerCreateDevice(downstream,VK_NULL_HANDLE));
     auto createLookup=+[](VkInstance i,const char* name)->PFN_vkVoidFunction {
         require(i==instance && !std::strcmp(name,"vkCreateDevice"));

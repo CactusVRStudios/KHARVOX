@@ -3,6 +3,12 @@
 #include <cstring>
 
 namespace kharvox {
+inline bool selectXrGraphicsQueue(VkQueue current,VkQueue candidate,VkQueueFlags flags) {
+    // XR copies also record graphics commands; compute/transfer-only queues
+    // cannot replace the graphics queue when DOOM enumerates auxiliary queues.
+    return candidate && (flags & VK_QUEUE_GRAPHICS_BIT) && (!current || current==candidate);
+}
+
 inline PFN_vkCreateDevice resolveLayerCreateDevice(PFN_vkGetInstanceProcAddr next, VkInstance instance) {
     // vkCreateDevice is an instance command. Null-instance lookup is only
     // specified for global commands and is not a portable driver shortcut.

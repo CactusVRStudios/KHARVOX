@@ -292,6 +292,10 @@ if(BUILD_TESTING)
   target_compile_features(KharvoxBackWeaponPolicyTests PRIVATE cxx_std_17)
   add_test(NAME back-weapon-policy COMMAND KharvoxBackWeaponPolicyTests)
 
+  add_executable(KharvoxMotionWeaponWheelPolicyTests tests/motion_weapon_wheel_policy_tests.cpp)
+  target_compile_features(KharvoxMotionWeaponWheelPolicyTests PRIVATE cxx_std_17)
+  add_test(NAME motion-weapon-wheel-policy COMMAND KharvoxMotionWeaponWheelPolicyTests)
+
   add_executable(KharvoxAerWeaponPairPolicyTests
     tests/aer_weapon_pair_policy_tests.cpp)
   target_compile_features(KharvoxAerWeaponPairPolicyTests PRIVATE cxx_std_17)

@@ -51,6 +51,7 @@
 #include "SnapTurnStereoPolicy.h"
 #include "PostCinematicYawPolicy.h"
 #include "XInputHapticsPolicy.h"
+#include "MotionWeaponWheelPolicy.h"
 #include "../bhaptics/BhapticsIpcClient.h"
 #include "../psvr2/Psvr2IpcClient.h"
 #include <openxr/openxr.h>
@@ -225,6 +226,7 @@ struct State {
     std::array<bool,2> physicalPunchArmed{};
     XrTime physicalPunchCooldownUntil{};
     bool weaponSelectPressed{},weaponSelectNativeStarted{},weaponWheelOpened{},secondaryFireGripPressed{};
+    bool motionWheelEnabled{true}; kharvox::MotionWeaponWheelState motionWheelState{};
     bool chainsawArmed{true},pausePressed{};
     XrTime weaponSelectPressedTime{},weaponSwitchPulseUntil{},chainsawPulseUntil{};
     XrTime usePulseUntil{},meleePulseUntil{};
@@ -881,6 +883,18 @@ void updateXInputHaptics(){
         }
     }
 }
+void triggerControllerHapticPulse(bool rightHand,float amplitude=0.5f,float durationSeconds=0.025f){
+    if(!s.actionsReady||!s.hapticActionsReady||!s.applyHapticFeedback)return;
+    const XrAction action=rightHand?s.rightHaptic:s.leftHaptic;
+    if(action==XR_NULL_HANDLE)return;
+    XrHapticActionInfo info{XR_TYPE_HAPTIC_ACTION_INFO};
+    info.action=action;
+    XrHapticVibration vibration{XR_TYPE_HAPTIC_VIBRATION};
+    vibration.duration=static_cast<XrDuration>(durationSeconds*1000000000.0f);
+    vibration.frequency=XR_FREQUENCY_UNSPECIFIED;
+    vibration.amplitude=std::clamp(amplitude,0.0f,1.0f);
+    s.applyHapticFeedback(s.session,&info,reinterpret_cast<const XrHapticBaseHeader*>(&vibration));
+}
 XrQuaternionf conjugate(XrQuaternionf q){return {-q.x,-q.y,-q.z,q.w};}
 XrQuaternionf multiply(XrQuaternionf a,XrQuaternionf b){return {a.w*b.x+a.x*b.w+a.y*b.z-a.z*b.y,a.w*b.y-a.x*b.z+a.y*b.w+a.z*b.x,a.w*b.z+a.x*b.y-a.y*b.x+a.z*b.w,a.w*b.w-a.x*b.x-a.y*b.y-a.z*b.z};}
 XrQuaternionf normalizeQuaternion(XrQuaternionf q){const float length=std::sqrt(q.x*q.x+q.y*q.y+q.z*q.z+q.w*q.w);if(length<=.000001f)return {0,0,0,1};const float inverse=1.f/length;return {q.x*inverse,q.y*inverse,q.z*inverse,q.w*inverse};}
@@ -1327,6 +1341,16 @@ void configureLaserSight(){
     s.laserPoseValid=false;
     log(std::string("[LASER] ")+(s.laserSightEnabled?"ENABLED":"disabled")
         +" diameter=0.004m; animated render-muzzle source; Chainsaw and non-muzzle weapons hard-disabled");
+}
+void configureMotionWeaponWheel(){
+    char text[16]{};
+    if(GetEnvironmentVariableA("KHARVOX_MOTION_WEAPON_WHEEL",text,sizeof(text))){
+        s.motionWheelEnabled=(!_stricmp(text,"1")||!_stricmp(text,"true")||!_stricmp(text,"yes")||!_stricmp(text,"on"));
+    }else{
+        s.motionWheelEnabled=true;
+    }
+    log(std::string("[INPUT] Motion Weapon Wheel (Alyx Style) ")
+        +(s.motionWheelEnabled?"ENABLED; physical hand displacement drives selection; haptic clicks on sector change":"disabled"));
 }
 float nativeManualTurnX(XrTime displayTime,bool active){
     const float x=active&&std::abs(s.rightStick.x)>=s.turnDeadzone?s.rightStick.x:0.f;
@@ -2290,8 +2314,34 @@ void updateGameplayActions(XrTime displayTime){
     const float gameplayTurnX=manualTurnActive?manualTurnX:physicalBodyTurnX;
     holdNativeTurnCvars(physicalBodyTurnX!=0.f?bodyFollowYawSpeed:manualTurnCarrierSpeed());
     const XrVector2f nativeUiRightStick=centeredNativeUiStick(s.rightStick);
+    XrVector2f wheelSelectionStick=s.leftStick;
+    if(weaponWheelActive&&s.motionWheelEnabled){
+        const auto& wCtrl=weaponController();
+        kharvox::MotionWeaponWheelInput wheelInput{};
+        wheelInput.wheelActive=weaponWheelActive;
+        const float stickDisplacementSq=s.leftStick.x*s.leftStick.x+s.leftStick.y*s.leftStick.y;
+        wheelInput.stickBypass=(stickDisplacementSq>0.15f);
+        wheelInput.handPosition={wCtrl.position.x,wCtrl.position.y,wCtrl.position.z};
+        wheelInput.hmdOrientation={s.head.orientation.x,s.head.orientation.y,s.head.orientation.z,s.head.orientation.w};
+        wheelInput.nowNanoseconds=static_cast<std::uint64_t>(std::max<XrTime>(0,displayTime));
+        const auto wheelOutput=kharvox::updateMotionWeaponWheel(s.motionWheelState,wheelInput);
+        if(wheelOutput.stickBypassActive){
+            wheelSelectionStick=s.leftStick;
+        }else if(wheelOutput.stickActive){
+            wheelSelectionStick={wheelOutput.stickX,wheelOutput.stickY};
+        }else{
+            wheelSelectionStick={0.f,0.f};
+        }
+        if(wheelOutput.triggerHapticPulse){
+            triggerControllerHapticPulse(!s.leftHanded,0.5f,0.025f);
+        }
+    }else if(!weaponWheelActive&&s.motionWheelState.wasActive){
+        kharvox::MotionWeaponWheelInput wheelInput{};
+        wheelInput.wheelActive=false;
+        kharvox::updateMotionWeaponWheel(s.motionWheelState,wheelInput);
+    }
     const XrVector2f nativeRightStick=nativeUiMenu?nativeUiRightStick
-        :weaponWheelActive?s.leftStick:XrVector2f{gameplayTurnX,0.f};
+        :weaponWheelActive?wheelSelectionStick:XrVector2f{gameplayTurnX,0.f};
     const bool nativeRightStickActive=nativeUiMenu?turnActive
         :(weaponWheelActive||gameplayTurnX!=0.f);
     if(xinputHookReady)updateVirtualRightStick(nativeRightStick,nativeRightStickActive);
@@ -2589,7 +2639,7 @@ bool createGameplayActions(){
     XrSessionActionSetsAttachInfo at{XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO};at.countActionSets=1;at.actionSets=&s.gameplayActionSet;r=s.attachActionSets(s.session,&at);if(XR_FAILED(r)){log("[RIGHT] xrAttachSessionActionSets "+result(r));return false;}
     s.interactionProfilesDirty=true;
     s.interactionProfilesKnown=false;
-    configureTurning();configureMovementDirection();configurePhysicalGlorykill();configureLaserSight();s.actionsReady=true;
+    configureTurning();configureMovementDirection();configurePhysicalGlorykill();configureLaserSight();configureMotionWeaponWheel();s.actionsReady=true;
     log(std::string("[HAPTICS] OpenXR core rumble ")+(s.hapticActionsReady&&s.hapticBindingsSuggested?"ready":"unavailable; continuing without VR rumble"));
     if(s.hapticActionsReady&&s.hapticBindingsSuggested)
         log("[HAPTICS] weapon-fire fallback armed amplitude="

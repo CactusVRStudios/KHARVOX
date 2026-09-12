@@ -17,15 +17,19 @@ class AerWeaponAttachments {
     std::array<Track,64> tracks_{};size_t nextTrack_{};
     static bool rigid(const float* p){
         for(int i=0;i<12;++i)if(!std::isfinite(p[i]))return false;
+        const float scale2=p[3]*p[3]+p[4]*p[4]+p[5]*p[5];
+        if(scale2<.039f||scale2>2.251f)return false;
         for(int i=0;i<3;++i)for(int j=i;j<3;++j){float d=0;
             for(int k=0;k<3;++k)d+=p[3+3*i+k]*p[3+3*j+k];
-            if(std::abs(d-(i==j?1.f:0.f))>.002f)return false;}
+            if(std::abs(d-(i==j?scale2:0.f))>.002f*scale2)return false;}
         return true;
     }
     static void localPose(const float* parent,const float* child,float* local){
-        for(int i=0;i<3;++i){local[i]=0;for(int j=0;j<3;++j)local[i]+=parent[3+3*i+j]*(child[j]-parent[j]);}
+        // Inverse of a uniformly scaled orthogonal basis is transpose / scale².
+        const float inverseScale2=1.f/(parent[3]*parent[3]+parent[4]*parent[4]+parent[5]*parent[5]);
+        for(int i=0;i<3;++i){local[i]=0;for(int j=0;j<3;++j)local[i]+=parent[3+3*i+j]*(child[j]-parent[j])*inverseScale2;}
         for(int r=0;r<3;++r)for(int i=0;i<3;++i){local[3+3*r+i]=0;
-            for(int j=0;j<3;++j)local[3+3*r+i]+=parent[3+3*i+j]*child[3+3*r+j];}
+            for(int j=0;j<3;++j)local[3+3*r+i]+=parent[3+3*i+j]*child[3+3*r+j]*inverseScale2;}
     }
     static void worldPose(const float* parent,const float* local,float* world){
         for(int i=0;i<3;++i){world[i]=parent[i];for(int j=0;j<3;++j)world[i]+=parent[3+3*j+i]*local[j];}

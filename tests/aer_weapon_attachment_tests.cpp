@@ -32,6 +32,20 @@ int main(){
     }
     check(std::abs(out[0]-100)<.0001f&&std::abs(out[1]-2)<.0001f);
     check(std::abs(out[3])<.0001f&&std::abs(out[4]-2)<.0001f);
+    // Scaled weapon parents must retain their independent HUD correction.
+    for(float size:{.7f,.77f,1.f,1.1f}){
+        AerWeaponAttachments scaled;
+        for(unsigned i=0;i<6;++i){
+            key={1+i*2,1,int(i%2)};original=identity;original[0]=float(i);
+            target={100,0,0,0,1,0,-1,0,0,0,0,1};
+            for(int j=3;j<12;++j){original[j]*=size;target[j]*=size;}
+            child=identity;child[0]=original[0]+2*size;
+            scaled.parent(10,11,key,i,original.data(),target.data(),camera.data());
+            check(scaled.resolve(20,21,key,i,child.data(),out.data())==(i==5));
+        }
+        check(std::abs(out[0]-100)<.0001f&&std::abs(out[1]-2*size)<.0001f);
+        check(std::abs(out[4]-1)<.0001f); // no double-scaling of HUD
+    }
     original=target=child=identity;
     AerWeaponAttachments headlocked,wall,ambiguous;
     for(unsigned i=0;i<10;++i){

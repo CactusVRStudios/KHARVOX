@@ -18,8 +18,12 @@ int main(int argc,char**argv){try{
     require(argc==2,"output directory required");std::filesystem::path output=argv[1];std::filesystem::create_directories(output);
     kharvox::intro::InputGate input;
     require(!input.update(true,true),"unpresented scene dismisses");input.presented=true;
-    require(!input.update(true,true),"held launch button dismisses");require(!input.update(false,false),"unfocused input arms");require(!input.armed,"focus guard missing");
-    input.update(true,false);require(input.update(true,true)&&input.dismissed,"fresh press does not dismiss");require(!input.update(true,true),"duplicate dismiss");
+    require(!input.update(false,true),"unfocused held input dismisses");
+    require(input.update(true,true)&&input.dismissed,"held input must dismiss after presentation and focus");
+    require(!input.update(true,true),"duplicate dismiss");
+    kharvox::intro::InputGate fresh;fresh.presented=true;
+    require(!fresh.update(true,false),"idle input dismisses");
+    require(fresh.update(true,true),"fresh press does not dismiss");
     kharvox::intro::Scene scene;require(scene.makeText(),"text missing");
     kharvox::intro::Scene direct;require(direct.makeText(true),"direct demo text missing");
     require(direct.footerQuads.size()!=scene.footerQuads.size(),"direct demo still shows launch DOOM hint");

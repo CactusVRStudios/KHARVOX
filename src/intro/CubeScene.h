@@ -21,11 +21,11 @@ inline XrVector3f rotate(XrQuaternionf q,XrVector3f v){
     return {v.x+q.w*t.x+q.y*t.z-q.z*t.y,v.y+q.w*t.y+q.z*t.x-q.x*t.z,v.z+q.w*t.z+q.x*t.y-q.y*t.x};
 }
 struct InputGate {
-    bool presented{}, armed{}, dismissed{};
+    bool presented{}, dismissed{};
     bool update(bool focused,bool down){
         if(!focused||!presented||dismissed)return false;
-        if(!down)armed=true;
-        if(armed&&down){dismissed=true;return true;}
+        // A held grip must not require releasing every bound input first.
+        if(down){dismissed=true;return true;}
         return false;
     }
 };

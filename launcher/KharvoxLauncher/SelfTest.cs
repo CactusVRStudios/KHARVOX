@@ -10,6 +10,10 @@ internal static class SelfTest
         try
         {
             Directory.CreateDirectory(testRoot);
+            Require(KharvoxRunner.IsPimaxRuntimeManifest(@"C:\Pimax\pimax-openxr.json"), "Pimax runtime blocked");
+            Require(KharvoxRunner.IsPimaxRuntimeManifest(@"C:\Runtime\PiOpenXR.json"), "PiOpenXR runtime blocked case-insensitively");
+            Require(!KharvoxRunner.IsPimaxRuntimeManifest(@"C:\SteamVR\steamxr_win64.json"), "SteamVR remains supported");
+            Require(!KharvoxRunner.IsPimaxRuntimeManifest(null), "missing runtime is not classified as Pimax");
             Require(VrGameIntroSession.ShouldPlayIntro(false, true), "first intro required despite default disable checkbox");
             Require(!VrGameIntroSession.ShouldPlayIntro(true, true), "checked disables repeat intro");
             Require(VrGameIntroSession.ShouldPlayIntro(true, false), "unchecked repeats intro");

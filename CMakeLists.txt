@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(KHARVOX VERSION 0.5.0 LANGUAGES C CXX)
+project(KHARVOX VERSION 0.6.0 LANGUAGES C CXX)
 
 include(CTest)
 if(BUILD_TESTING)

@@ -141,7 +141,7 @@ internal sealed class KharvoxLaunchOptions
 
 internal static class KharvoxRunner
 {
-    internal const string BuildId = "2026.09.11-launcher-v0.5-beta.1";
+    internal const string BuildId = "2026.09.12-launcher-v0.6-beta.1";
     private const string LayerName = "VK_LAYER_KHARVOX_OPENXR";
     private const string RegistryPath = @"SOFTWARE\Khronos\Vulkan\ImplicitLayers";
     private static readonly CultureInfo Invariant = CultureInfo.InvariantCulture;
@@ -257,7 +257,7 @@ internal static class KharvoxRunner
         var dllPath = Path.Combine(runtimeDir, "KharvoxLayer.dll");
         var manifestPath = Path.Combine(runtimeDir, "KharvoxLayer.json");
         var launchId = Guid.NewGuid().ToString("N").Substring(0, 12);
-        var loaderLogPath = Path.Combine(Path.GetTempPath(), "KHARVOX-vulkan-loader-v0.5-beta.log");
+        var loaderLogPath = Path.Combine(Path.GetTempPath(), "KHARVOX-vulkan-loader-v0.6-beta.log");
         if (!File.Exists(dllPath)) throw new FileNotFoundException("KharvoxLayer.dll must be next to the launcher.", dllPath);
 
         var gameExe = Path.Combine(options.GameDirectory ?? string.Empty, "DOOMx64vk.exe");
@@ -282,11 +282,17 @@ internal static class KharvoxRunner
             throw new InvalidOperationException(preflight.FailureMessage);
         }
 
+        if (UsesPimaxRuntime())
+        {
+            throw new InvalidOperationException(
+                "Incompatible Runtime. Pimax OpenXR not supported. Please switch to SteamVR.");
+        }
+
         using var launchGate = AcquireLaunchGate();
         using var launchState = BeginLaunch();
         EnsureNoRunningDoom();
-        if (FileVersionInfo.GetVersionInfo(dllPath).ProductVersion != "0.5.0-beta.1")
-            throw new InvalidOperationException("The 0.5 Beta launcher requires its matching 0.5 Beta KharvoxLayer.dll. Extract the complete Beta release into its own folder.");
+        if (FileVersionInfo.GetVersionInfo(dllPath).ProductVersion != "0.6.0-beta.1")
+            throw new InvalidOperationException("The 0.6 Beta launcher requires its matching 0.6 Beta KharvoxLayer.dll. Extract the complete Beta release into its own folder.");
         using var gameIntro = await VrGameIntroSession.StartAsync(runtimeDir, statusUpdate, disableVrIntro: options.DisableVrIntro).ConfigureAwait(false);
         var previousNativeFailure = NativeLaunchRecovery.Prepare(runtimeDir, options.RendererMode);
         if (previousNativeFailure is not null)
@@ -662,7 +668,7 @@ internal static class KharvoxRunner
                 // renderer has actually initialized. Do not turn a successful
                 // game start into a false-positive feature status here.
                 if (!nativeStereoEnabled && !fsr1Enabled)
-                    WriteRendererStatus(runtimeDir, "Renderer: AER 0.5 Beta");
+                    WriteRendererStatus(runtimeDir, "Renderer: AER 0.6 Beta");
                 gameDetected?.Invoke();
                 launchSucceeded = true;
                 return;
@@ -1676,6 +1682,15 @@ internal static class KharvoxRunner
         return string.IsNullOrWhiteSpace(manifest)
             ? null
             : Environment.ExpandEnvironmentVariables(manifest);
+    }
+
+    private static bool UsesPimaxRuntime() => IsPimaxRuntimeManifest(ActiveRuntimeManifest());
+
+    internal static bool IsPimaxRuntimeManifest(string? manifest)
+    {
+        return manifest is not null
+            && (manifest.IndexOf("pimax", StringComparison.OrdinalIgnoreCase) >= 0
+                || manifest.IndexOf("piopenxr", StringComparison.OrdinalIgnoreCase) >= 0);
     }
 
     private static bool UsesVirtualDesktopRuntime()

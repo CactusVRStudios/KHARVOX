@@ -1,0 +1,19 @@
+LIBRARY KharvoxLayer
+EXPORTS
+    vkNegotiateLoaderLayerInterfaceVersion
+    vkGetInstanceProcAddr
+    vkGetDeviceProcAddr
+    vkCreateInstance
+    vkDestroyInstance
+    vkCreateDevice
+    vkDestroyDevice
+    vkGetDeviceQueue
+    vkGetDeviceQueue2
+    vkCreateSwapchainKHR
+    vkDestroySwapchainKHR
+    vkGetSwapchainImagesKHR
+    vkAcquireNextImageKHR
+    vkAcquireNextImage2KHR
+    vkQueueSubmit
+    vkQueueSubmit2
+    vkQueuePresentKHR

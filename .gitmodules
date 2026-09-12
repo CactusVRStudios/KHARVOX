@@ -1,0 +1,3 @@
+[submodule "tools/PSVR2Toolkit"]
+	path = tools/PSVR2Toolkit
+	url = https://github.com/BnuuySolutions/PSVR2Toolkit.git

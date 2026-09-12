@@ -1,0 +1,26 @@
+* text=auto
+
+*.c text eol=lf
+*.cc text eol=lf
+*.cpp text eol=lf
+*.h text eol=lf
+*.hpp text eol=lf
+*.cs text eol=lf
+*.csproj text eol=lf
+*.cmake text eol=lf
+CMakeLists.txt text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.ps1 text eol=crlf
+*.props text eol=lf
+*.targets text eol=lf
+*.txt text eol=lf
+
+*.dll binary
+*.exe binary
+*.ico binary
+*.lib binary
+*.pdb binary
+*.png binary
+*.spv binary
+*.zip binary

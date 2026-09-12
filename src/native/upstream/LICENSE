@@ -1,0 +1,56 @@
+MIT License
+
+Copyright (c) 2026 dbkni
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+NOTE ON AUTHORSHIP
+
+The code in this repository was written by an AI coding assistant --
+Anthropic's Claude -- working under the direction of a human modder who did
+the testing, made the design decisions, and verified every result in a VR
+headset. Every fix in here was judged in a headset, not in a diff. The
+copyright line above exists so the warranty disclaimer has a named party; it
+is not a claim of authorship, and no restriction beyond the MIT terms is
+intended. Use it, learn from it, fork it, take it apart.
+
+
+NOTE ON GAME CONTENT
+
+DOOM is a trademark of id Software / ZeniMax Media. This project is not
+affiliated with or endorsed by id Software, Bethesda, ZeniMax or Microsoft.
+
+It contains INJECTION CODE ONLY. No game assets, no decompiled or
+disassembled game code, and no reproduced proprietary text are included or
+redistributed. The reverse-engineering findings in docs/ENGINE-NOTES.md
+describe offsets, structure semantics and observed behaviour in our own
+words. You supply the game through your own legitimate DOOM (2016)
+installation.
+
+If you extend this project, keep it that way -- see
+docs/FORBIDDEN-BOUNDARIES.md #12.
+
+
+THIRD-PARTY COMPONENTS
+
+See THIRD-PARTY-NOTICES.md. In summary: MinHook (BSD-2-Clause), the Khronos
+OpenXR SDK loader (Apache-2.0), and RenderDoc's renderdoc_app.h (MIT). The
+Apache-2.0 licence requires its notice to travel with binary distributions,
+so THIRD-PARTY-NOTICES.md is not optional in a release package.

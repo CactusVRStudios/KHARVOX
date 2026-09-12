@@ -1,0 +1,32 @@
+{
+  "project": "DOOM STEREO RENDERER",
+  "license": "MIT, 2026 dbkni",
+  "importDate": "2026-09-04",
+  "note": "Original source file hashes before KHARVOX adapter changes. No donor bootstrap or OpenXR implementation is built.",
+  "sha256": {
+    "LICENSE": "c23b7d5db97d93254fa9bc94e3f557ac9dd903bda538a0684789470e2940e71b",
+    "include/doomvr/freqhigh_record.h": "acb99cac2bcdd0d0e526a3d6926b1f2226d19d5b078ea7769ce7d226ed1305d5",
+    "include/doomvr/input_hooks.h": "c66fb7985b23209bb2d250996b2b35556826db4ff735b9138adeecad6e02da72",
+    "include/doomvr/log.h": "fc858b81b2bd0e0dfa9b33d20c46804bb667040ea9e7b41e0c3888978899673e",
+    "include/doomvr/openxr_context.h": "fa8b000c68935e18036c49c0bb0449f6d5977ae455c8c8ac0210ec1fb9d1d815",
+    "include/doomvr/pattern_scan.h": "fc796f176af223e0cdf0d2094141da74af98064600beb8ba8627821b267dfdad",
+    "include/doomvr/renderdoc_app.h": "9d24aa6ade1194e56ab295cc1443dd547ea09a6e67e5000ff5dcc8f65cb1c3f0",
+    "include/doomvr/vulkan_hooks.h": "b3a2dcae68d767c8a74ce0dc7d780b2ada1cd7ba1d5c4abdcf2f29d8da367a59",
+    "include/doomvr/wraparound.h": "ac3a2c52c0d9e0a8c2ad2d1adde9e3225b1e20f2a4ed6328388111c1cb84dbeb",
+    "include/doomvr/wraparound_math.h": "7f28447787ad049615c8d6da32f77dc157ad7e41c10b4496548fd4ca93a2fced",
+    "src/hooks/input_hooks.cpp": "280125d8fdeac59855d7712590676e45052098ab75d7366c92c0144a4ecfaa3f",
+    "src/hooks/pattern_scan.cpp": "5e9e629a19da4af7b372de7b3f61c01a624b99602bfbbf19aaa75b8f37dbc711",
+    "src/hooks/vulkan_hooks.cpp": "5a5ceaf5dcc7e78b9d8c1b81b074e33baba3cf0a357de82f8ca9a0081a929256",
+    "src/xr/openxr_context.cpp": "7eab228c404b0f35076ec8801acb13225f93d2b461d57158965525ce7e71942a",
+    "src/xr/wraparound.cpp": "264c1374f1480446a2206a65b10f763ba79b18dd59e1a0eae71595a93b94eea4",
+    "src/hooks/vulkan_hooks/01_state.inc": "87f646cda75c121159441f62aae379048bda01e14d79375795d0776a9a66b62f",
+    "src/hooks/vulkan_hooks/02_probes.inc": "be2550cb4e9a623c98f9784faef0e127069540c6618e286d8b350b8782c006a4",
+    "src/hooks/vulkan_hooks/03_camera.inc": "9ec2f9640e8b44a06f8caf6b4a689b493487f74911526ea870a0b844a156d5dc",
+    "src/hooks/vulkan_hooks/04_render_jobs.inc": "36bebf1e638f96e95b73d0eb868c03a0b79e41e4fb9c1fc3d51ee7358f68333c",
+    "src/hooks/vulkan_hooks/05_mirrors.inc": "f46f3ec52afb832eb4691fdd6ee2a31ab473847b5afbb2ec7ceebe47655b6b3a",
+    "src/hooks/vulkan_hooks/06_renderpass.inc": "05dc54453f825ec52bb930753714b00ec631fb2a3bb1bd60a51c93b59cef64d7",
+    "src/hooks/vulkan_hooks/07_descriptors.inc": "311d3396cdd44a32b265f995ce836c0ed8f5743232febbce7ac1fc5a193b6831",
+    "src/hooks/vulkan_hooks/08_stereo.inc": "4f533a974e83d3acf236b02fa9a7c7b391686c790ac27b33b8a0a65c8f91df98",
+    "src/hooks/vulkan_hooks/09_present.inc": "6d21294ece35742e759b1cfbeb5ff79a2745546805cad6a81d410149e6da944b"
+  }
+}

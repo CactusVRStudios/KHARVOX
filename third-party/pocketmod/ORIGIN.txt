@@ -1,0 +1,5 @@
+Source: https://github.com/rombankzero/pocketmod
+Downloaded: 2026-09-09
+Vendored file: https://raw.githubusercontent.com/rombankzero/pocketmod/master/pocketmod.h
+Unmodified ANSI C source, compiled in src/intro/Pocketmod.c.
+License: MIT, retained in pocketmod.h and LICENSE.txt.

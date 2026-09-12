@@ -1,0 +1,103 @@
+#pragma once
+#include "GameImageLifetime.h"
+#include <vulkan/vulkan.h>
+#include <string>
+#include <vector>
+
+struct KharvoxVulkanDispatch {
+    PFN_vkGetDeviceProcAddr getDeviceProcAddr{};
+    PFN_vkCreateCommandPool createCommandPool{};
+    PFN_vkDestroyCommandPool destroyCommandPool{};
+    PFN_vkAllocateCommandBuffers allocateCommandBuffers{};
+    PFN_vkResetCommandBuffer resetCommandBuffer{};
+    PFN_vkBeginCommandBuffer beginCommandBuffer{};
+    PFN_vkEndCommandBuffer endCommandBuffer{};
+    PFN_vkCmdPipelineBarrier cmdPipelineBarrier{};
+    PFN_vkCmdBlitImage cmdBlitImage{};
+    PFN_vkCmdCopyImage cmdCopyImage{};
+    PFN_vkCmdCopyBufferToImage cmdCopyBufferToImage{};
+    PFN_vkCmdClearColorImage cmdClearColorImage{};
+    PFN_vkCreateImage createImage{};
+    PFN_vkDestroyImage destroyImage{};
+    PFN_vkGetImageMemoryRequirements getImageMemoryRequirements{};
+    PFN_vkAllocateMemory allocateMemory{};
+    PFN_vkFreeMemory freeMemory{};
+    PFN_vkBindImageMemory bindImageMemory{};
+    PFN_vkCreateBuffer createBuffer{};
+    PFN_vkDestroyBuffer destroyBuffer{};
+    PFN_vkGetBufferMemoryRequirements getBufferMemoryRequirements{};
+    PFN_vkBindBufferMemory bindBufferMemory{};
+    PFN_vkMapMemory mapMemory{};
+    PFN_vkUnmapMemory unmapMemory{};
+    PFN_vkGetPhysicalDeviceMemoryProperties getPhysicalDeviceMemoryProperties{};
+    PFN_vkGetPhysicalDeviceProperties getPhysicalDeviceProperties{};
+    PFN_vkGetPhysicalDeviceQueueFamilyProperties getPhysicalDeviceQueueFamilyProperties{};
+    PFN_vkCreateImageView createImageView{};
+    PFN_vkDestroyImageView destroyImageView{};
+    PFN_vkCreateSampler createSampler{};
+    PFN_vkDestroySampler destroySampler{};
+    PFN_vkCreateShaderModule createShaderModule{};
+    PFN_vkDestroyShaderModule destroyShaderModule{};
+    PFN_vkCreateDescriptorSetLayout createDescriptorSetLayout{};
+    PFN_vkDestroyDescriptorSetLayout destroyDescriptorSetLayout{};
+    PFN_vkCreateDescriptorPool createDescriptorPool{};
+    PFN_vkDestroyDescriptorPool destroyDescriptorPool{};
+    PFN_vkAllocateDescriptorSets allocateDescriptorSets{};
+    PFN_vkUpdateDescriptorSets updateDescriptorSets{};
+    PFN_vkCreatePipelineLayout createPipelineLayout{};
+    PFN_vkDestroyPipelineLayout destroyPipelineLayout{};
+    PFN_vkCreateComputePipelines createComputePipelines{};
+    PFN_vkCreateGraphicsPipelines createGraphicsPipelines{};
+    PFN_vkDestroyPipeline destroyPipeline{};
+    PFN_vkCmdBindPipeline cmdBindPipeline{};
+    PFN_vkCmdBindDescriptorSets cmdBindDescriptorSets{};
+    PFN_vkCmdPushConstants cmdPushConstants{};
+    PFN_vkCmdDispatch cmdDispatch{};
+    PFN_vkCreateRenderPass createRenderPass{};
+    PFN_vkDestroyRenderPass destroyRenderPass{};
+    PFN_vkCreateFramebuffer createFramebuffer{};
+    PFN_vkDestroyFramebuffer destroyFramebuffer{};
+    PFN_vkCmdBeginRenderPass cmdBeginRenderPass{};
+    PFN_vkCmdEndRenderPass cmdEndRenderPass{};
+    PFN_vkCmdBindVertexBuffers cmdBindVertexBuffers{};
+    PFN_vkCmdBindIndexBuffer cmdBindIndexBuffer{};
+    PFN_vkCmdDrawIndexed cmdDrawIndexed{};
+    PFN_vkCmdSetViewport cmdSetViewport{};
+    PFN_vkCmdSetScissor cmdSetScissor{};
+    PFN_vkCreateSemaphore createSemaphore{};
+    PFN_vkDestroySemaphore destroySemaphore{};
+    PFN_vkCreateFence createFence{};
+    PFN_vkDestroyFence destroyFence{};
+    PFN_vkResetFences resetFences{};
+    PFN_vkWaitForFences waitForFences{};
+    PFN_vkQueueSubmit queueSubmit{};
+    PFN_vkQueueWaitIdle queueWaitIdle{};
+};
+
+using KharvoxQueueAccessCallback = void(*)();
+
+void KharvoxXRInitialize(VkInstance instance);
+bool KharvoxXRRecommendedSourceSize(uint32_t* width, uint32_t* height);
+bool KharvoxXRMediationEnabled();
+bool KharvoxXRMediationReentry();
+VkPhysicalDevice KharvoxXRMappedPhysicalForReentry();
+PFN_vkCreateDevice KharvoxXRCreateDeviceForReentry();
+bool KharvoxXRCreateVulkanInstance(PFN_vkGetInstanceProcAddr nextGipa, const VkInstanceCreateInfo* createInfo, const VkAllocationCallbacks* allocator, VkInstance* instance, VkResult* vulkanResult);
+bool KharvoxXRCreateVulkanDevice(PFN_vkGetInstanceProcAddr nextGipa, VkPhysicalDevice doomPhysical, const VkDeviceCreateInfo* runtimeCreateInfo, const VkDeviceCreateInfo* downstreamCreateInfo, const VkAllocationCallbacks* allocator, VkDevice* device, VkResult* vulkanResult);
+void KharvoxXRPreparePhysicalDeviceBinding(VkPhysicalDevice doomPhysical);
+std::vector<std::string> KharvoxXRRequiredInstanceExtensions();
+std::vector<std::string> KharvoxXRRequiredDeviceExtensions();
+uint32_t KharvoxXRClampVulkanApiVersion(uint32_t requestedVersion);
+void KharvoxXRSetDevice(VkPhysicalDevice physicalDevice, VkDevice device, const KharvoxVulkanDispatch& dispatch);
+void KharvoxXRSetQueue(VkQueue queue, uint32_t family, uint32_t index);
+void KharvoxXRSetQueueAccessCallbacks(KharvoxQueueAccessCallback lockCallback, KharvoxQueueAccessCallback unlockCallback);
+bool KharvoxXRStartSessionIfReady();
+void KharvoxXRPrepareFrame(VkSwapchainKHR swapchain);
+void KharvoxXRSwapchainCreated(VkSwapchainKHR swapchain, const VkSwapchainCreateInfoKHR& info);
+void KharvoxXRSwapchainImages(VkSwapchainKHR swapchain, uint32_t count, const VkImage* images);
+void KharvoxXRSwapchainDestroyed(VkSwapchainKHR swapchain);
+void KharvoxXRNativePresentCompleted(VkSwapchainKHR swapchain, VkResult result);
+bool KharvoxXRIsDoomSwapchainImage(VkImage image);
+void KharvoxXRPresent(VkQueue queue, const VkPresentInfoKHR* presentInfo, bool* consumedPresentWaits, kharvox::GameImageLifetime::Use& gameImages);
+void KharvoxXRShutdownHaptics();
+void KharvoxXRDeviceDestroyed();

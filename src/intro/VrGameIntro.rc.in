@@ -1,0 +1,5 @@
+#include <windows.h>
+101 RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/assets/cracktro/vr/04B_30__.TTF"
+102 RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/assets/cracktro/vr/ninja.mod"
+103 RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/third-party/pocketmod/LICENSE.txt"
+104 RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/assets/cracktro/vr/Copper_41.png"

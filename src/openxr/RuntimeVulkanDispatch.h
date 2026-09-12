@@ -3,6 +3,16 @@
 #include <cstring>
 
 namespace kharvox {
+inline PFN_vkCreateDevice resolveLayerCreateDevice(PFN_vkGetInstanceProcAddr next, VkInstance instance) {
+    // vkCreateDevice is an instance command. Null-instance lookup is only
+    // specified for global commands and is not a portable driver shortcut.
+    return next && instance ? reinterpret_cast<PFN_vkCreateDevice>(next(instance, "vkCreateDevice")) : nullptr;
+}
+template<class Handle> inline void finishRuntimeVulkanCreate(bool xrSucceeded, VkResult* result, Handle* output) {
+    if (!result || !output) return;
+    if (!xrSucceeded || (*result == VK_SUCCESS && !*output)) *result = VK_ERROR_INITIALIZATION_FAILED;
+    if (*result != VK_SUCCESS) *output = VK_NULL_HANDLE;
+}
 inline bool isPhysicalDeviceCommand(const char* name) {
     return name && (!std::strncmp(name, "vkGetPhysicalDevice", 19) ||
         !std::strcmp(name, "vkEnumerateDeviceExtensionProperties") ||

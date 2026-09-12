@@ -20,6 +20,8 @@
 #include "DispatchMemberLookup.h"
 #include "IndependentSurface.h"
 #include "IndependentEngineSize.h"
+#include "CoreSurfaceWindow.h"
+#include "../openxr/RuntimeVulkanDispatch.h"
 
 static DWORD portableGetFileAttributesW(LPCWSTR path) {
     const auto name = wcsrchr(path, L'\\');
@@ -82,12 +84,14 @@ struct InstanceDispatch {
     PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR surfaceCaps{};
     PFN_vkGetPhysicalDeviceSurfaceCapabilities2KHR surfaceCaps2{};
     bool independentSurface{};
+    bool coreSurface{};
     VkExtent2D sourceExtent{};
     bool runtimeAuxiliary{};
 };
 struct DeviceDispatch {
     VkPhysicalDevice physical{};
     bool independentSurface{};
+    bool coreSurface{};
     PFN_vkGetDeviceProcAddr gdpa{};
     PFN_vkDestroyDevice destroy{};
     PFN_vkGetDeviceQueue getQueue{};
@@ -743,6 +747,21 @@ VKAPI_ATTR VkResult VKAPI_CALL vkNegotiateLoaderLayerInterfaceVersion(VkNegotiat
     logLine("Loader negotiation successful"); return VK_SUCCESS;
 }
 
+[[noreturn]] static void stopVulkanStartup(const char* reason) {
+    logLine(std::string("[WSI-STARTUP] controlled stop: ")+reason,true);
+    MessageBoxA(nullptr,reason,"KHARVOX - Vulkan presentation unavailable",MB_OK|MB_ICONERROR);
+    TerminateProcess(GetCurrentProcess(),0x4B480003);
+    for(;;)Sleep(INFINITE);
+}
+static void ensureCoreSurface(const InstanceDispatch& dispatch,VkSurfaceKHR surface) {
+    HWND window{};
+    {std::lock_guard<std::mutex> lock(surfaceWindowMutex);
+     const auto found=surfaceWindows.find(reinterpret_cast<uint64_t>(surface));
+     if(found!=surfaceWindows.end())window=found->second;}
+    if(window&&!kharvox::matchCoreSurfaceWindow(window,dispatch.sourceExtent))
+        stopVulkanStartup("Cannot size the DOOM window to the requested VR render resolution.");
+}
+
 static VkResult independentCaps(const InstanceDispatch& dispatch,VkPhysicalDevice physical,
     VkSurfaceKHR surface,VkPresentModeKHR mode,VkSurfaceCapabilitiesKHR* caps,
     VkSurfacePresentScalingCapabilitiesEXT* scaling) {
@@ -761,6 +780,7 @@ static VkResult independentCaps(const InstanceDispatch& dispatch,VkPhysicalDevic
 VKAPI_ATTR VkResult VKAPI_CALL vkGetPhysicalDeviceSurfaceCapabilitiesKHR(VkPhysicalDevice physical,VkSurfaceKHR surface,VkSurfaceCapabilitiesKHR* caps) {
     const auto dispatch=instanceState(key(physical));
     if(!dispatch.surfaceCaps)return VK_ERROR_EXTENSION_NOT_PRESENT;
+    if(dispatch.coreSurface)ensureCoreSurface(dispatch,surface);
     const auto result=dispatch.surfaceCaps(physical,surface,caps);
     if(result==VK_SUCCESS&&caps&&dispatch.independentSurface&&isGameSurface(surface)) {
         VkSurfacePresentScalingCapabilitiesEXT scaling{VK_STRUCTURE_TYPE_SURFACE_PRESENT_SCALING_CAPABILITIES_EXT};
@@ -775,6 +795,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkGetPhysicalDeviceSurfaceCapabilitiesKHR(VkPhysi
 VKAPI_ATTR VkResult VKAPI_CALL vkGetPhysicalDeviceSurfaceCapabilities2KHR(VkPhysicalDevice physical,const VkPhysicalDeviceSurfaceInfo2KHR* info,VkSurfaceCapabilities2KHR* caps) {
     const auto dispatch=instanceState(key(physical));
     if(!dispatch.surfaceCaps2)return VK_ERROR_EXTENSION_NOT_PRESENT;
+    if(dispatch.coreSurface&&info)ensureCoreSurface(dispatch,info->surface);
     const auto result=dispatch.surfaceCaps2(physical,info,caps);
     if(result==VK_SUCCESS&&info&&caps&&dispatch.independentSurface&&isGameSurface(info->surface)) {
         const auto mode=kharvox::surfaceChain<VkSurfacePresentModeEXT>(info->pNext,VK_STRUCTURE_TYPE_SURFACE_PRESENT_MODE_EXT);
@@ -806,7 +827,7 @@ VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(VkInstance i,cons
         return dispatch.gipa?dispatch.gipa(i,n):nullptr;
     }
     auto d=instanceState(key(i));if(i&&d.runtimeAuxiliary)return d.gipa?d.gipa(i,n):nullptr; MATCH(vkGetInstanceProcAddr); MATCH(vkGetDeviceProcAddr); MATCH(vkCreateInstance); MATCH(vkDestroyInstance); MATCH(vkCreateDevice); MATCH(vkCreateWin32SurfaceKHR);
-    if(d.independentSurface){MATCH(vkGetPhysicalDeviceSurfaceCapabilitiesKHR); MATCH(vkGetPhysicalDeviceSurfaceCapabilities2KHR); MATCH(vkDestroySurfaceKHR);}
+    if(d.independentSurface||d.coreSurface){MATCH(vkGetPhysicalDeviceSurfaceCapabilitiesKHR); if(d.surfaceCaps2){MATCH(vkGetPhysicalDeviceSurfaceCapabilities2KHR);} MATCH(vkDestroySurfaceKHR);}
     return d.gipa?d.gipa(i,n):nullptr;
 }
 static PFN_vkVoidFunction deviceProcBase(VkDevice d,const char* n){
@@ -833,6 +854,8 @@ VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(VkDevice d,const ch
 #undef MATCH
 
 VKAPI_ATTR VkResult VKAPI_CALL vkCreateInstance(const VkInstanceCreateInfo* ci,const VkAllocationCallbacks* a,VkInstance* out){
+    if(!ci||!out)return VK_ERROR_INITIALIZATION_FAILED;
+    *out=VK_NULL_HANDLE;
     if(!isDoomProcess()) {
         auto chain=findLinkChain<VkLayerInstanceCreateInfo*>(ci->pNext,VK_STRUCTURE_TYPE_LOADER_INSTANCE_CREATE_INFO);
         if(!chain||chain->function!=VK_LAYER_LINK_INFO||!chain->u.pLayerInfo)return VK_ERROR_INITIALIZATION_FAILED;
@@ -879,7 +902,8 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateInstance(const VkInstanceCreateInfo* ci,c
     }
     KharvoxXRInitialize(VK_NULL_HANDLE);auto required=KharvoxXRRequiredInstanceExtensions();std::vector<const char*> enabled;enabled.reserve(ci->enabledExtensionCount+required.size()+1);for(uint32_t i=0;i<ci->enabledExtensionCount;i++)enabled.push_back(ci->ppEnabledExtensionNames[i]);auto addExtension=[&](const char*name,const char*reason){for(auto*e:enabled)if(!std::strcmp(e,name))return;enabled.push_back(name);logLine(std::string("Enabling ")+reason+" instance extension "+name);};for(auto&name:required)addExtension(name.c_str(),"XR");
     // Runtime auxiliary instances returned above retain untouched WSI.
-    const bool independent=true;
+    bool independent=true;
+    bool coreSurface=false;
     VkExtent2D sourceExtent{};
     if(independent){
         auto enumerate=reinterpret_cast<PFN_vkEnumerateInstanceExtensionProperties>(nextGipa(nullptr,"vkEnumerateInstanceExtensionProperties"));
@@ -888,7 +912,10 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateInstance(const VkInstanceCreateInfo* ci,c
         std::vector<VkExtensionProperties> extensions(count);
         if(enumerate(nullptr,&count,extensions.data())!=VK_SUCCESS)return VK_ERROR_EXTENSION_NOT_PRESENT;
         for(const char* extension:{VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME,VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME,VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME}){
-            if(std::none_of(extensions.begin(),extensions.end(),[&](const auto& e){return !std::strcmp(e.extensionName,extension);})){logLine(std::string("[INDEPENDENT-SURFACE] missing instance extension ")+extension);return VK_ERROR_EXTENSION_NOT_PRESENT;}
+            if(std::none_of(extensions.begin(),extensions.end(),[&](const auto& e){return !std::strcmp(e.extensionName,extension);})){
+                logLine(std::string("[WSI-STARTUP] scaling unavailable: ")+extension+"; selecting core Win32 presentation with real render-sized window",true);
+                independent=false;coreSurface=true;continue;
+            }
             addExtension(extension,"independent presentation");
         }
         uint32_t eyeWidth{},eyeHeight{};
@@ -902,13 +929,13 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateInstance(const VkInstanceCreateInfo* ci,c
         sourceExtent=kharvox::independentSourceExtent(eyeWidth,eyeHeight,configuredRenderScale(),INT_MAX);
         if(!sourceExtent.width)return VK_ERROR_INITIALIZATION_FAILED;
         if(!kharvox::installIndependentEngineSize(sourceExtent.width,sourceExtent.height)){logLine("[INDEPENDENT-SURFACE] supported engine size accessors could not be installed");return VK_ERROR_INITIALIZATION_FAILED;}
-        logLine("[INDEPENDENT-SURFACE] engine render size accessors armed; native desktop window size preserved");
-        logLine("[INDEPENDENT-SURFACE] headset recommendation="+std::to_string(eyeWidth)+"x"+std::to_string(eyeHeight)+" source="+std::to_string(sourceExtent.width)+"x"+std::to_string(sourceExtent.height)+" scale="+std::to_string(configuredRenderScale())+" desktopIndependent=yes");
+        logLine(std::string("[WSI-STARTUP] engine render size accessors armed; presentation=")+(coreSurface?"core-sized-window":"scaled-small-window"),true);
+        logLine("[INDEPENDENT-SURFACE] headset recommendation="+std::to_string(eyeWidth)+"x"+std::to_string(eyeHeight)+" source="+std::to_string(sourceExtent.width)+"x"+std::to_string(sourceExtent.height)+" scale="+std::to_string(configuredRenderScale())+" desktopIndependent="+(coreSurface?"no; real window matches source":"yes"));
     }
     VkInstanceCreateInfo modified=*ci;    modified.enabledExtensionCount=uint32_t(enabled.size());modified.ppEnabledExtensionNames=enabled.data();VkResult r=VK_ERROR_INITIALIZATION_FAILED;VkResult mediatedVk=VK_ERROR_INITIALIZATION_FAILED;if(KharvoxXRCreateVulkanInstance(nextGipa,&modified,a,out,&mediatedVk))r=mediatedVk;else r=fn?fn(&modified,a,out):VK_ERROR_INITIALIZATION_FAILED;
-    if(r==VK_SUCCESS){InstanceDispatch d{};d.independentSurface=independent;d.sourceExtent=sourceExtent;d.surfaceCaps=reinterpret_cast<PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR>(nextGipa(*out,"vkGetPhysicalDeviceSurfaceCapabilitiesKHR"));d.surfaceCaps2=reinterpret_cast<PFN_vkGetPhysicalDeviceSurfaceCapabilities2KHR>(nextGipa(*out,"vkGetPhysicalDeviceSurfaceCapabilities2KHR"));
+    if(r==VK_SUCCESS){InstanceDispatch d{};d.independentSurface=independent;d.coreSurface=coreSurface;d.sourceExtent=sourceExtent;d.surfaceCaps=reinterpret_cast<PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR>(nextGipa(*out,"vkGetPhysicalDeviceSurfaceCapabilitiesKHR"));d.surfaceCaps2=reinterpret_cast<PFN_vkGetPhysicalDeviceSurfaceCapabilities2KHR>(nextGipa(*out,"vkGetPhysicalDeviceSurfaceCapabilities2KHR"));
         d.destroySurface=reinterpret_cast<PFN_vkDestroySurfaceKHR>(nextGipa(*out,"vkDestroySurfaceKHR"));
-        d.instance=*out;d.gipa=nextGipa;d.destroy=reinterpret_cast<PFN_vkDestroyInstance>(nextGipa(*out,"vkDestroyInstance"));d.createDevice=reinterpret_cast<PFN_vkCreateDevice>(nextGipa(*out,"vkCreateDevice"));d.createWin32Surface=reinterpret_cast<PFN_vkCreateWin32SurfaceKHR>(nextGipa(*out,"vkCreateWin32SurfaceKHR"));d.getPhysicalDeviceProperties=reinterpret_cast<PFN_vkGetPhysicalDeviceProperties>(nextGipa(*out,"vkGetPhysicalDeviceProperties"));d.enumerateDeviceExtensionProperties=reinterpret_cast<PFN_vkEnumerateDeviceExtensionProperties>(nextGipa(*out,"vkEnumerateDeviceExtensionProperties"));d.getPhysicalDeviceFeatures2=reinterpret_cast<PFN_vkGetPhysicalDeviceFeatures2>(nextGipa(*out,"vkGetPhysicalDeviceFeatures2"));d.getPhysicalDeviceQueueFamilyProperties=reinterpret_cast<PFN_vkGetPhysicalDeviceQueueFamilyProperties>(nextGipa(*out,"vkGetPhysicalDeviceQueueFamilyProperties"));{std::lock_guard<std::mutex>l(stateMutex);instances[key(*out)]=d;}logLine("Instance created");KharvoxXRInitialize(*out);} return r;
+        d.instance=*out;d.gipa=nextGipa;d.destroy=reinterpret_cast<PFN_vkDestroyInstance>(nextGipa(*out,"vkDestroyInstance"));d.createDevice=reinterpret_cast<PFN_vkCreateDevice>(nextGipa(*out,"vkCreateDevice"));d.createWin32Surface=reinterpret_cast<PFN_vkCreateWin32SurfaceKHR>(nextGipa(*out,"vkCreateWin32SurfaceKHR"));d.getPhysicalDeviceProperties=reinterpret_cast<PFN_vkGetPhysicalDeviceProperties>(nextGipa(*out,"vkGetPhysicalDeviceProperties"));d.enumerateDeviceExtensionProperties=reinterpret_cast<PFN_vkEnumerateDeviceExtensionProperties>(nextGipa(*out,"vkEnumerateDeviceExtensionProperties"));d.getPhysicalDeviceFeatures2=reinterpret_cast<PFN_vkGetPhysicalDeviceFeatures2>(nextGipa(*out,"vkGetPhysicalDeviceFeatures2"));d.getPhysicalDeviceQueueFamilyProperties=reinterpret_cast<PFN_vkGetPhysicalDeviceQueueFamilyProperties>(nextGipa(*out,"vkGetPhysicalDeviceQueueFamilyProperties"));{std::lock_guard<std::mutex>l(stateMutex);instances[key(*out)]=d;}logLine("[VK-STARTUP] instance created handle="+std::to_string(reinterpret_cast<uintptr_t>(*out))+" nextGIPA="+std::to_string(reinterpret_cast<uintptr_t>(nextGipa)),true);logLine("Instance created");KharvoxXRInitialize(*out);}else {logLine("[VK-STARTUP] instance creation failed result="+std::to_string(r),true);stopVulkanStartup("Vulkan/OpenXR instance initialization failed. See the KHARVOX log in %TEMP%.");} return r;
 }
 VKAPI_ATTR void VKAPI_CALL vkDestroyInstance(VkInstance i,const VkAllocationCallbacks* a){auto k=key(i);auto d=instanceState(k);if(isDoomProcess())logLine("vkDestroyInstance");if(d.destroy)d.destroy(i,a);std::lock_guard<std::mutex>l(stateMutex);instances.erase(k);}
 
@@ -917,6 +944,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateWin32SurfaceKHR(VkInstance instance,const
     auto dispatch=instanceState(key(instance));
     if(!dispatch.createWin32Surface)return VK_ERROR_EXTENSION_NOT_PRESENT;
     if(extendedLoggingEnabled()&&info)logExtended(windowSnapshot(info->hwnd,"surface-create-entry"));
+    if(dispatch.coreSurface&&info&&!kharvox::matchCoreSurfaceWindow(info->hwnd,dispatch.sourceExtent))stopVulkanStartup("Cannot size the DOOM window to the requested VR render resolution.");
     LARGE_INTEGER begin{},end{};QueryPerformanceCounter(&begin);
     const VkResult result=dispatch.createWin32Surface(instance,info,allocator,surface);
     QueryPerformanceCounter(&end);
@@ -936,11 +964,13 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateWin32SurfaceKHR(VkInstance instance,const
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL vkCreateDevice(VkPhysicalDevice p,const VkDeviceCreateInfo* ci,const VkAllocationCallbacks* a,VkDevice* out){
+    if(!ci||!out||!p)return VK_ERROR_INITIALIZATION_FAILED;
+    *out=VK_NULL_HANDLE;
     if(isDoomProcess())logLine("vkCreateDevice"); auto chain=findLinkChain<VkLayerDeviceCreateInfo*>(ci->pNext,VK_STRUCTURE_TYPE_LOADER_DEVICE_CREATE_INFO);
     if(!chain||chain->function!=VK_LAYER_LINK_INFO||!chain->u.pLayerInfo)return VK_ERROR_INITIALIZATION_FAILED;
     auto link=chain->u.pLayerInfo;auto nextGipa=link->pfnNextGetInstanceProcAddr;auto nextGdpa=link->pfnNextGetDeviceProcAddr;chain->u.pLayerInfo=link->pNext;
-    const auto physicalDispatch=instanceState(key(p));
-    auto fn=reinterpret_cast<PFN_vkCreateDevice>(nextGipa(nullptr,"vkCreateDevice"));if(!fn)fn=physicalDispatch.createDevice;
+    auto physicalDispatch=instanceState(key(p));
+    auto fn=kharvox::resolveLayerCreateDevice(nextGipa,physicalDispatch.instance);if(!fn)fn=physicalDispatch.createDevice;
     if(physicalDispatch.runtimeAuxiliary){
         const VkResult auxiliaryResult=fn?fn(p,ci,a,out):VK_ERROR_INITIALIZATION_FAILED;
         if(auxiliaryResult==VK_SUCCESS){
@@ -977,28 +1007,43 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateDevice(VkPhysicalDevice p,const VkDeviceC
         if(!physicalDispatch.enumerateDeviceExtensionProperties||physicalDispatch.enumerateDeviceExtensionProperties(p,nullptr,&count,nullptr)!=VK_SUCCESS)return VK_ERROR_EXTENSION_NOT_PRESENT;
         std::vector<VkExtensionProperties> extensions(count);
         if(physicalDispatch.enumerateDeviceExtensionProperties(p,nullptr,&count,extensions.data())!=VK_SUCCESS)return VK_ERROR_EXTENSION_NOT_PRESENT;
-        if(std::none_of(extensions.begin(),extensions.end(),[](const auto& e){return !std::strcmp(e.extensionName,VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME);})){logLine("[INDEPENDENT-SURFACE] driver lacks VK_EXT_swapchain_maintenance1");return VK_ERROR_EXTENSION_NOT_PRESENT;}
+        const bool hasMaintenance=std::any_of(extensions.begin(),extensions.end(),[](const auto& e){return !std::strcmp(e.extensionName,VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME);});
         auto features2=physicalDispatch.getPhysicalDeviceFeatures2;
         if(!features2)features2=reinterpret_cast<PFN_vkGetPhysicalDeviceFeatures2>(physicalDispatch.gipa(physicalDispatch.instance,"vkGetPhysicalDeviceFeatures2KHR"));
-        if(!features2)return VK_ERROR_FEATURE_NOT_PRESENT;
-        VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};features.pNext=&maintenance;
-        features2(p,&features);
-        VkPhysicalDeviceProperties properties{};physicalDispatch.getPhysicalDeviceProperties(p,&properties);
-        if(!maintenance.swapchainMaintenance1||physicalDispatch.sourceExtent.width>properties.limits.maxImageDimension2D||physicalDispatch.sourceExtent.height>properties.limits.maxImageDimension2D){logLine("[INDEPENDENT-SURFACE] required feature or source extent unsupported by GPU");return VK_ERROR_FEATURE_NOT_PRESENT;}
-        addExtension(VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME,"independent presentation");
-        modified.enabledExtensionCount=uint32_t(enabled.size());modified.ppEnabledExtensionNames=enabled.data();
-        runtimeModified.enabledExtensionCount=uint32_t(enabled.size());runtimeModified.ppEnabledExtensionNames=enabled.data();
-        const auto existing=kharvox::surfaceChain<VkPhysicalDeviceSwapchainMaintenance1FeaturesEXT>(ci->pNext,VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SWAPCHAIN_MAINTENANCE_1_FEATURES_EXT);
-        if(existing&&!existing->swapchainMaintenance1)return VK_ERROR_FEATURE_NOT_PRESENT;
-        if(!existing){
-            maintenance.pNext=const_cast<void*>(modified.pNext);modified.pNext=&maintenance;
-            runtimeMaintenance.swapchainMaintenance1=VK_TRUE;
-            runtimeMaintenance.pNext=const_cast<void*>(runtimeModified.pNext);runtimeModified.pNext=&runtimeMaintenance;
+        if(hasMaintenance&&features2){VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};features.pNext=&maintenance;features2(p,&features);}
+        if(!hasMaintenance||!maintenance.swapchainMaintenance1){
+            physicalDispatch.independentSurface=false;physicalDispatch.coreSurface=true;
+            {std::lock_guard<std::mutex> lock(stateMutex);instances[key(p)]=physicalDispatch;}
+            logLine("[WSI-STARTUP] device present scaling unavailable; using real render-sized Win32 surface",true);
+        }
+        if(physicalDispatch.independentSurface){
+            addExtension(VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME,"independent presentation");
+            modified.enabledExtensionCount=uint32_t(enabled.size());modified.ppEnabledExtensionNames=enabled.data();
+            runtimeModified.enabledExtensionCount=uint32_t(enabled.size());runtimeModified.ppEnabledExtensionNames=enabled.data();
+            const auto existing=kharvox::surfaceChain<VkPhysicalDeviceSwapchainMaintenance1FeaturesEXT>(ci->pNext,VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SWAPCHAIN_MAINTENANCE_1_FEATURES_EXT);
+            if(existing&&!existing->swapchainMaintenance1)return VK_ERROR_FEATURE_NOT_PRESENT;
+            if(!existing){
+                maintenance.pNext=const_cast<void*>(modified.pNext);modified.pNext=&maintenance;
+                runtimeMaintenance.swapchainMaintenance1=VK_TRUE;
+                runtimeMaintenance.pNext=const_cast<void*>(runtimeModified.pNext);runtimeModified.pNext=&runtimeMaintenance;
+            }
         }
     }
+    VkPhysicalDeviceProperties startupProperties{};
+    if(!physicalDispatch.getPhysicalDeviceProperties)return VK_ERROR_INITIALIZATION_FAILED;
+    physicalDispatch.getPhysicalDeviceProperties(p,&startupProperties);
+    logLine(std::string("[VK-STARTUP] DOOM device=")+startupProperties.deviceName+
+        " vendor="+std::to_string(startupProperties.vendorID)+" deviceId="+std::to_string(startupProperties.deviceID)+
+        " instance="+std::to_string(reinterpret_cast<uintptr_t>(physicalDispatch.instance))+
+        " layeredPhysical="+std::to_string(reinterpret_cast<uintptr_t>(p))+
+        " createDevice="+std::to_string(reinterpret_cast<uintptr_t>(fn))+
+        " presentation="+(physicalDispatch.coreSurface?"core-sized-window":"scaled-window"),true);
+    if(physicalDispatch.sourceExtent.width>startupProperties.limits.maxImageDimension2D ||
+       physicalDispatch.sourceExtent.height>startupProperties.limits.maxImageDimension2D)
+        stopVulkanStartup("Render Scale is too high for this GPU's maximum image size.");
     KharvoxXRPreparePhysicalDeviceBinding(p);logLine("Preserving layered physical device for downstream vkCreateDevice; XR binding keeps runtime physical");
     VkResult r=VK_ERROR_INITIALIZATION_FAILED;VkResult mediatedVk=VK_ERROR_INITIALIZATION_FAILED;if(KharvoxXRCreateVulkanDevice(nextGipa,p,&runtimeModified,&modified,a,out,&mediatedVk))r=mediatedVk;else r=fn?fn(p,&modified,a,out):VK_ERROR_INITIALIZATION_FAILED;
-    if(r==VK_SUCCESS){DeviceDispatch d{};d.gdpa=nextGdpa;d.physical=p;d.independentSurface=physicalDispatch.independentSurface;
+    if(r==VK_SUCCESS){DeviceDispatch d{};d.gdpa=nextGdpa;d.physical=p;d.independentSurface=physicalDispatch.independentSurface;d.coreSurface=physicalDispatch.coreSurface;
       d.xr.getDeviceProcAddr=nextGdpa;
 #define LOAD(field,name) d.field=reinterpret_cast<decltype(d.field)>(kharvox::native::trace::wrap(#name,nextGdpa(*out,#name),true))
       LOAD(destroy,vkDestroyDevice);LOAD(getQueue,vkGetDeviceQueue);LOAD(getQueue2,vkGetDeviceQueue2);LOAD(createSwapchain,vkCreateSwapchainKHR);LOAD(destroySwapchain,vkDestroySwapchainKHR);LOAD(getSwapchainImages,vkGetSwapchainImagesKHR);LOAD(acquire,vkAcquireNextImageKHR);LOAD(acquire2,vkAcquireNextImage2KHR);LOAD(submit,vkQueueSubmit);LOAD(submit2,vkQueueSubmit2);LOAD(present,vkQueuePresentKHR);
@@ -1008,11 +1053,11 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateDevice(VkPhysicalDevice p,const VkDeviceC
       LOAD(xr.createImageView,vkCreateImageView);LOAD(xr.destroyImageView,vkDestroyImageView);LOAD(xr.createSampler,vkCreateSampler);LOAD(xr.destroySampler,vkDestroySampler);LOAD(xr.createShaderModule,vkCreateShaderModule);LOAD(xr.destroyShaderModule,vkDestroyShaderModule);LOAD(xr.createDescriptorSetLayout,vkCreateDescriptorSetLayout);LOAD(xr.destroyDescriptorSetLayout,vkDestroyDescriptorSetLayout);LOAD(xr.createDescriptorPool,vkCreateDescriptorPool);LOAD(xr.destroyDescriptorPool,vkDestroyDescriptorPool);LOAD(xr.allocateDescriptorSets,vkAllocateDescriptorSets);LOAD(xr.updateDescriptorSets,vkUpdateDescriptorSets);LOAD(xr.createPipelineLayout,vkCreatePipelineLayout);LOAD(xr.destroyPipelineLayout,vkDestroyPipelineLayout);LOAD(xr.createComputePipelines,vkCreateComputePipelines);LOAD(xr.createGraphicsPipelines,vkCreateGraphicsPipelines);LOAD(xr.destroyPipeline,vkDestroyPipeline);LOAD(xr.cmdBindPipeline,vkCmdBindPipeline);LOAD(xr.cmdBindDescriptorSets,vkCmdBindDescriptorSets);LOAD(xr.cmdPushConstants,vkCmdPushConstants);LOAD(xr.cmdDispatch,vkCmdDispatch);LOAD(xr.createRenderPass,vkCreateRenderPass);LOAD(xr.destroyRenderPass,vkDestroyRenderPass);LOAD(xr.createFramebuffer,vkCreateFramebuffer);LOAD(xr.destroyFramebuffer,vkDestroyFramebuffer);LOAD(xr.cmdBeginRenderPass,vkCmdBeginRenderPass);LOAD(xr.cmdEndRenderPass,vkCmdEndRenderPass);LOAD(xr.cmdBindVertexBuffers,vkCmdBindVertexBuffers);LOAD(xr.cmdBindIndexBuffer,vkCmdBindIndexBuffer);LOAD(xr.cmdDrawIndexed,vkCmdDrawIndexed);LOAD(xr.cmdSetViewport,vkCmdSetViewport);LOAD(xr.cmdSetScissor,vkCmdSetScissor);LOAD(xr.createSemaphore,vkCreateSemaphore);LOAD(xr.destroySemaphore,vkDestroySemaphore);LOAD(xr.createFence,vkCreateFence);LOAD(xr.destroyFence,vkDestroyFence);LOAD(xr.resetFences,vkResetFences);LOAD(xr.waitForFences,vkWaitForFences);LOAD(xr.queueSubmit,vkQueueSubmit);LOAD(xr.queueWaitIdle,vkQueueWaitIdle);
       {auto vulkan=GetModuleHandleW(L"vulkan-1.dll");d.xr.getPhysicalDeviceMemoryProperties=reinterpret_cast<PFN_vkGetPhysicalDeviceMemoryProperties>(vulkan?GetProcAddress(vulkan,"vkGetPhysicalDeviceMemoryProperties"):nullptr);d.xr.getPhysicalDeviceProperties=reinterpret_cast<PFN_vkGetPhysicalDeviceProperties>(vulkan?GetProcAddress(vulkan,"vkGetPhysicalDeviceProperties"):nullptr);d.xr.getPhysicalDeviceQueueFamilyProperties=reinterpret_cast<PFN_vkGetPhysicalDeviceQueueFamilyProperties>(vulkan?GetProcAddress(vulkan,"vkGetPhysicalDeviceQueueFamilyProperties"):nullptr);}
 #undef LOAD
-      {std::lock_guard<std::mutex>l(stateMutex);devices[key(*out)]=d;}logLine("Device created");KharvoxXRSetQueueAccessCallbacks(lockQueueAccess,unlockQueueAccess);KharvoxXRSetDevice(p,*out,d.xr);kharvox::native::setQueueAccessCallbacks(lockQueueAccess,unlockQueueAccess);kharvox::native::setDevice(physicalDispatch.instance,p,*out,nextGdpa,nextGipa);}return r;
+      {std::lock_guard<std::mutex>l(stateMutex);devices[key(*out)]=d;}logLine("Device created");KharvoxXRSetQueueAccessCallbacks(lockQueueAccess,unlockQueueAccess);KharvoxXRSetDevice(p,*out,d.xr);kharvox::native::setQueueAccessCallbacks(lockQueueAccess,unlockQueueAccess);kharvox::native::setDevice(physicalDispatch.instance,p,*out,nextGdpa,nextGipa);}else {logLine("[VK-STARTUP] device creation failed result="+std::to_string(r),true);stopVulkanStartup("Vulkan/OpenXR device initialization failed. Ensure DOOM and the VR runtime use the same GPU. See the KHARVOX log in %TEMP%.");}return r;
 }
 VKAPI_ATTR void VKAPI_CALL vkDestroyDevice(VkDevice d,const VkAllocationCallbacks*a){auto k=key(d);auto s=deviceState(k);if(!s.runtimeAuxiliary){logLine("vkDestroyDevice");kharvox::native::beforeDeviceDestroy(d);KharvoxXRDeviceDestroyed();kharvox::hands::handSceneDeviceDestroyed();kharvox::hudgpu::deviceDestroyed();}if(s.destroy)s.destroy(d,a);std::lock_guard<std::mutex>l(stateMutex);devices.erase(k);}
-VKAPI_ATTR void VKAPI_CALL vkGetDeviceQueue(VkDevice d,uint32_t f,uint32_t q,VkQueue*out){auto s=deviceState(key(d));if(s.getQueue)s.getQueue(d,f,q,out);std::ostringstream x;x<<"Queue acquired family="<<f<<" index="<<q;logLine(x.str());if(out&&*out){KharvoxXRSetQueue(*out,f,q);kharvox::native::setQueue(*out,f,q);}}
-VKAPI_ATTR void VKAPI_CALL vkGetDeviceQueue2(VkDevice d,const VkDeviceQueueInfo2*i,VkQueue*out){auto s=deviceState(key(d));if(s.getQueue2)s.getQueue2(d,i,out);std::ostringstream x;x<<"Queue acquired family="<<(i?i->queueFamilyIndex:0)<<" index="<<(i?i->queueIndex:0);logLine(x.str());if(out&&*out&&i){KharvoxXRSetQueue(*out,i->queueFamilyIndex,i->queueIndex);kharvox::native::setQueue(*out,i->queueFamilyIndex,i->queueIndex);}}
+VKAPI_ATTR void VKAPI_CALL vkGetDeviceQueue(VkDevice d,uint32_t f,uint32_t q,VkQueue*out){auto s=deviceState(key(d));if(out)*out=VK_NULL_HANDLE;if(s.getQueue&&out)s.getQueue(d,f,q,out);std::ostringstream x;x<<"Queue acquired family="<<f<<" index="<<q;logLine(x.str());if(out&&*out){KharvoxXRSetQueue(*out,f,q);kharvox::native::setQueue(*out,f,q);}}
+VKAPI_ATTR void VKAPI_CALL vkGetDeviceQueue2(VkDevice d,const VkDeviceQueueInfo2*i,VkQueue*out){auto s=deviceState(key(d));if(out)*out=VK_NULL_HANDLE;if(s.getQueue2&&out&&i)s.getQueue2(d,i,out);std::ostringstream x;x<<"Queue acquired family="<<(i?i->queueFamilyIndex:0)<<" index="<<(i?i->queueIndex:0);logLine(x.str());if(out&&*out&&i){KharvoxXRSetQueue(*out,i->queueFamilyIndex,i->queueIndex);kharvox::native::setQueue(*out,i->queueFamilyIndex,i->queueIndex);}}
 VKAPI_ATTR VkResult VKAPI_CALL vkCreateSwapchainKHR(VkDevice d,const VkSwapchainCreateInfoKHR*i,const VkAllocationCallbacks*a,VkSwapchainKHR*out){
     auto s=deviceState(key(d));
     if(!s.createSwapchain)return VK_ERROR_EXTENSION_NOT_PRESENT;
@@ -1039,6 +1084,17 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateSwapchainKHR(VkDevice d,const VkSwapchain
         scalingInfo.scalingBehavior=VK_PRESENT_SCALING_STRETCH_BIT_EXT;
         scalingInfo.pNext=effective.pNext;effective.pNext=&scalingInfo;
         logLine("[INDEPENDENT-SURFACE] Vulkan scales desktop presentation only; XR source="+std::to_string(i->imageExtent.width)+"x"+std::to_string(i->imageExtent.height));
+    }
+    if(s.coreSurface&&isGameSurface(i->surface)) {
+        const auto instance=instanceState(key(s.physical));
+        ensureCoreSurface(instance,i->surface);
+        VkSurfaceCapabilitiesKHR caps{};
+        if(!instance.surfaceCaps||instance.surfaceCaps(s.physical,i->surface,&caps)!=VK_SUCCESS ||
+           caps.currentExtent.width!=i->imageExtent.width || caps.currentExtent.height!=i->imageExtent.height ||
+           i->imageExtent.width!=instance.sourceExtent.width || i->imageExtent.height!=instance.sourceExtent.height)
+            stopVulkanStartup("The Vulkan surface does not match the VR render resolution. Try a lower Render Scale.");
+        logLine("[WSI-STARTUP] core Win32 extent verified; no present scaling structure; source="+
+            std::to_string(i->imageExtent.width)+"x"+std::to_string(i->imageExtent.height),true);
     }
     effective.imageUsage|=VK_IMAGE_USAGE_TRANSFER_SRC_BIT|VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     const auto sequence=++swapchainCreateCount;

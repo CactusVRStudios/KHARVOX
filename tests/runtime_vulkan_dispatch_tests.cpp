@@ -25,6 +25,22 @@ VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL loader(VkInstance i, const char* n) {
 }
 int main() {
     using namespace kharvox;
+    require(!resolveLayerCreateDevice(downstream,VK_NULL_HANDLE));
+    auto createLookup=+[](VkInstance i,const char* name)->PFN_vkVoidFunction {
+        require(i==instance && !std::strcmp(name,"vkCreateDevice"));
+        return reinterpret_cast<PFN_vkVoidFunction>(createAdapter);
+    };
+    require(resolveLayerCreateDevice(createLookup,instance)==reinterpret_cast<PFN_vkCreateDevice>(createAdapter));
+    for(bool xrSuccess:{false,true})for(auto vkResult:{VK_SUCCESS,VK_ERROR_DEVICE_LOST}) {
+        auto output=reinterpret_cast<VkDevice>(uintptr_t(4)); auto status=vkResult;
+        finishRuntimeVulkanCreate(xrSuccess,&status,&output);
+        require((status==VK_SUCCESS)==(xrSuccess&&vkResult==VK_SUCCESS));
+        require(bool(output)==(status==VK_SUCCESS));
+    }
+    VkDevice empty{};VkResult staleSuccess=VK_SUCCESS;
+    finishRuntimeVulkanCreate(true,&staleSuccess,&empty);
+    require(staleSuccess==VK_ERROR_INITIALIZATION_FAILED && !empty);
+
     for (const char* command : {"vkGetPhysicalDeviceMemoryProperties", "vkGetPhysicalDeviceProperties2",
          "vkEnumerateDeviceExtensionProperties", "vkEnumerateDeviceLayerProperties"}) {
         auto sim = resolveRuntimeVulkanProc(instance, command, false, true, downstream, loader, createAdapter);

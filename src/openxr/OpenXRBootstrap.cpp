@@ -153,6 +153,7 @@ struct State {
     kharvox::OpenXRVulkanPath vulkanPath{kharvox::OpenXRVulkanPath::None};
     std::string runtimeManifest;
     bool simulatorRuntime{};
+    bool physicalIdentityQueryEnabled{};
     VkInstance vkInstance{}; VkPhysicalDevice physical{},xrPhysical{}; VkDevice device{}; VkQueue queue{}; uint32_t queueFamily{},queueIndex{},runtimeMaxVulkanApiVersion{}; KharvoxVulkanDispatch vk{};
     VkCommandPool commandPool{}; VkCommandBuffer commandBuffer{}; VkFence copyFence{};
     std::unordered_map<VkSwapchainKHR,DoomSwapchain> doomSwapchains; DoomSwapchain retiredCompatibleDoomSwapchain{}; bool retiredCompatibleDoomSwapchainValid{}; ULONGLONG retiredCompatibleDoomSwapchainAt{}; VkSwapchainKHR startupActiveDoomSwapchain{}; bool vdxrSessionDeferralLogged{}; std::array<EyeSwapchain,2> eyes; EyeSwapchain hudQuad; EyeSwapchain laserQuad; uint32_t hudSurfaceWidth{},hudSurfaceHeight{}; float hudSafeTanHalfHorizontal{},hudSafeTanHalfVertical{}; int64_t hudQuadFormat{}; uint64_t hudQuadCopiedFrames{}; bool hudQuadRuntimeFailureLogged{}; bool laserQuadRuntimeFailureLogged{}; std::array<XrView,2> views{{{XR_TYPE_VIEW},{XR_TYPE_VIEW}}};
@@ -3253,8 +3254,116 @@ bool KharvoxXRMediationEnabled(){return GetFileAttributesW(kharvox::runtimePath(
 bool KharvoxXRMediationReentry(){return mediationReentry;}
 VkPhysicalDevice KharvoxXRMappedPhysicalForReentry(){return reentryPhysical;}
 PFN_vkCreateDevice KharvoxXRCreateDeviceForReentry(){return reentryCreateDevice;}
-bool KharvoxXRCreateVulkanInstance(PFN_vkGetInstanceProcAddr g,const VkInstanceCreateInfo*ci,const VkAllocationCallbacks*a,VkInstance*out,VkResult*vr){std::lock_guard<std::mutex>l(mutex);if(!s.enable2||!s.createVulkanInstance)return false;XrGraphicsRequirementsVulkanKHR req{XR_TYPE_GRAPHICS_REQUIREMENTS_VULKAN_KHR};auto rr=s.requirements2(s.instance,s.system,&req);if(XR_FAILED(rr)){log("requirements2 "+result(rr));return false;}XrVulkanInstanceCreateInfoKHR xi{XR_TYPE_VULKAN_INSTANCE_CREATE_INFO_KHR};xi.systemId=s.system;xi.vulkanCreateInfo=ci;xi.vulkanAllocator=a;if(s.useEnable2Bridge){bridgeNextGipa=g;xi.pfnGetInstanceProcAddr=bridgeGipa;log("xrCreateVulkanInstanceKHR Virtual Desktop bridgeGIPA="+std::to_string(reinterpret_cast<uintptr_t>(bridgeGipa)));}else{xi.pfnGetInstanceProcAddr=g;log("xrCreateVulkanInstanceKHR runtime-managed nextGIPA="+std::to_string(reinterpret_cast<uintptr_t>(g)));}rr=s.createVulkanInstance(s.instance,&xi,out,vr);log("xrCreateVulkanInstanceKHR xr="+result(rr)+" vk="+std::to_string(*vr));if(XR_SUCCEEDED(rr)&&*vr==VK_SUCCESS)s.vkInstance=*out;return true;}
-bool KharvoxXRCreateVulkanDevice(PFN_vkGetInstanceProcAddr g,VkPhysicalDevice doomPhysical,const VkDeviceCreateInfo*runtimeCi,const VkDeviceCreateInfo*downstreamCi,const VkAllocationCallbacks*a,VkDevice*out,VkResult*vr){std::lock_guard<std::mutex>l(mutex);if(!s.enable2||!s.createVulkanDevice)return false;if(!s.xrPhysical){XrVulkanGraphicsDeviceGetInfoKHR gi{XR_TYPE_VULKAN_GRAPHICS_DEVICE_GET_INFO_KHR};gi.systemId=s.system;gi.vulkanInstance=s.vkInstance;auto gr=s.graphicsDevice2(s.instance,&gi,&s.xrPhysical);log("xrGetVulkanGraphicsDevice2KHR "+result(gr)+" physical="+std::to_string(reinterpret_cast<uintptr_t>(s.xrPhysical)));if(XR_FAILED(gr))return false;}XrVulkanDeviceCreateInfoKHR di{XR_TYPE_VULKAN_DEVICE_CREATE_INFO_KHR};di.systemId=s.system;di.vulkanPhysicalDevice=s.xrPhysical;di.vulkanAllocator=a;if(s.useEnable2RuntimeManaged){runtimeManagedSessionLoaderRoute.store(false,std::memory_order_release);runtimeManagedNextGipa.store(g,std::memory_order_release);runtimeManagedReentryPhysical.store(doomPhysical,std::memory_order_release);runtimeManagedReentryCreateDevice.store(reinterpret_cast<PFN_vkCreateDevice>(g(nullptr,"vkCreateDevice")),std::memory_order_release);runtimeManagedDownstreamCreateInfo.store(downstreamCi,std::memory_order_release);di.pfnGetInstanceProcAddr=runtimeManagedGipa;di.vulkanCreateInfo=runtimeCi;log("xrCreateVulkanDeviceKHR cross-thread layer adapter physical="+std::to_string(reinterpret_cast<uintptr_t>(s.xrPhysical))+" layeredPhysical="+std::to_string(reinterpret_cast<uintptr_t>(doomPhysical))+" simulator="+std::to_string(s.simulatorRuntime)+" adapterGIPA="+std::to_string(reinterpret_cast<uintptr_t>(runtimeManagedGipa))+" callerThread="+std::to_string(GetCurrentThreadId()));const auto rr=s.createVulkanDevice(s.instance,&di,out,vr);runtimeManagedDownstreamCreateInfo.store(nullptr,std::memory_order_release);runtimeManagedReentryCreateDevice.store(nullptr,std::memory_order_release);runtimeManagedReentryPhysical.store(VK_NULL_HANDLE,std::memory_order_release);if(kharvox::isSteamBackedOpenXRRuntime(s.runtimeKind)&&XR_SUCCEEDED(rr)&&vr&&*vr==VK_SUCCESS&&out&&*out){runtimeManagedSessionLoaderRoute.store(true,std::memory_order_release);log("[STEAM-XR] Switching retained callback to public Vulkan Loader GIPA for runtime session dispatch");}else{runtimeManagedSessionLoaderRoute.store(false,std::memory_order_release);if(!s.simulatorRuntime)runtimeManagedNextGipa.store(nullptr,std::memory_order_release);}log("xrCreateVulkanDeviceKHR xr="+result(rr)+" vk="+std::to_string(*vr));return true;}di.vulkanCreateInfo=downstreamCi;auto doomProps=reinterpret_cast<PFN_vkGetPhysicalDeviceProperties>(g(s.vkInstance,"vkGetPhysicalDeviceProperties"));auto vulkan=GetModuleHandleW(L"vulkan-1.dll");auto xrProps=reinterpret_cast<PFN_vkGetPhysicalDeviceProperties>(vulkan?GetProcAddress(vulkan,"vkGetPhysicalDeviceProperties"):nullptr);if(doomProps&&xrProps){VkPhysicalDeviceProperties dp{},xp{};doomProps(doomPhysical,&dp);xrProps(s.xrPhysical,&xp);log(std::string("DOOM GPU ")+dp.deviceName+" vendor="+std::to_string(dp.vendorID)+" device="+std::to_string(dp.deviceID));log(std::string("XR GPU ")+xp.deviceName+" vendor="+std::to_string(xp.vendorID)+" device="+std::to_string(xp.deviceID));if(dp.vendorID!=xp.vendorID||dp.deviceID!=xp.deviceID){log("GPU identity mismatch");return false;}}bridgeNextGipa=g;reentryPhysical=doomPhysical;reentryCreateDevice=reinterpret_cast<PFN_vkCreateDevice>(g(nullptr,"vkCreateDevice"));di.pfnGetInstanceProcAddr=bridgeGipa;log("xrCreateVulkanDeviceKHR runtimePhysical="+std::to_string(reinterpret_cast<uintptr_t>(s.xrPhysical))+" bridgeGIPA="+std::to_string(reinterpret_cast<uintptr_t>(bridgeGipa)));auto rr=s.createVulkanDevice(s.instance,&di,out,vr);reentryPhysical=VK_NULL_HANDLE;reentryCreateDevice=nullptr;log("xrCreateVulkanDeviceKHR xr="+result(rr)+" vk="+std::to_string(*vr));return true;}
+bool KharvoxXRCreateVulkanInstance(PFN_vkGetInstanceProcAddr g,const VkInstanceCreateInfo* ci,
+    const VkAllocationCallbacks* a,VkInstance* out,VkResult* vr) {
+    std::lock_guard<std::mutex> l(mutex);
+    if(!s.enable2||!s.createVulkanInstance)return false;
+    if(!out||!vr)return true;
+    *out=VK_NULL_HANDLE;*vr=VK_ERROR_INITIALIZATION_FAILED;
+    if(!ci||!g||!s.requirements2)return true;
+    XrGraphicsRequirementsVulkanKHR req{XR_TYPE_GRAPHICS_REQUIREMENTS_VULKAN_KHR};
+    auto rr=s.requirements2(s.instance,s.system,&req);
+    if(XR_FAILED(rr)){log("requirements2 "+result(rr));return true;}
+    s.physicalIdentityQueryEnabled=ci->pApplicationInfo&&ci->pApplicationInfo->apiVersion>=VK_API_VERSION_1_1;
+    for(uint32_t index=0;index<ci->enabledExtensionCount;++index)
+        if(!strcmp(ci->ppEnabledExtensionNames[index],VK_KHR_EXTERNAL_MEMORY_CAPABILITIES_EXTENSION_NAME))s.physicalIdentityQueryEnabled=true;
+    XrVulkanInstanceCreateInfoKHR xi{XR_TYPE_VULKAN_INSTANCE_CREATE_INFO_KHR};
+    xi.systemId=s.system;xi.vulkanCreateInfo=ci;xi.vulkanAllocator=a;
+    if(s.useEnable2Bridge){bridgeNextGipa=g;xi.pfnGetInstanceProcAddr=bridgeGipa;}
+    else xi.pfnGetInstanceProcAddr=g;
+    log(std::string("[XR-STARTUP] creating Vulkan instance via ")+(s.useEnable2Bridge?"VD bridge":"runtime-managed")+
+        " nextGipaOwner="+pointerOwner(reinterpret_cast<PFN_vkVoidFunction>(g)),true);
+    rr=s.createVulkanInstance(s.instance,&xi,out,vr);
+    kharvox::finishRuntimeVulkanCreate(XR_SUCCEEDED(rr),vr,out);
+    log("xrCreateVulkanInstanceKHR xr="+result(rr)+" vk="+std::to_string(*vr),true);
+    if(*vr==VK_SUCCESS)s.vkInstance=*out;
+    return true;
+}
+bool KharvoxXRCreateVulkanDevice(PFN_vkGetInstanceProcAddr g,VkPhysicalDevice doomPhysical,
+    const VkDeviceCreateInfo* runtimeCi,const VkDeviceCreateInfo* downstreamCi,
+    const VkAllocationCallbacks* a,VkDevice* out,VkResult* vr) {
+    std::lock_guard<std::mutex> l(mutex);
+    if(!s.enable2||!s.createVulkanDevice)return false;
+    if(!out||!vr)return true;
+    *out=VK_NULL_HANDLE;*vr=VK_ERROR_INITIALIZATION_FAILED;
+    if(!g||!s.vkInstance||!doomPhysical||!s.graphicsDevice2)return true;
+    if(!s.xrPhysical){
+        XrVulkanGraphicsDeviceGetInfoKHR gi{XR_TYPE_VULKAN_GRAPHICS_DEVICE_GET_INFO_KHR};
+        gi.systemId=s.system;gi.vulkanInstance=s.vkInstance;
+        const auto gr=s.graphicsDevice2(s.instance,&gi,&s.xrPhysical);
+        log("xrGetVulkanGraphicsDevice2KHR "+result(gr)+" physical="+std::to_string(reinterpret_cast<uintptr_t>(s.xrPhysical)));
+        if(XR_FAILED(gr)||!s.xrPhysical){
+            s.xrPhysical=VK_NULL_HANDLE;
+            log("[XR-STARTUP] physical-device selection failed; no direct-device fallback",true);
+            return true;
+        }
+    }
+    // Runtime physical handles come from the public loader except for the
+    // simulator's downstream enumeration. Never compare the raw handle values.
+    const auto loader=GetModuleHandleW(L"vulkan-1.dll");
+    const auto publicGipa=reinterpret_cast<PFN_vkGetInstanceProcAddr>(loader?GetProcAddress(loader,"vkGetInstanceProcAddr"):nullptr);
+    const auto xrGipa=s.simulatorRuntime?g:publicGipa;
+    const auto doomProps=reinterpret_cast<PFN_vkGetPhysicalDeviceProperties>(g(s.vkInstance,"vkGetPhysicalDeviceProperties"));
+    const auto xrProps=reinterpret_cast<PFN_vkGetPhysicalDeviceProperties>(xrGipa?xrGipa(s.vkInstance,"vkGetPhysicalDeviceProperties"):nullptr);
+    const auto create=kharvox::resolveLayerCreateDevice(g,s.vkInstance);
+    if(!doomProps||!xrProps||!create){log("[XR-STARTUP] missing instance-scoped device dispatch; refusing unbound device",true);return true;}
+    VkPhysicalDeviceProperties dp{},xp{};doomProps(doomPhysical,&dp);xrProps(s.xrPhysical,&xp);
+    log(std::string("[XR-STARTUP] DOOM GPU=")+dp.deviceName+" vendor="+std::to_string(dp.vendorID)+" device="+std::to_string(dp.deviceID)+
+        " XR GPU="+xp.deviceName+" vendor="+std::to_string(xp.vendorID)+" device="+std::to_string(xp.deviceID)+
+        " instance="+std::to_string(reinterpret_cast<uintptr_t>(s.vkInstance))+
+        " layeredPhysical="+std::to_string(reinterpret_cast<uintptr_t>(doomPhysical))+
+        " runtimePhysical="+std::to_string(reinterpret_cast<uintptr_t>(s.xrPhysical))+
+        " createDeviceOwner="+pointerOwner(reinterpret_cast<PFN_vkVoidFunction>(create)),true);
+    if(dp.vendorID!=xp.vendorID||dp.deviceID!=xp.deviceID){log("[XR-STARTUP] GPU identity mismatch; refusing direct-device fallback",true);return true;}
+    auto props2=[&](PFN_vkGetInstanceProcAddr proc){
+        auto fn=reinterpret_cast<PFN_vkGetPhysicalDeviceProperties2>(proc(s.vkInstance,"vkGetPhysicalDeviceProperties2"));
+        return fn?fn:reinterpret_cast<PFN_vkGetPhysicalDeviceProperties2>(proc(s.vkInstance,"vkGetPhysicalDeviceProperties2KHR"));
+    };
+    const auto doomProps2=props2(g),xrProps2=props2(xrGipa);
+    if(s.physicalIdentityQueryEnabled&&doomProps2&&xrProps2){
+        VkPhysicalDeviceIDProperties did{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES},xid{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES};
+        VkPhysicalDeviceProperties2 dprops{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2},xprops{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
+        dprops.pNext=&did;xprops.pNext=&xid;doomProps2(doomPhysical,&dprops);xrProps2(s.xrPhysical,&xprops);
+        const bool hasD=std::any_of(std::begin(did.deviceUUID),std::end(did.deviceUUID),[](uint8_t v){return v!=0;});
+        const bool hasX=std::any_of(std::begin(xid.deviceUUID),std::end(xid.deviceUUID),[](uint8_t v){return v!=0;});
+        if(hasD&&hasX&&std::memcmp(did.deviceUUID,xid.deviceUUID,VK_UUID_SIZE)){
+            log("[XR-STARTUP] GPU UUID mismatch despite equal vendor/device IDs; refusing device",true);return true;
+        }
+        log(std::string("[XR-STARTUP] GPU UUID comparison=")+(hasD&&hasX?"matched":"unavailable"),true);
+    }else log("[XR-STARTUP] GPU UUID query unavailable; vendor/device comparison only",true);
+    XrVulkanDeviceCreateInfoKHR di{XR_TYPE_VULKAN_DEVICE_CREATE_INFO_KHR};
+    di.systemId=s.system;di.vulkanPhysicalDevice=s.xrPhysical;di.vulkanAllocator=a;
+    XrResult rr{};
+    if(s.useEnable2RuntimeManaged){
+        runtimeManagedSessionLoaderRoute.store(false,std::memory_order_release);
+        runtimeManagedNextGipa.store(g,std::memory_order_release);
+        runtimeManagedReentryPhysical.store(doomPhysical,std::memory_order_release);
+        runtimeManagedReentryCreateDevice.store(create,std::memory_order_release);
+        runtimeManagedDownstreamCreateInfo.store(downstreamCi,std::memory_order_release);
+        di.pfnGetInstanceProcAddr=runtimeManagedGipa;di.vulkanCreateInfo=runtimeCi;
+        log("xrCreateVulkanDeviceKHR cross-thread layer adapter armed",true);
+        rr=s.createVulkanDevice(s.instance,&di,out,vr);
+        kharvox::finishRuntimeVulkanCreate(XR_SUCCEEDED(rr),vr,out);
+        runtimeManagedDownstreamCreateInfo.store(nullptr,std::memory_order_release);
+        runtimeManagedReentryCreateDevice.store(nullptr,std::memory_order_release);
+        runtimeManagedReentryPhysical.store(VK_NULL_HANDLE,std::memory_order_release);
+        if(kharvox::isSteamBackedOpenXRRuntime(s.runtimeKind)&&*vr==VK_SUCCESS){
+            runtimeManagedSessionLoaderRoute.store(true,std::memory_order_release);
+            log("[STEAM-XR] Switching retained callback to public Vulkan Loader GIPA for runtime session dispatch");
+        }else{
+            runtimeManagedSessionLoaderRoute.store(false,std::memory_order_release);
+            if(!s.simulatorRuntime)runtimeManagedNextGipa.store(nullptr,std::memory_order_release);
+        }
+    }else{
+        di.vulkanCreateInfo=downstreamCi;bridgeNextGipa=g;
+        reentryPhysical=doomPhysical;reentryCreateDevice=create;di.pfnGetInstanceProcAddr=bridgeGipa;
+        rr=s.createVulkanDevice(s.instance,&di,out,vr);
+        reentryPhysical=VK_NULL_HANDLE;reentryCreateDevice=nullptr;
+        kharvox::finishRuntimeVulkanCreate(XR_SUCCEEDED(rr),vr,out);
+    }
+    log("xrCreateVulkanDeviceKHR xr="+result(rr)+" vk="+std::to_string(*vr),true);
+    return true;
+}
 void KharvoxXRPreparePhysicalDeviceBinding(VkPhysicalDevice doomPhysical){std::lock_guard<std::mutex>l(mutex);if(s.useEnable2Bridge||s.vulkanPath!=kharvox::OpenXRVulkanPath::VulkanEnable1Direct||!s.graphicsDevice1||!s.instance||!s.system||!s.vkInstance||s.xrPhysical)return;const XrResult r=s.graphicsDevice1(s.instance,s.system,s.vkInstance,&s.xrPhysical);log("xrGetVulkanGraphicsDeviceKHR before vkCreateDevice "+result(r)+" runtimePhysical="+std::to_string(reinterpret_cast<uintptr_t>(s.xrPhysical))+" layeredPhysical="+std::to_string(reinterpret_cast<uintptr_t>(doomPhysical)));if(XR_FAILED(r))s.xrPhysical=VK_NULL_HANDLE;}
 std::vector<std::string> KharvoxXRRequiredDeviceExtensions(){std::lock_guard<std::mutex>l(mutex);std::vector<std::string> out;if(!s.deviceExtensions||!s.system)return out;uint32_t size=0;if(XR_FAILED(s.deviceExtensions(s.instance,s.system,0,&size,nullptr))||!size)return out;std::vector<char>b(size);if(XR_FAILED(s.deviceExtensions(s.instance,s.system,size,&size,b.data())))return out;char*ctx=nullptr;for(char*t=strtok_s(b.data()," ",&ctx);t;t=strtok_s(nullptr," ",&ctx))out.emplace_back(t);return out;}
 std::vector<std::string> KharvoxXRRequiredInstanceExtensions(){std::lock_guard<std::mutex>l(mutex);std::vector<std::string> out;if(!s.instanceExtensions||!s.system)return out;uint32_t size=0;if(XR_FAILED(s.instanceExtensions(s.instance,s.system,0,&size,nullptr))||!size)return out;std::vector<char>b(size);if(XR_FAILED(s.instanceExtensions(s.instance,s.system,size,&size,b.data())))return out;char*ctx=nullptr;for(char*t=strtok_s(b.data()," ",&ctx);t;t=strtok_s(nullptr," ",&ctx))out.emplace_back(t);return out;}

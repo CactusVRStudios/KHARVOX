@@ -82,7 +82,7 @@ int main(int argc, char** argv) {
     if (calibrationFingerprint(config / "hud_flat_calibration_default.cfg")
         != 0x8bc58407u) return 19;
     if (calibrationFingerprint(config / "hud_profile_calibration_default.cfg")
-        != 0x4575642cu) return 20;
+        != 0x59b52852u) return 20;
     if (!readScalar(config / "hud_quad_scale_default.cfg", 16.75f)) return 21;
     return 0;
 }

@@ -1,7 +1,8 @@
 #include "../src/weapon/AerWeaponAttachments.h"
 #include <cstdlib>
+#include <cstdio>
 #include <limits>
-void check(bool v){if(!v)std::abort();}
+#define check(v) do { if(!(v)){ std::fprintf(stderr,"attachment check failed at line %d\n",__LINE__); std::abort(); } } while(false)
 int main(){
     using namespace kharvox;
     const std::array<float,12> identity{0,0,0,1,0,0,0,1,0,0,0,1};

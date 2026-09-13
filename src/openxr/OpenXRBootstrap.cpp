@@ -2313,8 +2313,8 @@ void updateGameplayActions(XrTime displayTime){
     const XrVector2f nativeUiRightStick=centeredNativeUiStick(s.rightStick);
     XrVector2f wheelSelectionStick=s.leftStick;
     if(s.motionWheelEnabled){
-        // Match the hand to the logical selection stick (left by default).
-        const auto& wCtrl=s.leftHandSwapSticks?s.rightController:s.leftController;
+        // Motion follows the weapon hand as in PR #1; the selection stick is independent.
+        const auto& wCtrl=weaponController();
         kharvox::MotionWeaponWheelInput wheelInput{};
         wheelInput.wheelActive=weaponWheelActive;
         wheelInput.trackingValid=wCtrl.valid&&wCtrl.positionTracked&&s.head.valid;
@@ -2340,7 +2340,7 @@ void updateGameplayActions(XrTime displayTime){
         if(!weaponWheelActive||!wheelInput.trackingValid||wheelOutput.stickBypassActive)
             s.wheelClicks={};
         else if(wheelOutput.triggerHapticPulse)
-            kharvox::queueControllerClick(s.wheelClicks[s.leftHandSwapSticks?1:0],GetTickCount64());
+            kharvox::queueControllerClick(s.wheelClicks[s.leftHanded?0:1],GetTickCount64());
     }
     const XrVector2f nativeRightStick=nativeUiMenu?nativeUiRightStick
         :weaponWheelActive?wheelSelectionStick:XrVector2f{gameplayTurnX,0.f};

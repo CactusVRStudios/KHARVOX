@@ -141,7 +141,7 @@ internal sealed class KharvoxLaunchOptions
 
 internal static class KharvoxRunner
 {
-    internal const string BuildId = "2026.09.13-launcher-v0.8-beta.2";
+    internal const string BuildId = "2026.09.13-launcher-v0.8-beta.3";
     private const string LayerName = "VK_LAYER_KHARVOX_OPENXR";
     private const string RegistryPath = @"SOFTWARE\Khronos\Vulkan\ImplicitLayers";
     private static readonly CultureInfo Invariant = CultureInfo.InvariantCulture;
@@ -291,7 +291,7 @@ internal static class KharvoxRunner
         using var launchGate = AcquireLaunchGate();
         using var launchState = BeginLaunch();
         EnsureNoRunningDoom();
-        if (FileVersionInfo.GetVersionInfo(dllPath).ProductVersion != "0.8.0-beta.2")
+        if (FileVersionInfo.GetVersionInfo(dllPath).ProductVersion != "0.8.0-beta.3")
             throw new InvalidOperationException("The 0.8 Beta launcher requires its matching 0.8 Beta KharvoxLayer.dll. Extract the complete Beta release into its own folder.");
         using var gameIntro = await VrGameIntroSession.StartAsync(runtimeDir, statusUpdate, disableVrIntro: options.DisableVrIntro).ConfigureAwait(false);
         var previousNativeFailure = NativeLaunchRecovery.Prepare(runtimeDir, options.RendererMode);

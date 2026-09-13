@@ -836,7 +836,7 @@ internal sealed class InfoForm : Form
             "Stick click         Use / Melee / Glory Kill");
         AddHeading(page, "Motion weapon wheel");
         AddBullet(page, "Hold the weapon-selection stick down as usual, then move the right weapon hand sideways or vertically to select a slot. Release the opening stick to confirm. In Left Hand mode, move the left weapon hand instead.");
-        AddBullet(page, "The selection stick takes priority only while deflected beyond its 0.3 radial deadzone. Center it to resume hand selection immediately. Tracking loss clears the motion origin; recovery captures a new hand position.");
+        AddBullet(page, "The selection stick takes priority only while deflected beyond its 0.3 radial deadzone. Center it to resume hand selection immediately. Sector clicks vibrate the controller used for selection: left for stick, right for motion with the default mapping. Tracking loss clears the motion origin; recovery captures a new hand position.");
         AddHeading(page, "Left Hand mode — Button swap");
         AddBullet(page, "Left Trigger / Grip become Fire and weapon mod; the left hand holds the weapon.");
         AddBullet(page, "Right Trigger / Grip become Equipment and two-hand support.");

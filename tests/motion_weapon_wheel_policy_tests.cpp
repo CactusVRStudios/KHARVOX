@@ -216,6 +216,34 @@ int main() {
     check(!state.wasActive && !state.stickWasActive && !state.anchorValid,
         "disable clears the complete gesture state");
 
+    kharvox::WeaponWheelStickHapticState stickHaptics{};
+    check(!kharvox::updateWeaponWheelStickHaptics(stickHaptics, 1, 0, false),
+        "inactive wheel must not click for ordinary locomotion");
+    check(!kharvox::updateWeaponWheelStickHaptics(stickHaptics, 0.3f, 0, true),
+        "stick deadzone must not generate a click");
+    for (int sector = 0; sector < 8; ++sector) {
+        const float angle = sector * 0.78539816339f;
+        const float x = std::cos(angle), y = std::sin(angle);
+        check(kharvox::updateWeaponWheelStickHaptics(stickHaptics, x, y, true),
+            "entering each stick sector must click");
+        check(stickHaptics.lastSector == sector, "stick and motion sectors must match");
+        check(!kharvox::updateWeaponWheelStickHaptics(stickHaptics, x*0.7f, y*0.7f, true),
+            "holding a sector or changing magnitude must not repeat clicks");
+    }
+    check(!kharvox::updateWeaponWheelStickHaptics(stickHaptics, 0, 0, false),
+        "hand takeover clears stick sector without a click");
+    check(kharvox::updateWeaponWheelStickHaptics(stickHaptics, 1, 0, true),
+        "stick takeover after hand control must click again");
+    check(!kharvox::updateWeaponWheelStickHaptics(stickHaptics,
+        std::numeric_limits<float>::quiet_NaN(), 0, true), "invalid stick is inert");
+    for (bool leftHanded : {false, true}) {
+        for (bool swapped : {false, true}) {
+            check(kharvox::weaponWheelHapticHand(true, leftHanded, swapped) == (swapped ? 1 : 0),
+                "stick clicks follow physical selection controller regardless of weapon hand");
+            check(kharvox::weaponWheelHapticHand(false, leftHanded, swapped) == (leftHanded ? 0 : 1),
+                "motion clicks follow weapon hand regardless of stick mapping");
+        }
+    }
     std::cout << "All MotionWeaponWheelPolicy tests passed successfully!" << std::endl;
     return 0;
 }

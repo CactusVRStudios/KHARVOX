@@ -227,6 +227,7 @@ struct State {
     XrTime physicalPunchCooldownUntil{};
     bool weaponSelectPressed{},weaponSelectNativeStarted{},weaponWheelOpened{},secondaryFireGripPressed{};
     std::array<kharvox::ControllerClickState,2> wheelClicks{};
+    kharvox::WeaponWheelStickHapticState wheelStickHaptics{};
     bool motionWheelEnabled{true}; kharvox::MotionWeaponWheelState motionWheelState{};
     bool chainsawArmed{true},pausePressed{};
     XrTime weaponSelectPressedTime{},weaponSwitchPulseUntil{},chainsawPulseUntil{};
@@ -806,6 +807,7 @@ void updateXInputHaptics(){
     if(s.sessionState!=XR_SESSION_STATE_FOCUSED){
         s.wheelClicks={};
         s.motionWheelState={};
+        s.wheelStickHaptics={};
         pendingXInputRumblePeaks.store(0,std::memory_order_release);
         kharvox::resetXInputRumbleFrameAccumulator(s.hapticFrameAccumulator);
         KharvoxBhapticsSubmitRumble(0,0);
@@ -1990,6 +1992,7 @@ void updateGameplayActions(XrTime displayTime){
     if(XR_FAILED(s.syncActionsFn(s.session,&sync))
         ||s.sessionState!=XR_SESSION_STATE_FOCUSED){
         s.motionWheelState={};
+        s.wheelStickHaptics={};
         s.equipmentGrip.cancel();
         clearCapturedXInputRumble();
         releaseMovement();
@@ -2337,10 +2340,18 @@ void updateGameplayActions(XrTime displayTime){
             log("[MOTION-WHEEL] tracking lost; motion anchor cleared");
         if(weaponWheelActive&&!anchorValid&&s.motionWheelState.anchorValid)
             log("[MOTION-WHEEL] tracking anchor acquired");
-        if(!weaponWheelActive||!wheelInput.trackingValid||wheelOutput.stickBypassActive)
+        const bool stickOwnsSelection=weaponWheelActive&&wheelOutput.stickBypassActive;
+        const bool stickClick=kharvox::updateWeaponWheelStickHaptics(
+            s.wheelStickHaptics,s.leftStick.x,s.leftStick.y,stickOwnsSelection);
+        const int hapticHand=kharvox::weaponWheelHapticHand(
+            stickOwnsSelection,s.leftHanded,s.leftHandSwapSticks);
+        // Cancel only the previous owner's UI click; native game rumble still
+        // goes through the shared mixer unchanged. Stick clicks need no pose.
+        s.wheelClicks[1-hapticHand]={};
+        if(!weaponWheelActive||(!stickOwnsSelection&&!wheelInput.trackingValid))
             s.wheelClicks={};
-        else if(wheelOutput.triggerHapticPulse)
-            kharvox::queueControllerClick(s.wheelClicks[s.leftHanded?0:1],GetTickCount64());
+        else if(stickOwnsSelection?stickClick:wheelOutput.triggerHapticPulse)
+            kharvox::queueControllerClick(s.wheelClicks[hapticHand],GetTickCount64());
     }
     const XrVector2f nativeRightStick=nativeUiMenu?nativeUiRightStick
         :weaponWheelActive?wheelSelectionStick:XrVector2f{gameplayTurnX,0.f};

@@ -10,6 +10,43 @@ inline bool motionWheelStickBypass(float x, float y, float deadzone = 0.30f) {
     return x*x + y*y > deadzone*deadzone;
 }
 
+inline int weaponWheelSector(float x, float y, int requestedSectorCount = 8) {
+    if (!std::isfinite(x) || !std::isfinite(y)) return -1;
+    // Angle in range [0, 2*PI)
+    constexpr float twoPi = 6.28318530717958647692f;
+    float angle = std::atan2(y, x);
+    if (angle < 0.0f) {
+        angle += twoPi;
+    }
+
+    const int sectorCount = std::max(1, requestedSectorCount);
+    const float sectorSpan = twoPi / static_cast<float>(sectorCount);
+    const float halfSector = sectorSpan * 0.5f;
+
+    float centeredAngle = angle + halfSector;
+    while (centeredAngle >= twoPi) centeredAngle -= twoPi;
+
+    return static_cast<int>(centeredAngle / sectorSpan) % sectorCount;
+}
+
+struct WeaponWheelStickHapticState {
+    int lastSector{-1};
+};
+
+inline bool updateWeaponWheelStickHaptics(WeaponWheelStickHapticState& state,
+    float x, float y, bool ownsSelection) {
+    const int sector = ownsSelection && motionWheelStickBypass(x, y)
+        ? weaponWheelSector(x, y) : -1;
+    const bool click = sector >= 0 && sector != state.lastSector;
+    state.lastSector = sector;
+    return click;
+}
+
+inline int weaponWheelHapticHand(bool stickOwnsSelection, bool leftHanded,
+    bool swappedSticks) {
+    return stickOwnsSelection ? (swappedSticks ? 1 : 0) : (leftHanded ? 0 : 1);
+}
+
 struct MotionWeaponWheelVec3 {
     float x{};
     float y{};
@@ -157,22 +194,7 @@ inline MotionWeaponWheelOutput updateMotionWeaponWheel(
     output.stickY = dirY * intensity;
     output.stickActive = true;
 
-    // Sector calculation for DOOM radial weapon wheel (8 sectors)
-    // Angle in range [0, 2*PI)
-    constexpr float twoPi = 6.28318530717958647692f;
-    float angle = std::atan2(dirY, dirX);
-    if (angle < 0.0f) {
-        angle += twoPi;
-    }
-
-    const int sectorCount = std::max(1, input.config.sectorCount);
-    const float sectorSpan = twoPi / static_cast<float>(sectorCount);
-    const float halfSector = sectorSpan * 0.5f;
-
-    float centeredAngle = angle + halfSector;
-    while (centeredAngle >= twoPi) centeredAngle -= twoPi;
-
-    const int sector = static_cast<int>(centeredAngle / sectorSpan) % sectorCount;
+    const int sector = weaponWheelSector(dirX, dirY, input.config.sectorCount);
     output.selectedSector = sector;
 
     if (input.config.hapticsEnabled && sector != state.lastSelectedSector) {

@@ -143,19 +143,44 @@ int main() {
     check(!state.wasActive, "closing wheel must reset state.wasActive");
     check(state.lastSelectedSector == -1, "closing wheel must reset lastSelectedSector");
 
-    // Regression: 30% stick deflection used to lose to full motion deflection.
-    check(kharvox::motionWheelStickBypass(-0.30f, 0), "30 percent stick must override motion");
-    check(!kharvox::motionWheelStickBypass(0.10f, 0.10f), "stick noise remains inside radial deadzone");
-    check(kharvox::motionWheelStickBypass(0.11f, 0.11f), "diagonal stick uses radial deadzone");
+    // Stick priority applies only outside a radial 0.30 deadzone.
+    check(!kharvox::motionWheelStickBypass(-0.30f, 0), "boundary belongs to motion");
+    check(kharvox::motionWheelStickBypass(-0.301f, 0), "above boundary gives stick priority");
+    check(!kharvox::motionWheelStickBypass(0.20f, 0.20f), "diagonal inside radial deadzone");
+    check(kharvox::motionWheelStickBypass(0.22f, 0.22f), "diagonal outside radial deadzone");
     input.wheelActive = true;
+    input.hmdOrientation = {};
+    input.handPosition = {};
     input.stickBypass = true;
     out = kharvox::updateMotionWeaponWheel(state, input);
-    check(out.stickBypassActive, "stick wins on wheel opening frame");
+    check(out.stickBypassActive && state.anchorValid, "opening with stick still captures motion anchor");
     input.stickBypass = false;
-    input.handPosition.x += 0.20f;
+    input.handPosition.x = 0.05f;
     out = kharvox::updateMotionWeaponWheel(state, input);
-    check(out.stickBypassActive && !out.stickActive && !out.triggerHapticPulse,
-        "centering stick must not restore stale motion selection");
+    check(!out.stickBypassActive && out.stickActive && out.selectedSector == 0,
+        "centering stick immediately resumes hand selection");
+    input.stickBypass = true;
+    out = kharvox::updateMotionWeaponWheel(state, input);
+    check(out.stickBypassActive && !out.triggerHapticPulse, "stick takeover suppresses motion clicks");
+    input.stickBypass = false;
+    input.handPosition = {0, 0.05f, 0};
+    out = kharvox::updateMotionWeaponWheel(state, input);
+    check(!out.stickBypassActive && out.selectedSector == 2,
+        "repeated hand-stick-hand transitions need no wheel reopen");
+    input.stickBypass = true;
+    input.trackingValid = false;
+    out = kharvox::updateMotionWeaponWheel(state, input);
+    check(out.stickBypassActive && !state.anchorValid,
+        "tracking loss during stick use still clears the hand anchor");
+    input.handPosition = {1, 2, 3};
+    input.trackingValid = true;
+    out = kharvox::updateMotionWeaponWheel(state, input);
+    check(out.stickBypassActive && state.anchorValid && !out.triggerHapticPulse,
+        "recovery reanchors even while stick owns output");
+    input.stickBypass = false;
+    out = kharvox::updateMotionWeaponWheel(state, input);
+    check(!out.stickBypassActive && !out.stickActive,
+        "centering after tracking recovery does not jump to old anchor");
     input.wheelActive = false;
     kharvox::updateMotionWeaponWheel(state, input);
     input.wheelActive = true;
@@ -188,7 +213,7 @@ int main() {
     check(out.stickBypassActive, "physical stick remains usable without pose tracking");
     input.config.enabled = false;
     out = kharvox::updateMotionWeaponWheel(state, input);
-    check(!state.wasActive && !state.stickOwnsWheel && !state.anchorValid,
+    check(!state.wasActive && !state.stickWasActive && !state.anchorValid,
         "disable clears the complete gesture state");
 
     std::cout << "All MotionWeaponWheelPolicy tests passed successfully!" << std::endl;

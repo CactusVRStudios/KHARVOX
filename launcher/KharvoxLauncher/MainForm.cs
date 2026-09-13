@@ -52,7 +52,6 @@ public sealed class MainForm : Form
         "Cine Window follows headset", false);
     private readonly CheckBox virtualGunstock = MakeCheck("Virtual Gunstock", false);
     private readonly CheckBox physicalGlorykill = MakeCheck("Physical Glory Kills", false);
-    private readonly CheckBox motionWeaponWheel = MakeCheck("Motion weapon wheel (test)", false);
     private readonly CheckBox laserSight = MakeCheck("Laser sight", false);
     private readonly CheckBox leftHanded = MakeCheck("Left Hand mode", false);
     private readonly CheckBox hudDebugging = MakeCheck("Enable HUD debugging / calibration", false);
@@ -103,8 +102,8 @@ public sealed class MainForm : Form
         Text = "KHARVOX Launcher";
         var applicationIcon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath);
         if (applicationIcon is not null) Icon = applicationIcon;
-        ClientSize = new Size(548, 904);
-        MinimumSize = new Size(564, 943);
+        ClientSize = new Size(548, 876);
+        MinimumSize = new Size(564, 915);
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Color.FromArgb(0, 0, 0);
         ForeColor = Color.WhiteSmoke;
@@ -121,7 +120,7 @@ public sealed class MainForm : Form
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 130));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 46));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 358));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 330));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 172));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
@@ -183,11 +182,11 @@ public sealed class MainForm : Form
         root.Controls.Add(installRow);
 
         var options = MakeGroup("VR OPTIONS");
-        var optionGrid = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(18, 8, 18, 8), RowCount = 12, ColumnCount = 3 };
+        var optionGrid = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(18, 8, 18, 8), RowCount = 11, ColumnCount = 3 };
         optionGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 187));
         optionGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 194));
         optionGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        for (var i = 0; i < 12; i++) optionGrid.RowStyles.Add(new RowStyle(SizeType.Percent, 100f / 12f));
+        for (var i = 0; i < 11; i++) optionGrid.RowStyles.Add(new RowStyle(SizeType.Percent, 100f / 11f));
         rendererMode.Items.AddRange(["AER", "Native Stereo Experimental"]);
         rendererMode.SelectedIndexChanged += RendererModeChanged;
         renderScale.ValueChanged += OptionChanged;
@@ -294,11 +293,6 @@ public sealed class MainForm : Form
         handsJump.CheckedChanged += OptionChanged;
         statusToolTip.SetToolTip(handsJump, "Raise both controllers upward at 1.9 m/s to jump. Supplements the jump button.");
         sightAndHands.Controls.Add(handsJump, 1, 1);
-        motionWeaponWheel.Dock = DockStyle.Fill;
-        motionWeaponWheel.CheckedChanged += OptionChanged;
-        statusToolTip.SetToolTip(motionWeaponWheel, "Hold the weapon-selection stick down to open the wheel, then move the weapon hand. The selection stick takes priority until the wheel closes. Tracking recovery resets the hand origin.");
-        optionGrid.Controls.Add(motionWeaponWheel, 0, 11);
-        optionGrid.SetColumnSpan(motionWeaponWheel, 3);
         options.Controls.Add(optionGrid);
         root.Controls.Add(options);
 
@@ -861,7 +855,7 @@ public sealed class MainForm : Form
         calibrateHands.Checked ? "rotation" : "off",
         enableBhaptics.Checked,
         usePsvr2Toolkit.Checked,
-        SelectedBackWeaponKey(), handsJump.Checked, disableAa.Checked, captureEyes.Checked, disableVrIntro.Checked, motionWeaponWheel.Checked);
+        SelectedBackWeaponKey(), handsJump.Checked, disableAa.Checked, captureEyes.Checked, disableVrIntro.Checked);
 
     private void SetRunningState(bool running)
     {
@@ -942,7 +936,6 @@ public sealed class MainForm : Form
                 ? ClampInt(s.LeftHandSwapMode, 0, 1) : 0;
             leftHanded.Checked = s.SettingsVersion >= 13 && s.LeftHanded;
             laserSight.Checked = s.SettingsVersion >= 14 && s.LaserSight;
-            motionWeaponWheel.Checked = s.MotionWeaponWheel;
             hudDebugging.Checked = s.SettingsVersion >= 9 && s.HudDebugging;
             extendedLogging.Checked = s.SettingsVersion >= 25 && s.ExtendedLogging;
             showHands.Checked = s.ShowHands;
@@ -976,7 +969,6 @@ public sealed class MainForm : Form
             leftHandSwapMode.SelectedIndex = 0;
             leftHanded.Checked = false;
             laserSight.Checked = false;
-            motionWeaponWheel.Checked = false;
             hudDebugging.Checked = false;
             extendedLogging.Checked = false;
             showHands.Checked = LauncherPresetPolicy.DefaultEnableHands;
@@ -1032,7 +1024,6 @@ public sealed class MainForm : Form
                 enableBhaptics.Checked,
                 usePsvr2Toolkit.Checked, handsJump.Checked, disableAa.Checked, captureEyes.Checked);
             s.DisableVrIntro = disableVrIntro.Checked;
-            s.MotionWeaponWheel = motionWeaponWheel.Checked;
             LauncherSettingsStore.Save(SettingsPath, s);
         }
         catch { /* Settings are optional; launching must remain possible. */ }

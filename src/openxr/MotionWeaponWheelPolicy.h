@@ -6,7 +6,7 @@
 
 namespace kharvox {
 
-inline bool motionWheelStickBypass(float x, float y, float deadzone = 0.15f) {
+inline bool motionWheelStickBypass(float x, float y, float deadzone = 0.30f) {
     return x*x + y*y > deadzone*deadzone;
 }
 
@@ -45,7 +45,7 @@ struct MotionWeaponWheelInput {
 struct MotionWeaponWheelState {
     bool wasActive{};
     bool anchorValid{};
-    bool stickOwnsWheel{};
+    bool stickWasActive{};
     MotionWeaponWheelVec3 originHandPosition{};
     int lastSelectedSector{-1};
 };
@@ -87,17 +87,14 @@ inline MotionWeaponWheelOutput updateMotionWeaponWheel(
         return output;
     }
 
-    // A deliberate stick input owns this opening, including its first frame.
-    // Returning the stick to center must not reactivate an old motion anchor.
+    // Stick priority is instantaneous. Preserve the wheel-opening anchor while
+    // using the stick, but still invalidate/reacquire it on tracking loss.
     if (!state.wasActive) {
         state = {};
         state.wasActive = true;
     }
-    state.stickOwnsWheel = state.stickOwnsWheel || input.stickBypass;
-    if (state.stickOwnsWheel) {
-        output.stickBypassActive = true;
-        return output;
-    }
+    state.stickWasActive = input.stickBypass;
+    output.stickBypassActive = input.stickBypass;
 
     const auto& p = input.handPosition;
     const auto& q = input.hmdOrientation;
@@ -113,6 +110,11 @@ inline MotionWeaponWheelOutput updateMotionWeaponWheel(
     if (!state.anchorValid) {
         state.anchorValid = true;
         state.originHandPosition = input.handPosition;
+        state.lastSelectedSector = -1;
+        return output;
+    }
+
+    if (input.stickBypass) {
         state.lastSelectedSector = -1;
         return output;
     }

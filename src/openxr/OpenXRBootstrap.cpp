@@ -227,7 +227,7 @@ struct State {
     XrTime physicalPunchCooldownUntil{};
     bool weaponSelectPressed{},weaponSelectNativeStarted{},weaponWheelOpened{},secondaryFireGripPressed{};
     std::array<kharvox::ControllerClickState,2> wheelClicks{};
-    bool motionWheelEnabled{false}; kharvox::MotionWeaponWheelState motionWheelState{};
+    bool motionWheelEnabled{true}; kharvox::MotionWeaponWheelState motionWheelState{};
     bool chainsawArmed{true},pausePressed{};
     XrTime weaponSelectPressedTime{},weaponSwitchPulseUntil{},chainsawPulseUntil{};
     XrTime usePulseUntil{},meleePulseUntil{};
@@ -1342,7 +1342,7 @@ void configureMotionWeaponWheel(){
     if(GetEnvironmentVariableA("KHARVOX_MOTION_WEAPON_WHEEL",text,sizeof(text))){
         s.motionWheelEnabled=(!_stricmp(text,"1")||!_stricmp(text,"true")||!_stricmp(text,"yes")||!_stricmp(text,"on"));
     }else{
-        s.motionWheelEnabled=false;
+        s.motionWheelEnabled=true;
     }
     log(std::string("[INPUT] Motion Weapon Wheel (Alyx Style) ")
         +(s.motionWheelEnabled?"ENABLED; physical hand displacement drives selection; haptic clicks on sector change":"disabled"));
@@ -2313,23 +2313,26 @@ void updateGameplayActions(XrTime displayTime){
     const XrVector2f nativeUiRightStick=centeredNativeUiStick(s.rightStick);
     XrVector2f wheelSelectionStick=s.leftStick;
     if(s.motionWheelEnabled){
-        const auto& wCtrl=weaponController();
+        // Match the hand to the logical selection stick (left by default).
+        const auto& wCtrl=s.leftHandSwapSticks?s.rightController:s.leftController;
         kharvox::MotionWeaponWheelInput wheelInput{};
         wheelInput.wheelActive=weaponWheelActive;
         wheelInput.trackingValid=wCtrl.valid&&wCtrl.positionTracked&&s.head.valid;
         wheelInput.stickBypass=kharvox::motionWheelStickBypass(
-            s.leftStick.x,s.leftStick.y,nativeDoomRightStickDeadzone);
+            s.leftStick.x,s.leftStick.y);
         wheelInput.config.nativeStickDeadzone=nativeDoomRightStickDeadzone;
         wheelInput.handPosition={wCtrl.position.x,wCtrl.position.y,wCtrl.position.z};
         wheelInput.hmdOrientation={s.head.orientation.x,s.head.orientation.y,s.head.orientation.z,s.head.orientation.w};
         wheelInput.nowNanoseconds=static_cast<std::uint64_t>(std::max<XrTime>(0,displayTime));
-        const bool stickOwned=s.motionWheelState.stickOwnsWheel;
+        const bool stickOwned=s.motionWheelState.stickWasActive;
         const bool anchorValid=s.motionWheelState.anchorValid;
         const auto wheelOutput=kharvox::updateMotionWeaponWheel(s.motionWheelState,wheelInput);
         if(weaponWheelActive&&!wheelOutput.stickBypassActive)
             wheelSelectionStick={wheelOutput.stickX,wheelOutput.stickY};
-        if(!stickOwned&&s.motionWheelState.stickOwnsWheel)
-            log("[MOTION-WHEEL] physical stick owns selection until wheel closes");
+        if(!stickOwned&&s.motionWheelState.stickWasActive)
+            log("[MOTION-WHEEL] physical stick active (radial deadzone 0.30)");
+        if(stickOwned&&!s.motionWheelState.stickWasActive&&weaponWheelActive)
+            log("[MOTION-WHEEL] stick centered; hand motion resumed");
         if(weaponWheelActive&&anchorValid&&!s.motionWheelState.anchorValid)
             log("[MOTION-WHEEL] tracking lost; motion anchor cleared");
         if(weaponWheelActive&&!anchorValid&&s.motionWheelState.anchorValid)
@@ -2337,7 +2340,7 @@ void updateGameplayActions(XrTime displayTime){
         if(!weaponWheelActive||!wheelInput.trackingValid||wheelOutput.stickBypassActive)
             s.wheelClicks={};
         else if(wheelOutput.triggerHapticPulse)
-            kharvox::queueControllerClick(s.wheelClicks[s.leftHanded?0:1],GetTickCount64());
+            kharvox::queueControllerClick(s.wheelClicks[s.leftHandSwapSticks?1:0],GetTickCount64());
     }
     const XrVector2f nativeRightStick=nativeUiMenu?nativeUiRightStick
         :weaponWheelActive?wheelSelectionStick:XrVector2f{gameplayTurnX,0.f};
@@ -2367,7 +2370,7 @@ void updateGameplayActions(XrTime displayTime){
             +kharvox::weaponFireHapticFallbackHoldMilliseconds;
     }else if(!gameplay){
         s.weaponFireHapticFallbackUntilTick=0;
-    s.wheelClicks={};
+        s.wheelClicks={};
     }
     s.firePressed=triggerDown;
     const bool jumpDown=readBooleanAction(s.doomJump);

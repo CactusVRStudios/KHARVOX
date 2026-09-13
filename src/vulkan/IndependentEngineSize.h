@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstring>
 #include "EngineMemoryGuard.h"
+#include "VirtualTextureGuard.h"
 
 namespace kharvox {
 // Supported DOOM 20240321: the window object's public size accessors feed
@@ -29,6 +30,7 @@ inline bool installIndependentEngineSize(uint32_t width,uint32_t height) {
     if(std::memcmp(widthTarget,widthCode,sizeof(widthCode))||std::memcmp(heightTarget,heightCode,sizeof(heightCode)))return false;
     auto initialized=MH_Initialize();if(initialized!=MH_OK&&initialized!=MH_ERROR_ALREADY_INITIALIZED)return false;
     if(!installEngineMemoryGuard(base,nt->OptionalHeader.SizeOfImage))return false;
+    if(!installVirtualTextureGuard(base,nt->OptionalHeader.SizeOfImage))return false;
     if(MH_CreateHook(widthTarget,reinterpret_cast<void*>(&independentWidth),nullptr)!=MH_OK)return false;
     if(MH_CreateHook(heightTarget,reinterpret_cast<void*>(&independentHeight),nullptr)!=MH_OK){MH_RemoveHook(widthTarget);return false;}
     independentEngineWidth=width;independentEngineHeight=height;

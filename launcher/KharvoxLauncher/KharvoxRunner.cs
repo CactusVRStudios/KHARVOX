@@ -141,7 +141,7 @@ internal sealed class KharvoxLaunchOptions
 
 internal static class KharvoxRunner
 {
-    internal const string BuildId = "2026.09.13-launcher-v0.8-beta.5";
+    internal const string BuildId = "2026.09.13-launcher-v0.9-beta.1";
     private const string LayerName = "VK_LAYER_KHARVOX_OPENXR";
     private const string RegistryPath = @"SOFTWARE\Khronos\Vulkan\ImplicitLayers";
     private static readonly CultureInfo Invariant = CultureInfo.InvariantCulture;
@@ -260,7 +260,7 @@ internal static class KharvoxRunner
         var dllPath = Path.Combine(runtimeDir, "KharvoxLayer.dll");
         var manifestPath = Path.Combine(runtimeDir, "KharvoxLayer.json");
         var launchId = Guid.NewGuid().ToString("N").Substring(0, 12);
-        var loaderLogPath = Path.Combine(Path.GetTempPath(), "KHARVOX-vulkan-loader-v0.8-beta.log");
+        var loaderLogPath = Path.Combine(Path.GetTempPath(), "KHARVOX-vulkan-loader-v0.9-beta.log");
         var gameExe = Path.Combine(options.GameDirectory ?? string.Empty, "DOOMx64vk.exe");
         if (!File.Exists(gameExe)) throw new FileNotFoundException(
             "Select the DOOM (2016) installation folder containing DOOMx64vk.exe.", gameExe);
@@ -295,8 +295,8 @@ internal static class KharvoxRunner
         using var launchGate = AcquireLaunchGate();
         using var launchState = BeginLaunch();
         EnsureNoRunningDoom();
-        if (FileVersionInfo.GetVersionInfo(dllPath).ProductVersion != "0.8.0-beta.5")
-            throw new InvalidOperationException("The 0.8 Beta launcher requires its matching 0.8 Beta KharvoxLayer.dll. Extract the complete Beta release into its own folder.");
+        if (FileVersionInfo.GetVersionInfo(dllPath).ProductVersion != "0.9.0-beta.1")
+            throw new InvalidOperationException("The 0.9 Beta launcher requires its matching 0.9 Beta KharvoxLayer.dll. Extract the complete Beta release into its own folder.");
         using var gameIntro = await VrGameIntroSession.StartAsync(runtimeDir, statusUpdate, disableVrIntro: options.DisableVrIntro).ConfigureAwait(false);
         var previousNativeFailure = NativeLaunchRecovery.Prepare(runtimeDir, options.RendererMode);
         if (previousNativeFailure is not null)
@@ -673,7 +673,7 @@ internal static class KharvoxRunner
                 // renderer has actually initialized. Do not turn a successful
                 // game start into a false-positive feature status here.
                 if (!nativeStereoEnabled && !fsr1Enabled)
-                    WriteRendererStatus(runtimeDir, "Renderer: AER 0.8 Beta");
+                    WriteRendererStatus(runtimeDir, "Renderer: AER 0.9 Beta");
                 gameDetected?.Invoke();
                 launchSucceeded = true;
                 return;

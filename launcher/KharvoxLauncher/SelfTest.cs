@@ -4,12 +4,36 @@ namespace KharvoxLauncher;
 
 internal static class SelfTest
 {
+    private static void VerifyProcessStatusPreservesExitCode()
+    {
+        var flags = BindingFlags.Static | BindingFlags.NonPublic;
+        var current = typeof(KharvoxRunner).GetField("currentGame", flags)!;
+        var operation = typeof(KharvoxRunner).GetMethod("BeginLaunch", flags)!;
+        var previous = current.GetValue(null);
+        using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe"),
+            "/d /c exit 37") { UseShellExecute = false, CreateNoWindow = true })!;
+        process.WaitForExit();
+        using var lease = (IDisposable)operation.Invoke(null, null)!;
+        try
+        {
+            current.SetValue(null, process);
+            Require(!KharvoxRunner.IsRunning, "exited process is not reported as running during startup");
+            Require(!KharvoxRunner.IsRunning, "repeated status polling remains safe");
+            Require(ReferenceEquals(current.GetValue(null), process), "status preserves startup process ownership");
+            Require(process.ExitCode == 37, "startup can read original exit code after UI status polling");
+        }
+        finally { current.SetValue(null, previous); }
+    }
+
     internal static int Run()
     {
         var testRoot = Path.Combine(Path.GetTempPath(), "kharvox-self-test-" + Guid.NewGuid().ToString("N"));
         try
         {
             Directory.CreateDirectory(testRoot);
+            VerifyModConflictPreflight(testRoot);
+            VerifyProcessStatusPreservesExitCode();
             Require(KharvoxRunner.IsPimaxRuntimeManifest(@"C:\Pimax\pimax-openxr.json"), "Pimax runtime blocked");
             Require(KharvoxRunner.IsPimaxRuntimeManifest(@"C:\Runtime\PiOpenXR.json"), "PiOpenXR runtime blocked case-insensitively");
             Require(!KharvoxRunner.IsPimaxRuntimeManifest(@"C:\SteamVR\steamxr_win64.json"), "SteamVR remains supported");
@@ -686,6 +710,66 @@ internal static class SelfTest
             && File.ReadAllText(Path.Combine(secondArchive!, NativeLaunchRecovery.RefusalFile)) == "new recording refusal"
             && File.ReadAllText(Path.Combine(archive!, NativeLaunchRecovery.RefusalFile)) == "previous recording refusal",
             "later explicit launch preserves both refusal generations");
+    }
+
+    private static void VerifyModConflictPreflight(string testRoot)
+    {
+        var gameDirectory = Path.Combine(testRoot, "mod-preflight");
+        Directory.CreateDirectory(gameDirectory);
+        foreach (var name in new[] { "DOOMx64vk.exe", "bink2w64.dll", "steam_api64.dll",
+            "CChromaEditorLibrary.dll", "openvr_api.dll", "dinput8.dll.bak", "dxgi_.dll",
+            "RealVR64.log", "mods.zip" })
+            File.WriteAllText(Path.Combine(gameDirectory, name), "test data");
+        Directory.CreateDirectory(Path.Combine(gameDirectory, "RealRepo_"));
+        var backup = Path.Combine(gameDirectory, "backup");
+        Directory.CreateDirectory(backup);
+        File.WriteAllText(Path.Combine(backup, "dinput8.dll"), "archived");
+        Require(ModConflictPreflight.FindConflicts(gameDirectory).Length == 0,
+            "normal game DLLs and inactive backups do not block launch");
+        foreach (var name in new[] { "DINPUT8.DLL", "dxgi.dll", "RealVR64.dll", "RealVR.ini",
+            "RealConfig.bat", "version.dll", "example.ASI" })
+        {
+            var file = Path.Combine(gameDirectory, name);
+            File.WriteAllText(file, "conflicting mod");
+            Require(ModConflictPreflight.FindConflicts(gameDirectory).SequenceEqual(new[] { name }),
+                "detect mod without case sensitivity: " + name);
+            File.Delete(file);
+        }
+        Directory.CreateDirectory(Path.Combine(gameDirectory, "RealRepo"));
+        File.WriteAllText(Path.Combine(gameDirectory, "dinput8.dll"), "do not modify");
+        var options = new KharvoxLaunchOptions(false, true, false, false, "AER", 100m, false,
+            gameDirectory, "Smooth", "head", 230m, 45m, .35m, false, "shotgun", "barrel",
+            false, false, 2.8m, "both", false, "buttons", false, false, false, true,
+            "off", false, false, "shotgun");
+        var callbackCalled = false;
+        try
+        {
+            KharvoxRunner.LaunchAsync(options, () => callbackCalled = true,
+                _ => callbackCalled = true).GetAwaiter().GetResult();
+            throw new InvalidOperationException("Conflicting mods must block the real launch path");
+        }
+        catch (OtherModsDetectedException error)
+        {
+            Require(error.Message.StartsWith("Other mods detected, please remove other mods to make Doom work."),
+                "requested mod conflict message");
+            Require(error.Message.Contains("dinput8.dll") && error.Message.Contains("RealRepo")
+                && error.Message.Contains(gameDirectory), "error identifies every detected mod and directory");
+        }
+        Require(!callbackCalled, "preflight blocks before intro, bridges and game callbacks");
+        Require(File.ReadAllText(Path.Combine(gameDirectory, "dinput8.dll")) == "do not modify",
+            "preflight never removes or edits other mods");
+        File.Delete(Path.Combine(gameDirectory, "dinput8.dll"));
+        Directory.Delete(Path.Combine(gameDirectory, "RealRepo"));
+        ModConflictPreflight.EnsureClean(gameDirectory);
+        try
+        {
+            ModConflictPreflight.EnsureClean(Path.Combine(gameDirectory, "missing"));
+            throw new Exception("Unreadable directory must not count as a clean scan");
+        }
+        catch (InvalidOperationException error)
+        {
+            Require(error.Message.StartsWith("Unable to check"), "failed inspection blocks safely");
+        }
     }
 
     private static void VerifyHandsMainPage(string testRoot)

@@ -812,9 +812,16 @@ public sealed class MainForm : Form
         }
         catch (Exception ex)
         {
+            try
+            {
+                File.AppendAllText(Path.Combine(Path.GetTempPath(), "KHARVOX-launcher-errors.log"),
+                    DateTime.Now.ToString("O") + Environment.NewLine + ex.ToString() + Environment.NewLine);
+            }
+            catch { /* Diagnostics must preserve the original error. */ }
             status.Text = "Launch failed.";
             MessageBox.Show(this, ex.Message,
-                ex is HeadsetUnavailableException ? "KHARVOX - Headset not connected" : "KHARVOX - Launch error",
+                ex is OtherModsDetectedException ? "KHARVOX - Other mods detected"
+                    : ex is HeadsetUnavailableException ? "KHARVOX - Headset not connected" : "KHARVOX - Launch error",
                 MessageBoxButtons.OK, ex is HeadsetUnavailableException ? MessageBoxIcon.Information : MessageBoxIcon.Error);
         }
         finally

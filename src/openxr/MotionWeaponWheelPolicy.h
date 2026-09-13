@@ -6,6 +6,10 @@
 
 namespace kharvox {
 
+inline bool motionWheelStickBypass(float x, float y, float deadzone = 0.15f) {
+    return x*x + y*y > deadzone*deadzone;
+}
+
 struct MotionWeaponWheelVec3 {
     float x{};
     float y{};
@@ -24,6 +28,7 @@ struct MotionWeaponWheelConfig {
     bool hapticsEnabled{true};
     float deadzoneMeters{0.02f};    // 2.0 cm deadzone from origin before activating stick
     float maxRadiusMeters{0.065f};  // 6.5 cm reach for 100% stick deflection
+    float nativeStickDeadzone{0.15f};
     int sectorCount{8};             // 8 radial weapon slots (45 degrees per slot)
 };
 
@@ -31,6 +36,7 @@ struct MotionWeaponWheelInput {
     MotionWeaponWheelConfig config{};
     bool wheelActive{};
     bool stickBypass{};
+    bool trackingValid{};
     MotionWeaponWheelVec3 handPosition{};
     MotionWeaponWheelQuat hmdOrientation{};
     std::uint64_t nowNanoseconds{};
@@ -38,6 +44,8 @@ struct MotionWeaponWheelInput {
 
 struct MotionWeaponWheelState {
     bool wasActive{};
+    bool anchorValid{};
+    bool stickOwnsWheel{};
     MotionWeaponWheelVec3 originHandPosition{};
     int lastSelectedSector{-1};
 };
@@ -75,23 +83,37 @@ inline MotionWeaponWheelOutput updateMotionWeaponWheel(
     MotionWeaponWheelOutput output{};
 
     if (!input.config.enabled || !input.wheelActive) {
-        state.wasActive = false;
-        state.originHandPosition = {};
-        state.lastSelectedSector = -1;
+        state = {};
         return output;
     }
 
-    // Edge trigger on wheel open: capture hand anchor origin
+    // A deliberate stick input owns this opening, including its first frame.
+    // Returning the stick to center must not reactivate an old motion anchor.
     if (!state.wasActive) {
+        state = {};
         state.wasActive = true;
+    }
+    state.stickOwnsWheel = state.stickOwnsWheel || input.stickBypass;
+    if (state.stickOwnsWheel) {
+        output.stickBypassActive = true;
+        return output;
+    }
+
+    const auto& p = input.handPosition;
+    const auto& q = input.hmdOrientation;
+    const float qLength = q.x*q.x + q.y*q.y + q.z*q.z + q.w*q.w;
+    if (!input.trackingValid || !std::isfinite(p.x) || !std::isfinite(p.y)
+        || !std::isfinite(p.z) || !std::isfinite(qLength)
+        || qLength < 0.5f || qLength > 1.5f) {
+        state.anchorValid = false;
+        state.lastSelectedSector = -1;
+        return output;
+    }
+    // Reacquire at the current hand position after any invalid tracking frame.
+    if (!state.anchorValid) {
+        state.anchorValid = true;
         state.originHandPosition = input.handPosition;
         state.lastSelectedSector = -1;
-        return output;
-    }
-
-    // Physical thumbstick bypass: user is actively using physical analog stick
-    if (input.stickBypass) {
-        output.stickBypassActive = true;
         return output;
     }
 
@@ -111,7 +133,7 @@ inline MotionWeaponWheelOutput updateMotionWeaponWheel(
 
     const float distance = std::sqrt(screenX * screenX + screenY * screenY);
 
-    if (distance < input.config.deadzoneMeters) {
+    if (distance <= input.config.deadzoneMeters) {
         state.lastSelectedSector = -1;
         output.stickX = 0.0f;
         output.stickY = 0.0f;
@@ -122,7 +144,10 @@ inline MotionWeaponWheelOutput updateMotionWeaponWheel(
     }
 
     const float span = std::max(0.001f, input.config.maxRadiusMeters - input.config.deadzoneMeters);
-    const float intensity = std::clamp((distance - input.config.deadzoneMeters) / span, 0.0f, 1.0f);
+    const float scaled = std::clamp((distance - input.config.deadzoneMeters) / span, 0.0f, 1.0f);
+    // A sector click must correspond to an input DOOM can actually select.
+    const float floor = std::clamp(input.config.nativeStickDeadzone + 0.01f, 0.0f, 1.0f);
+    const float intensity = floor + scaled * (1.0f - floor);
     const float dirX = screenX / distance;
     const float dirY = screenY / distance;
 

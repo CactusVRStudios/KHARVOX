@@ -226,7 +226,8 @@ struct State {
     std::array<bool,2> physicalPunchArmed{};
     XrTime physicalPunchCooldownUntil{};
     bool weaponSelectPressed{},weaponSelectNativeStarted{},weaponWheelOpened{},secondaryFireGripPressed{};
-    bool motionWheelEnabled{true}; kharvox::MotionWeaponWheelState motionWheelState{};
+    std::array<kharvox::ControllerClickState,2> wheelClicks{};
+    bool motionWheelEnabled{false}; kharvox::MotionWeaponWheelState motionWheelState{};
     bool chainsawArmed{true},pausePressed{};
     XrTime weaponSelectPressedTime{},weaponSwitchPulseUntil{},chainsawPulseUntil{};
     XrTime usePulseUntil{},meleePulseUntil{};
@@ -726,6 +727,7 @@ void clearCapturedXInputRumble(){
     pendingXInputRumblePeaks.store(0,std::memory_order_release);
     kharvox::resetXInputRumbleFrameAccumulator(s.hapticFrameAccumulator);
     s.weaponFireHapticFallbackUntilTick=0;
+    s.wheelClicks={};
 }
 void clearXInputHapticState(){
     clearCapturedXInputRumble();
@@ -802,6 +804,8 @@ bool hapticCallApplied(XrResult callResult){
 void updateXInputHaptics(){
     if(!s.session)return;
     if(s.sessionState!=XR_SESSION_STATE_FOCUSED){
+        s.wheelClicks={};
+        s.motionWheelState={};
         pendingXInputRumblePeaks.store(0,std::memory_order_release);
         kharvox::resetXInputRumbleFrameAccumulator(s.hapticFrameAccumulator);
         KharvoxBhapticsSubmitRumble(0,0);
@@ -833,14 +837,15 @@ void updateXInputHaptics(){
     // Explicit fire input identifies weapon rumble, unlike XInput's motor
     // channels themselves. One-hand fire targets the configured weapon hand;
     // an acquired two-hand grip deliberately keeps the mirrored pair.
-    const auto desired=kharvox::routeXInputHapticSignal(
+    const auto nativeDesired=kharvox::routeXInputHapticSignal(
         fanout.controllerSignal,weaponRumble,s.leftHanded,s.twoHandLatched);
 
     const std::array<XrAction,2> actions{s.leftHaptic,s.rightHaptic};
     for(size_t hand=0;hand<actions.size();++hand){
+        const auto desired=kharvox::mixControllerClick(nativeDesired[hand],s.wheelClicks[hand],now);
         auto&outputState=s.hapticOutputStates[hand];
         const auto command=kharvox::selectXInputHapticCommand(
-            outputState,desired[hand],now);
+            outputState,desired,now);
         if(command==kharvox::XInputHapticCommand::None)continue;
         XrHapticActionInfo info{XR_TYPE_HAPTIC_ACTION_INFO};
         info.action=actions[hand];
@@ -854,11 +859,13 @@ void updateXInputHaptics(){
         }
 
         XrHapticVibration vibration{XR_TYPE_HAPTIC_VIBRATION};
+        const auto durationMilliseconds=kharvox::controllerHapticDurationMilliseconds(
+            nativeDesired[hand],s.wheelClicks[hand],now);
         vibration.duration=static_cast<XrDuration>(
-            kharvox::xinputHapticPulseDurationMilliseconds)*1000000;
+            durationMilliseconds)*1000000;
         vibration.frequency=s.hapticFrequencyUnspecified
-            ?XR_FREQUENCY_UNSPECIFIED:desired[hand].frequencyHz;
-        vibration.amplitude=desired[hand].amplitude;
+            ?XR_FREQUENCY_UNSPECIFIED:desired.frequencyHz;
+        vibration.amplitude=desired.amplitude;
         auto applyResult=s.applyHapticFeedback(
             s.session,&info,
             reinterpret_cast<const XrHapticBaseHeader*>(&vibration));
@@ -872,7 +879,7 @@ void updateXInputHaptics(){
         }
         if(hapticCallApplied(applyResult)){
             kharvox::noteXInputHapticApplySucceeded(
-                outputState,desired[hand],now);
+                outputState,desired,now,durationMilliseconds);
             if(!s.firstControllerHapticAppliedLogged){
                 log("[HAPTICS] first OpenXR controller rumble applied; bHaptics mirror is additive");
                 s.firstControllerHapticAppliedLogged=true;
@@ -882,18 +889,6 @@ void updateXInputHaptics(){
             kharvox::noteXInputHapticApplyFailed(outputState,now);
         }
     }
-}
-void triggerControllerHapticPulse(bool rightHand,float amplitude=0.5f,float durationSeconds=0.025f){
-    if(!s.actionsReady||!s.hapticActionsReady||!s.applyHapticFeedback)return;
-    const XrAction action=rightHand?s.rightHaptic:s.leftHaptic;
-    if(action==XR_NULL_HANDLE)return;
-    XrHapticActionInfo info{XR_TYPE_HAPTIC_ACTION_INFO};
-    info.action=action;
-    XrHapticVibration vibration{XR_TYPE_HAPTIC_VIBRATION};
-    vibration.duration=static_cast<XrDuration>(durationSeconds*1000000000.0f);
-    vibration.frequency=XR_FREQUENCY_UNSPECIFIED;
-    vibration.amplitude=std::clamp(amplitude,0.0f,1.0f);
-    s.applyHapticFeedback(s.session,&info,reinterpret_cast<const XrHapticBaseHeader*>(&vibration));
 }
 XrQuaternionf conjugate(XrQuaternionf q){return {-q.x,-q.y,-q.z,q.w};}
 XrQuaternionf multiply(XrQuaternionf a,XrQuaternionf b){return {a.w*b.x+a.x*b.w+a.y*b.z-a.z*b.y,a.w*b.y-a.x*b.z+a.y*b.w+a.z*b.x,a.w*b.z+a.x*b.y-a.y*b.x+a.z*b.w,a.w*b.w-a.x*b.x-a.y*b.y-a.z*b.z};}
@@ -1347,7 +1342,7 @@ void configureMotionWeaponWheel(){
     if(GetEnvironmentVariableA("KHARVOX_MOTION_WEAPON_WHEEL",text,sizeof(text))){
         s.motionWheelEnabled=(!_stricmp(text,"1")||!_stricmp(text,"true")||!_stricmp(text,"yes")||!_stricmp(text,"on"));
     }else{
-        s.motionWheelEnabled=true;
+        s.motionWheelEnabled=false;
     }
     log(std::string("[INPUT] Motion Weapon Wheel (Alyx Style) ")
         +(s.motionWheelEnabled?"ENABLED; physical hand displacement drives selection; haptic clicks on sector change":"disabled"));
@@ -1992,7 +1987,9 @@ void updateGameplayActions(XrTime displayTime){
     static bool yawSpeedHoldLogged=false;
     if(!yawSpeedHoldLogged){yawSpeedHoldLogged=true;std::ostringstream o;o<<"[TURN] holding live joy_yawSpeed current-value RVA 0x"<<std::hex<<joyYawSpeedCurrentRva<<std::dec<<" at "<<manualTurnCarrierSpeed()<<" only for hidden body catch-up; visible Smooth Turn uses OpenXR frame time";log(o.str());}
     XrActiveActionSet active{s.gameplayActionSet,XR_NULL_PATH}; XrActionsSyncInfo sync{XR_TYPE_ACTIONS_SYNC_INFO}; sync.countActiveActionSets=1; sync.activeActionSets=&active;
-    if(XR_FAILED(s.syncActionsFn(s.session,&sync))){
+    if(XR_FAILED(s.syncActionsFn(s.session,&sync))
+        ||s.sessionState!=XR_SESSION_STATE_FOCUSED){
+        s.motionWheelState={};
         s.equipmentGrip.cancel();
         clearCapturedXInputRumble();
         releaseMovement();
@@ -2315,30 +2312,32 @@ void updateGameplayActions(XrTime displayTime){
     holdNativeTurnCvars(physicalBodyTurnX!=0.f?bodyFollowYawSpeed:manualTurnCarrierSpeed());
     const XrVector2f nativeUiRightStick=centeredNativeUiStick(s.rightStick);
     XrVector2f wheelSelectionStick=s.leftStick;
-    if(weaponWheelActive&&s.motionWheelEnabled){
+    if(s.motionWheelEnabled){
         const auto& wCtrl=weaponController();
         kharvox::MotionWeaponWheelInput wheelInput{};
         wheelInput.wheelActive=weaponWheelActive;
-        const float stickDisplacementSq=s.leftStick.x*s.leftStick.x+s.leftStick.y*s.leftStick.y;
-        wheelInput.stickBypass=(stickDisplacementSq>0.15f);
+        wheelInput.trackingValid=wCtrl.valid&&wCtrl.positionTracked&&s.head.valid;
+        wheelInput.stickBypass=kharvox::motionWheelStickBypass(
+            s.leftStick.x,s.leftStick.y,nativeDoomRightStickDeadzone);
+        wheelInput.config.nativeStickDeadzone=nativeDoomRightStickDeadzone;
         wheelInput.handPosition={wCtrl.position.x,wCtrl.position.y,wCtrl.position.z};
         wheelInput.hmdOrientation={s.head.orientation.x,s.head.orientation.y,s.head.orientation.z,s.head.orientation.w};
         wheelInput.nowNanoseconds=static_cast<std::uint64_t>(std::max<XrTime>(0,displayTime));
+        const bool stickOwned=s.motionWheelState.stickOwnsWheel;
+        const bool anchorValid=s.motionWheelState.anchorValid;
         const auto wheelOutput=kharvox::updateMotionWeaponWheel(s.motionWheelState,wheelInput);
-        if(wheelOutput.stickBypassActive){
-            wheelSelectionStick=s.leftStick;
-        }else if(wheelOutput.stickActive){
+        if(weaponWheelActive&&!wheelOutput.stickBypassActive)
             wheelSelectionStick={wheelOutput.stickX,wheelOutput.stickY};
-        }else{
-            wheelSelectionStick={0.f,0.f};
-        }
-        if(wheelOutput.triggerHapticPulse){
-            triggerControllerHapticPulse(!s.leftHanded,0.5f,0.025f);
-        }
-    }else if(!weaponWheelActive&&s.motionWheelState.wasActive){
-        kharvox::MotionWeaponWheelInput wheelInput{};
-        wheelInput.wheelActive=false;
-        kharvox::updateMotionWeaponWheel(s.motionWheelState,wheelInput);
+        if(!stickOwned&&s.motionWheelState.stickOwnsWheel)
+            log("[MOTION-WHEEL] physical stick owns selection until wheel closes");
+        if(weaponWheelActive&&anchorValid&&!s.motionWheelState.anchorValid)
+            log("[MOTION-WHEEL] tracking lost; motion anchor cleared");
+        if(weaponWheelActive&&!anchorValid&&s.motionWheelState.anchorValid)
+            log("[MOTION-WHEEL] tracking anchor acquired");
+        if(!weaponWheelActive||!wheelInput.trackingValid||wheelOutput.stickBypassActive)
+            s.wheelClicks={};
+        else if(wheelOutput.triggerHapticPulse)
+            kharvox::queueControllerClick(s.wheelClicks[s.leftHanded?0:1],GetTickCount64());
     }
     const XrVector2f nativeRightStick=nativeUiMenu?nativeUiRightStick
         :weaponWheelActive?wheelSelectionStick:XrVector2f{gameplayTurnX,0.f};
@@ -2368,6 +2367,7 @@ void updateGameplayActions(XrTime displayTime){
             +kharvox::weaponFireHapticFallbackHoldMilliseconds;
     }else if(!gameplay){
         s.weaponFireHapticFallbackUntilTick=0;
+    s.wheelClicks={};
     }
     s.firePressed=triggerDown;
     const bool jumpDown=readBooleanAction(s.doomJump);

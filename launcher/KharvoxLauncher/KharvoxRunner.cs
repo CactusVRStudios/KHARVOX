@@ -32,6 +32,7 @@ internal sealed class KharvoxLaunchOptions
     public string PhysicalGlorykillHands { get; }
     public bool LeftHanded { get; }
     public string LeftHandSwapMode { get; }
+    public bool MotionWeaponWheel { get; }
     public bool LaserSight { get; }
     public bool HudDebugging { get; }
     public bool ExtendedLogging { get; }
@@ -60,7 +61,7 @@ internal sealed class KharvoxLaunchOptions
         string handCalibrationMode,
         bool enableBhaptics,
         bool usePsvr2Toolkit,
-        string backWeapon, bool handsJump = false, bool disableAa = false, bool captureEyes = false, bool disableVrIntro = false)
+        string backWeapon, bool handsJump = false, bool disableAa = false, bool captureEyes = false, bool disableVrIntro = false, bool motionWeaponWheel = false)
     {
         ImmersiveMode = immersiveMode; CinematicFreelook = cinematicFreelook;
         OtherCinematicsInQuad = otherCinematicsInQuad;
@@ -81,6 +82,7 @@ internal sealed class KharvoxLaunchOptions
         LeftHanded = leftHanded;
         LeftHandSwapMode = leftHandSwapMode;
         LaserSight = laserSight;
+        MotionWeaponWheel = motionWeaponWheel;
         ExtendedLogging = extendedLogging;
         HandCalibrationMode = handCalibrationMode switch
         {
@@ -141,7 +143,7 @@ internal sealed class KharvoxLaunchOptions
 
 internal static class KharvoxRunner
 {
-    internal const string BuildId = "2026.09.12-launcher-v0.7-beta.1";
+    internal const string BuildId = "2026.09.13-launcher-v0.8-beta.1";
     private const string LayerName = "VK_LAYER_KHARVOX_OPENXR";
     private const string RegistryPath = @"SOFTWARE\Khronos\Vulkan\ImplicitLayers";
     private static readonly CultureInfo Invariant = CultureInfo.InvariantCulture;
@@ -257,7 +259,7 @@ internal static class KharvoxRunner
         var dllPath = Path.Combine(runtimeDir, "KharvoxLayer.dll");
         var manifestPath = Path.Combine(runtimeDir, "KharvoxLayer.json");
         var launchId = Guid.NewGuid().ToString("N").Substring(0, 12);
-        var loaderLogPath = Path.Combine(Path.GetTempPath(), "KHARVOX-vulkan-loader-v0.7-beta.log");
+        var loaderLogPath = Path.Combine(Path.GetTempPath(), "KHARVOX-vulkan-loader-v0.8-beta.log");
         if (!File.Exists(dllPath)) throw new FileNotFoundException("KharvoxLayer.dll must be next to the launcher.", dllPath);
 
         var gameExe = Path.Combine(options.GameDirectory ?? string.Empty, "DOOMx64vk.exe");
@@ -291,8 +293,8 @@ internal static class KharvoxRunner
         using var launchGate = AcquireLaunchGate();
         using var launchState = BeginLaunch();
         EnsureNoRunningDoom();
-        if (FileVersionInfo.GetVersionInfo(dllPath).ProductVersion != "0.7.0-beta.1")
-            throw new InvalidOperationException("The 0.7 Beta launcher requires its matching 0.7 Beta KharvoxLayer.dll. Extract the complete Beta release into its own folder.");
+        if (FileVersionInfo.GetVersionInfo(dllPath).ProductVersion != "0.8.0-beta.1")
+            throw new InvalidOperationException("The 0.8 Beta launcher requires its matching 0.8 Beta KharvoxLayer.dll. Extract the complete Beta release into its own folder.");
         using var gameIntro = await VrGameIntroSession.StartAsync(runtimeDir, statusUpdate, disableVrIntro: options.DisableVrIntro).ConfigureAwait(false);
         var previousNativeFailure = NativeLaunchRecovery.Prepare(runtimeDir, options.RendererMode);
         if (previousNativeFailure is not null)
@@ -506,6 +508,7 @@ internal static class KharvoxRunner
             psi.EnvironmentVariables["KHARVOX_LEFT_HANDED"] = options.LeftHanded ? "1" : "0";
             psi.EnvironmentVariables["KHARVOX_LEFT_HAND_SWAP"] = options.LeftHandSwapMode;
             psi.EnvironmentVariables["KHARVOX_BACK_WEAPON"] = options.BackWeapon;
+            psi.EnvironmentVariables["KHARVOX_MOTION_WEAPON_WHEEL"] = options.MotionWeaponWheel ? "1" : "0";
             psi.EnvironmentVariables["KHARVOX_LASER_SIGHT"] = options.LaserSight ? "1" : "0";
             psi.EnvironmentVariables["KHARVOX_WEAPON_SCALE"] = "0.77";
             psi.EnvironmentVariables["KHARVOX_HANDS_PROJECTION_SCALE"] = "1";
@@ -668,7 +671,7 @@ internal static class KharvoxRunner
                 // renderer has actually initialized. Do not turn a successful
                 // game start into a false-positive feature status here.
                 if (!nativeStereoEnabled && !fsr1Enabled)
-                    WriteRendererStatus(runtimeDir, "Renderer: AER 0.7 Beta");
+                    WriteRendererStatus(runtimeDir, "Renderer: AER 0.8 Beta");
                 gameDetected?.Invoke();
                 launchSucceeded = true;
                 return;

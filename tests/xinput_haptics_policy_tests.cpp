@@ -180,5 +180,40 @@ int main() {
         || inactiveFanout.bhapticsRumble != 0)
         return 34;
 
+    // Regression: a wheel click immediately followed by native rumble ending
+    // must remain an Apply, not the Stop issued by the former second writer.
+    ControllerClickState click{};
+    queueControllerClick(click, 100);
+    XInputHapticOutputState clickOutput{};
+    noteXInputHapticApplySucceeded(clickOutput, highOnly, 90);
+    const auto clickOnly = mixControllerClick(zero, click, 100);
+    if (!clickOnly.active || !near(clickOnly.amplitude, 0.5f)
+        || selectXInputHapticCommand(clickOutput, clickOnly, 100) != XInputHapticCommand::Apply
+        || controllerHapticDurationMilliseconds(zero, click, 100) != 25)
+        return 35;
+    noteXInputHapticApplySucceeded(clickOutput, clickOnly, 100, 25);
+    if (selectXInputHapticCommand(clickOutput, mixControllerClick(zero, click, 124), 124)
+        == XInputHapticCommand::Stop)
+        return 36;
+    if (selectXInputHapticCommand(clickOutput, mixControllerClick(zero, click, 125), 125)
+        != XInputHapticCommand::Stop)
+        return 37;
+    const XInputHapticSignal strong{0.9f, 80.f, true};
+    const auto preserved = mixControllerClick(strong, click, 110);
+    if (!near(preserved.amplitude, strong.amplitude)
+        || !near(preserved.frequencyHz, strong.frequencyHz)) return 38;
+    const XInputHapticSignal weak{0.2f, 80.f, true};
+    if (!near(mixControllerClick(weak, click, 110).amplitude, 0.5f)
+        || !near(mixControllerClick(weak, click, 125).amplitude, weak.amplitude)) return 39;
+    // One hand's click cannot reach the other controller or bHaptics fanout.
+    const ControllerClickState otherHand{};
+    if (mixControllerClick(zero, otherHand, 110).active
+        || selectAdditiveHapticFanout(0, zero, false).bhapticsRumble != 0) return 40;
+    click = {}; // loss of focus / cancelled wheel
+    if (mixControllerClick(zero, click, 110).active) return 41;
+    // An equal-strength game effect arriving after a short click must be
+    // refreshed at 25ms, not treated as a still-running 100ms native pulse.
+    if (selectXInputHapticCommand(clickOutput, clickOnly, 125)
+        != XInputHapticCommand::Apply) return 42;
     return 0;
 }

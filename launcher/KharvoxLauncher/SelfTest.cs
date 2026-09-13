@@ -693,6 +693,10 @@ internal static class SelfTest
         using var form = new MainForm(Path.Combine(testRoot, "ui-settings.json"));
         T Field<T>(string name) => (T)typeof(MainForm)
             .GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
+        var motionWheel = Field<CheckBox>("motionWeaponWheel");
+        Require(!motionWheel.Checked && !form.CreateLaunchOptions().MotionWeaponWheel, "motion wheel defaults off");
+        motionWheel.Checked = true;
+        Require(form.CreateLaunchOptions().MotionWeaponWheel, "motion wheel reaches launch options");
         var hands = Field<CheckBox>("showHands");
         var laser = Field<CheckBox>("laserSight");
         var captureEyes = Field<CheckBox>("captureEyes");
@@ -710,6 +714,9 @@ internal static class SelfTest
         handsJump.Checked = true;
         Require(form.CreateLaunchOptions().HandsJump, "Hands Jump launch option");
         typeof(MainForm).GetMethod("SaveSettings", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(form, null);
+        Require(LauncherSettingsStore.Load(Path.Combine(testRoot, "ui-settings.json")).MotionWeaponWheel, "motion wheel persisted");
+        using (var reloaded = new MainForm(Path.Combine(testRoot, "ui-settings.json")))
+            Require(reloaded.CreateLaunchOptions().MotionWeaponWheel, "motion wheel survives launcher reload");
         Require(LauncherSettingsStore.Load(Path.Combine(testRoot, "ui-settings.json")).HandsJump, "Hands Jump persisted");
         Require(LauncherSettingsStore.Load(Path.Combine(testRoot, "ui-settings.json")).DisableAa, "AA override persists");
         Require(LauncherSettingsStore.Load(Path.Combine(testRoot, "ui-settings.json")).CaptureEyes,"eye capture persists");

@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 
 namespace {
 
@@ -22,6 +23,7 @@ bool near(float a, float b, float eps = 0.001f) {
 int main() {
     kharvox::MotionWeaponWheelState state{};
     kharvox::MotionWeaponWheelInput input{};
+    input.trackingValid = true;
 
     // 1. When wheel is inactive, output must be completely inert
     input.wheelActive = false;
@@ -140,6 +142,54 @@ int main() {
     check(!out.stickActive, "closing wheel must clear output");
     check(!state.wasActive, "closing wheel must reset state.wasActive");
     check(state.lastSelectedSector == -1, "closing wheel must reset lastSelectedSector");
+
+    // Regression: 30% stick deflection used to lose to full motion deflection.
+    check(kharvox::motionWheelStickBypass(-0.30f, 0), "30 percent stick must override motion");
+    check(!kharvox::motionWheelStickBypass(0.10f, 0.10f), "stick noise remains inside radial deadzone");
+    check(kharvox::motionWheelStickBypass(0.11f, 0.11f), "diagonal stick uses radial deadzone");
+    input.wheelActive = true;
+    input.stickBypass = true;
+    out = kharvox::updateMotionWeaponWheel(state, input);
+    check(out.stickBypassActive, "stick wins on wheel opening frame");
+    input.stickBypass = false;
+    input.handPosition.x += 0.20f;
+    out = kharvox::updateMotionWeaponWheel(state, input);
+    check(out.stickBypassActive && !out.stickActive && !out.triggerHapticPulse,
+        "centering stick must not restore stale motion selection");
+    input.wheelActive = false;
+    kharvox::updateMotionWeaponWheel(state, input);
+    input.wheelActive = true;
+    input.hmdOrientation = {};
+    input.handPosition = {};
+    out = kharvox::updateMotionWeaponWheel(state, input);
+    check(!out.stickBypassActive && state.anchorValid, "next opening permits motion again");
+    input.handPosition.x = 0.0201f;
+    out = kharvox::updateMotionWeaponWheel(state, input);
+    check(out.triggerHapticPulse && out.stickX > 0.15f,
+        "first sector click must exceed native DOOM stick deadzone");
+    input.trackingValid = false;
+    out = kharvox::updateMotionWeaponWheel(state, input);
+    check(!state.anchorValid && !out.stickActive && !out.triggerHapticPulse,
+        "tracking loss invalidates motion anchor and selection");
+    input.trackingValid = true;
+    input.handPosition = {1, 2, 3};
+    out = kharvox::updateMotionWeaponWheel(state, input);
+    check(state.anchorValid && !out.stickActive && !out.triggerHapticPulse,
+        "recovered distant position reanchors without jumping");
+    input.handPosition.x += 0.05f;
+    out = kharvox::updateMotionWeaponWheel(state, input);
+    check(out.selectedSector == 0, "motion resumes relative to recovered anchor");
+    input.handPosition.x = std::numeric_limits<float>::quiet_NaN();
+    out = kharvox::updateMotionWeaponWheel(state, input);
+    check(!out.stickActive && !state.anchorValid, "non-finite pose is rejected");
+    input.trackingValid = false;
+    input.stickBypass = true;
+    out = kharvox::updateMotionWeaponWheel(state, input);
+    check(out.stickBypassActive, "physical stick remains usable without pose tracking");
+    input.config.enabled = false;
+    out = kharvox::updateMotionWeaponWheel(state, input);
+    check(!state.wasActive && !state.stickOwnsWheel && !state.anchorValid,
+        "disable clears the complete gesture state");
 
     std::cout << "All MotionWeaponWheelPolicy tests passed successfully!" << std::endl;
     return 0;

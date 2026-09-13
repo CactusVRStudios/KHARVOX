@@ -4,7 +4,7 @@ namespace KharvoxLauncher;
 
 internal sealed class LauncherSettings
 {
-    internal const int CurrentVersion = 31;
+    internal const int CurrentVersion = 32;
 
     public int SettingsVersion { get; set; }
     public int Preset { get; set; }
@@ -31,6 +31,7 @@ internal sealed class LauncherSettings
     public int PhysicalGlorykillHands { get; set; } = 2;
     public bool LeftHanded { get; set; }
     public int LeftHandSwapMode { get; set; }
+    public bool MotionWeaponWheel { get; set; }
     public bool LaserSight { get; set; }
     public bool HudDebugging { get; set; }
     public bool ExtendedLogging { get; set; }
@@ -149,6 +150,7 @@ internal static class LauncherSettingsStore
         if (settings.SettingsVersion < 30)
             settings.DisableAa = false;
         if (settings.SettingsVersion < 31) settings.DisableVrIntro = false;
+        if (settings.SettingsVersion < 32) settings.MotionWeaponWheel = false;
         settings.RendererMode = RendererSelection.Normalize(settings.RendererMode);
         return settings;
     }

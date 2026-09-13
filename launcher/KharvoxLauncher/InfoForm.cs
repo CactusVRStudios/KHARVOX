@@ -834,6 +834,9 @@ internal sealed class InfoForm : Form
             "Stick down (hold)   Weapon wheel\n" +
             "                    Aim with left stick\n" +
             "Stick click         Use / Melee / Glory Kill");
+        AddHeading(page, "Motion weapon wheel (test)");
+        AddBullet(page, "Optional in VR OPTIONS. Hold the weapon-selection stick down as usual, then move the weapon hand sideways or vertically to select a slot. Release the opening stick to confirm.");
+        AddBullet(page, "The selection stick takes priority until the wheel closes. Tracking loss clears the motion origin; after recovery, move from the new hand position. Disable the option to keep the original stick-only controls.");
         AddHeading(page, "Left Hand mode — Button swap");
         AddBullet(page, "Left Trigger / Grip become Fire and weapon mod; the left hand holds the weapon.");
         AddBullet(page, "Right Trigger / Grip become Equipment and two-hand support.");

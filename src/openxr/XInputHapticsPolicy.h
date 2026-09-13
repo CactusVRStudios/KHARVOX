@@ -187,6 +187,32 @@ enum class XInputHapticCommand {
     Stop,
 };
 
+// UI clicks join the per-hand output after native/bHaptics fanout. They never
+// create vest rumble or replace a stronger native controller effect.
+struct ControllerClickState {
+    std::uint64_t untilMilliseconds{};
+};
+
+inline void queueControllerClick(ControllerClickState& state, std::uint64_t now) {
+    state.untilMilliseconds = now + 25;
+}
+
+inline XInputHapticSignal mixControllerClick(
+    const XInputHapticSignal& native, const ControllerClickState& click,
+    std::uint64_t now) {
+    if (now >= click.untilMilliseconds) return native;
+    if (native.active && native.amplitude >= 0.5f) return native;
+    return {0.5f, 160.0f, true};
+}
+
+inline std::uint64_t controllerHapticDurationMilliseconds(
+    const XInputHapticSignal& native, const ControllerClickState& click,
+    std::uint64_t now) {
+    if (!native.active && now < click.untilMilliseconds)
+        return click.untilMilliseconds - now;
+    return xinputHapticPulseDurationMilliseconds;
+}
+
 struct XInputHapticOutputState {
     bool effectActive{};
     XInputHapticSignal lastApplied{};
@@ -213,11 +239,12 @@ inline XInputHapticCommand selectXInputHapticCommand(
 inline void noteXInputHapticApplySucceeded(
     XInputHapticOutputState& state,
     const XInputHapticSignal& applied,
-    std::uint64_t nowMilliseconds) {
+    std::uint64_t nowMilliseconds,
+    std::uint64_t durationMilliseconds = xinputHapticPulseDurationMilliseconds) {
     state.effectActive = true;
     state.lastApplied = applied;
     state.refreshAtMilliseconds = nowMilliseconds
-        + xinputHapticRefreshIntervalMilliseconds;
+        + std::min(xinputHapticRefreshIntervalMilliseconds, durationMilliseconds);
     state.retryAtMilliseconds = 0;
 }
 

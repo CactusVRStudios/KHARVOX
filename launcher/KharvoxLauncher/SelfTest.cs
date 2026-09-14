@@ -142,6 +142,7 @@ internal static class SelfTest
                 && !LauncherPresetPolicy.TryGet(3, out _),
                 "Comfort and Custom retain their independent handling");
             VerifyHandsMainPage(testRoot);
+            VerifyScrollableWindow(testRoot);
             foreach (var steam in new[]{false,true}) {
                 Require(KharvoxRunner.EffectiveRenderScale(80m,steam)==80m
                     && KharvoxRunner.EffectiveRenderScale(1000m,steam)==1000m,
@@ -769,6 +770,27 @@ internal static class SelfTest
         catch (InvalidOperationException error)
         {
             Require(error.Message.StartsWith("Unable to check"), "failed inspection blocks safely");
+        }
+    }
+
+    private static void VerifyScrollableWindow(string testRoot)
+    {
+        foreach (var scale in new[] { 1f, 1.5f, 2f })
+        {
+            using var form = new MainForm(Path.Combine(testRoot, "scroll-settings.json"));
+            form.Scale(new System.Drawing.SizeF(scale, scale));
+            var work = new System.Drawing.Rectangle(-1280, 0, 1280, 680);
+            form.FitWorkingArea(work);
+            form.PerformLayout();
+            Require(work.Contains(form.Bounds), "launcher fits monitor work area at scaled DPI");
+            var viewport = (Panel)form.Controls[0];
+            Require(viewport.AutoScroll && viewport.Controls[0].Height > viewport.ClientSize.Height,
+                "short desktop preserves scrollable content");
+            Require(viewport.Controls[0].Width <= viewport.ClientSize.Width,
+                "vertical scrollbar does not require horizontal scrolling");
+            var tiny = new System.Drawing.Rectangle(0, 0, 480, 600);
+            form.FitWorkingArea(tiny);
+            Require(tiny.Contains(form.Bounds), "very narrow desktop remains reachable");
         }
     }
 

@@ -83,6 +83,10 @@ public sealed class MainForm : Form
     private bool launchOperationInProgress;
     private bool lastKnownDoomRunning;
     private bool applyingPreset;
+    private readonly Panel viewport = new() { Dock = DockStyle.Fill, AutoScroll = true };
+    private TableLayoutPanel? launcherContent;
+    private bool fittingWindow;
+    private Rectangle fittedWorkArea;
 
     public MainForm() : this(LauncherSettingsStore.DefaultPath)
     {
@@ -103,7 +107,7 @@ public sealed class MainForm : Form
         var applicationIcon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath);
         if (applicationIcon is not null) Icon = applicationIcon;
         ClientSize = new Size(548, 876);
-        MinimumSize = new Size(564, 915);
+        MinimumSize = new Size(280, 240);
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Color.FromArgb(0, 0, 0);
         ForeColor = Color.WhiteSmoke;
@@ -112,7 +116,9 @@ public sealed class MainForm : Form
 
         var root = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill,
+            Location = Point.Empty,
+            Size = new Size(548, 876),
+            MinimumSize = new Size(548, 876),
             Padding = new Padding(18, 14, 18, 10),
             RowCount = 7,
             ColumnCount = 1
@@ -124,7 +130,10 @@ public sealed class MainForm : Form
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 172));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
-        Controls.Add(root);
+        launcherContent = root;
+        viewport.Controls.Add(root);
+        Controls.Add(viewport);
+        viewport.ClientSizeChanged += (_, _) => LayoutViewport();
 
         var banner = new PictureBox { Dock = DockStyle.Fill, SizeMode = PictureBoxSizeMode.Zoom, BackColor = Color.Black };
         using (var bannerStream = Assembly.GetExecutingAssembly().GetManifestResourceStream("Kharvox.Branding.Logo"))
@@ -442,11 +451,67 @@ public sealed class MainForm : Form
         }, 0, 0);
         footer.Controls.Add(footerLabel, 1, 0);
         root.Controls.Add(footer);
+        LayoutViewport();
         LoadSettings();
         if (string.IsNullOrWhiteSpace(doomPath.Text) || !File.Exists(Path.Combine(doomPath.Text, "DOOMx64vk.exe")))
             doomPath.Text = KharvoxRunner.FindDoomInstall() ?? string.Empty;
         RefreshDoomProcessState();
         FormClosing += (_, _) => { runtimeStatusTimer.Stop(); SaveSettings(); };
+    }
+
+    protected override void OnLoad(EventArgs e)
+    {
+        base.OnLoad(e);
+        FitWorkingArea(Screen.FromControl(this).WorkingArea);
+    }
+
+    protected override void OnLocationChanged(EventArgs e)
+    {
+        base.OnLocationChanged(e);
+        if (Visible && !fittingWindow)
+        {
+            var work = Screen.FromControl(this).WorkingArea;
+            if (work != fittedWorkArea) FitWorkingArea(work);
+        }
+    }
+
+    protected override void OnDpiChanged(DpiChangedEventArgs e)
+    {
+        base.OnDpiChanged(e);
+        FitWorkingArea(Screen.FromControl(this).WorkingArea);
+    }
+
+    internal void FitWorkingArea(Rectangle work)
+    {
+        if (fittingWindow || work.Width <= 0 || work.Height <= 0) return;
+        fittingWindow = true;
+        try
+        {
+            fittedWorkArea = work;
+            MinimumSize = new Size(Math.Min(280, work.Width), Math.Min(240, work.Height));
+            MaximumSize = work.Size;
+            var desiredWidth = Width;
+            if (launcherContent is {} content && content.MinimumSize.Height >
+                Math.Min(ClientSize.Height, work.Height - (Height - ClientSize.Height)))
+                desiredWidth = Math.Max(desiredWidth, content.MinimumSize.Width +
+                    (Width - ClientSize.Width) + SystemInformation.VerticalScrollBarWidth);
+            var width = Math.Min(desiredWidth, work.Width);
+            var height = Math.Min(Height, work.Height);
+            Bounds = new Rectangle(
+                Math.Max(work.Left, Math.Min(Left, work.Right - width)),
+                Math.Max(work.Top, Math.Min(Top, work.Bottom - height)), width, height);
+            LayoutViewport();
+        }
+        finally { fittingWindow = false; }
+    }
+
+    private void LayoutViewport()
+    {
+        if (launcherContent is not { } content) return;
+        // Preserve the DPI-scaled content height instead of squeezing rows.
+        // Extremely narrow monitors retain horizontal access as well.
+        content.Size = new Size(Math.Max(content.MinimumSize.Width, viewport.ClientSize.Width),
+            Math.Max(content.MinimumSize.Height, viewport.ClientSize.Height));
     }
 
     private static CheckBox MakeCheck(string text, bool value) => new() { Text = text, Checked = value, AutoSize = true };

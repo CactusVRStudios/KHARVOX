@@ -97,6 +97,7 @@ struct AerCapturedInput {
     ControllerPose left{},right{};
     float artificialTurn{};uint64_t snapGeneration{};
     XrPosef center{};
+    XrPosef laserBodyTracking{};
 };
 struct EyeRenderProjection { XrFovf symmetricFov{}; };
 enum class TurnMode { Off, Smooth, Snap };
@@ -157,7 +158,7 @@ struct State {
     bool physicalIdentityQueryEnabled{};
     VkInstance vkInstance{}; VkPhysicalDevice physical{},xrPhysical{}; VkDevice device{}; VkQueue queue{}; uint32_t queueFamily{},queueIndex{},runtimeMaxVulkanApiVersion{}; KharvoxVulkanDispatch vk{};
     VkCommandPool commandPool{}; VkCommandBuffer commandBuffer{}; VkFence copyFence{};
-    std::unordered_map<VkSwapchainKHR,DoomSwapchain> doomSwapchains; DoomSwapchain retiredCompatibleDoomSwapchain{}; bool retiredCompatibleDoomSwapchainValid{}; ULONGLONG retiredCompatibleDoomSwapchainAt{}; VkSwapchainKHR startupActiveDoomSwapchain{}; bool vdxrSessionDeferralLogged{}; std::array<EyeSwapchain,2> eyes; EyeSwapchain hudQuad; EyeSwapchain laserQuad; uint32_t hudSurfaceWidth{},hudSurfaceHeight{}; float hudSafeTanHalfHorizontal{},hudSafeTanHalfVertical{}; int64_t hudQuadFormat{}; uint64_t hudQuadCopiedFrames{}; bool hudQuadRuntimeFailureLogged{}; bool laserQuadRuntimeFailureLogged{}; std::array<XrView,2> views{{{XR_TYPE_VIEW},{XR_TYPE_VIEW}}};
+    std::unordered_map<VkSwapchainKHR,DoomSwapchain> doomSwapchains; DoomSwapchain retiredCompatibleDoomSwapchain{}; bool retiredCompatibleDoomSwapchainValid{}; ULONGLONG retiredCompatibleDoomSwapchainAt{}; VkSwapchainKHR startupActiveDoomSwapchain{}; bool vdxrSessionDeferralLogged{}; std::array<EyeSwapchain,2> eyes; EyeSwapchain hudQuad; uint32_t hudSurfaceWidth{},hudSurfaceHeight{}; float hudSafeTanHalfHorizontal{},hudSafeTanHalfVertical{}; int64_t hudQuadFormat{}; uint64_t hudQuadCopiedFrames{}; bool hudQuadRuntimeFailureLogged{}; std::array<XrView,2> views{{{XR_TYPE_VIEW},{XR_TYPE_VIEW}}};
     HeadPose head{}; XrVector3f trackingHeadPosition{}; bool trackingHeadPositionValid{}; XrQuaternionf headZero{0,0,0,1}; XrVector3f headZeroPosition{}; bool headZeroValid{}; bool headZeroPositionValid{}; bool headCameraArmed{true}; bool nativeMenuCameraPoseHeld{}; bool quadMode{true}; bool centeredQuadTransitionPending{}; unsigned centeredQuadFramesRemaining{}; bool cinewindowFollowsHeadset{cinewindowFollowsHeadsetRequested()}; bool cinewindowPresentationActive{}; bool cinewindowFixedPoseFallbackLogged{}; kharvox::CinewindowAnchor cinewindowAnchor{}; kharvox::CinewindowCaptureReadiness cinewindowCaptureReadiness{}; bool hudEverythingQuad{},hudEverythingQuadAvailable{}; bool hudEverythingQuadKeyDown{}; bool steamQuadOnly{}; bool steamMetaCompatibilityMode{}; bool presentationKeyDown{}; bool presentationManualOverride{}; XrTime lastSteamDisplayTime{}; uint64_t steamDuplicateFrames{},steamLinkReprojectedFrames{};
     uint64_t steamWaitCalls{},steamBeginCalls{},steamEndCalls{},steamDiscardedBegins{},steamEndFailures{},steamLocalOrderViolations{};bool steamFrameBegun{};
     bool steamFramePrepared{}; XrFrameState steamPreparedFrame{XR_TYPE_FRAME_STATE}; XrResult steamPreparedWaitResult{XR_SUCCESS}; XrResult steamPreparedBeginResult{XR_SUCCESS}; double steamPreparedWaitMs{}; LARGE_INTEGER steamPreparedAt{}; DWORD steamPreparedThread{},steamPreparedAcquireCallerThread{}; VkSwapchainKHR steamPreparedDoomSwapchain{}; uint64_t steamPreparedFrames{},steamConsumedPreparedFrames{},steamRepeatedAcquires{}; bool steamFsrStartupHandshakeComplete{};
@@ -253,7 +254,7 @@ struct State {
     kharvox::PostCinematicYawGuard postCinematicYawGuard{};
     bool gameplayRecenterPending{true};
     bool weapon6Dof{},weaponCalibrated{},weaponGameplayActivated{},weaponPoseSubmitted{},weaponTrackingHeld{};WeaponPose weaponBaseline{};
-    bool laserSightEnabled{},laserPoseValid{};WeaponPose laserMuzzlePose{};XrVector3f laserDirection{0,0,-1};
+    bool laserSightEnabled{};
     bool twoHandEnabled{},twoHandCalibrationMode{},twoHandLatched{},supportGripPressed{},virtualGunstockEnabled{};
     bool bfgGripTriggered{},bfgGripSuppressedUntilRelease{};
     XrTime bfgGripHoldStart{},bfgPulseUntil{};
@@ -1335,9 +1336,9 @@ void configurePhysicalGlorykill(){
 void configureLaserSight(){
     s.laserSightEnabled=environmentEnabled("KHARVOX_LASER_SIGHT")
         ||kharvox::runtimeFileExists(L"enable_laser_sight");
-    s.laserPoseValid=false;
+
     log(std::string("[LASER] ")+(s.laserSightEnabled?"ENABLED":"disabled")
-        +" diameter=0.004m; animated render-muzzle source; Chainsaw and non-muzzle weapons hard-disabled");
+        +" diameter=0.004m; source-qualified scene-depth beam; no compositor overlay; Chainsaw and non-muzzle weapons disabled");
 }
 void configureMotionWeaponWheel(){
     char text[16]{};
@@ -1520,39 +1521,27 @@ bool laserWeaponAllowed(KharvoxWeaponKind kind){
     }
 }
 
-bool renderedLaserPoseInTrackingSpace(XrVector3f& trackingOrigin,XrVector3f& trackingDirection){
-    float muzzleWorld[3]{},directionWorld[3]{};
-    float bodyOrigin[3]{},bodyAxis[9]{};
-    if(!s.headZeroValid||!s.headZeroPositionValid
-        ||!KharvoxWeaponGetLaserMuzzlePose(muzzleWorld,directionWorld)
-        ||!KharvoxCameraGetBodyPose(bodyOrigin,bodyAxis))return false;
-
-    auto worldToBody=[&](const float world[3]){
-        return XrVector3f{
-            world[0]*bodyAxis[0]+world[1]*bodyAxis[1]+world[2]*bodyAxis[2],
-            world[0]*bodyAxis[3]+world[1]*bodyAxis[4]+world[2]*bodyAxis[5],
-            world[0]*bodyAxis[6]+world[1]*bodyAxis[7]+world[2]*bodyAxis[8]};
-    };
-    const float muzzleDelta[3]{muzzleWorld[0]-bodyOrigin[0],
-        muzzleWorld[1]-bodyOrigin[1],muzzleWorld[2]-bodyOrigin[2]};
-    const auto muzzleBody=worldToBody(muzzleDelta);
-    const auto directionBody=worldToBody(directionWorld);
-    // Inverse of the mapping used to publish controller poses to WeaponHook:
-    // DOOM (forward,lateral,up) = OpenXR (-z,-x,y).
-    const XrVector3f visualRelative{-muzzleBody.y/s.worldScale,
-        muzzleBody.z/s.worldScale,-muzzleBody.x/s.worldScale};
-    const XrVector3f visualDirection{-directionBody.y,directionBody.z,-directionBody.x};
-    const auto acceptedYaw=yawQuaternion(s.controllerFrameYaw.acceptedForPose(s.acceptedPhysicalYaw));
-    const auto inversePendingYaw=conjugate(yawQuaternion(s.controllerFrameYaw.turnForPose(artificialTurnVisualYaw())));
-    const auto trackingLocal=addVector(
-        rotateVector(acceptedYaw,rotateVector(inversePendingYaw,visualRelative)),
-        s.bodyFollowPosition);
-    trackingOrigin=addVector(s.headZeroPosition,rotateVector(s.headZero,trackingLocal));
-    trackingDirection=normalizeVector(rotateVector(s.headZero,
-        rotateVector(acceptedYaw,rotateVector(inversePendingYaw,visualDirection))));
-    return std::isfinite(trackingOrigin.x)&&std::isfinite(trackingOrigin.y)
-        &&std::isfinite(trackingOrigin.z)&&std::isfinite(trackingDirection.x)
-        &&std::isfinite(trackingDirection.y)&&std::isfinite(trackingDirection.z);
+XrPosef laserBodyTrackingTransform(){
+    const auto accepted=yawQuaternion(s.controllerFrameYaw.acceptedForPose(s.acceptedPhysicalYaw));
+    const auto pending=conjugate(yawQuaternion(s.controllerFrameYaw.turnForPose(artificialTurnVisualYaw())));
+    return {multiply(s.headZero,multiply(accepted,pending)),
+        addVector(s.headZeroPosition,rotateVector(s.headZero,s.bodyFollowPosition))};
+}
+bool renderedLaserPoseInTrackingSpace(XrVector3f& trackingOrigin,XrVector3f& trackingDirection,
+    const XrPosef& tracking, uint64_t sourcePose=0,int sourceEye=-1){
+    float muzzle[3]{},direction[3]{},body[3]{},axis[9]{};
+    if(!s.headZeroValid||!s.headZeroPositionValid||!KharvoxWeaponGetLaserMuzzlePose(
+        muzzle,direction,body,axis,sourcePose,sourceEye))return false;
+    float local[3]{},forward[3]{};
+    for(int row=0;row<3;++row)for(int c=0;c<3;++c){
+        local[row]+=(muzzle[c]-body[c])*axis[row*3+c];
+        forward[row]+=direction[c]*axis[row*3+c];
+    }
+    trackingOrigin=addVector(tracking.position,rotateVector(tracking.orientation,
+        {-local[1]/s.worldScale,local[2]/s.worldScale,-local[0]/s.worldScale}));
+    trackingDirection=normalizeVector(rotateVector(tracking.orientation,{-forward[1],forward[2],-forward[0]}));
+    return std::isfinite(trackingOrigin.x)&&std::isfinite(trackingOrigin.y)&&std::isfinite(trackingOrigin.z)
+        &&std::isfinite(trackingDirection.x)&&std::isfinite(trackingDirection.y)&&std::isfinite(trackingDirection.z);
 }
 TwoHandCalibration* twoHandCalibrationFor(KharvoxWeaponKind kind){
     const int index=static_cast<int>(kind);
@@ -1846,7 +1835,7 @@ void updateWeapon6Dof(){
         &&!s.cinematicBodyPoseHeld;
     if(!s.weapon6Dof||!s.headZeroValid||!gameplay){
         KharvoxWeaponSetControllerPose(0,0,0,0,0,0,0,0,0,1,false);
-        s.laserPoseValid=false;
+
         s.weaponTrackingHeld=false;s.twoHandLatched=false;s.twoHandLatchedWeapon=KharvoxWeaponKind::Unknown;
         if(s.twoHandEnabled)writeTwoHandStatus(s.twoHandCalibrationMode
             ?std::string("CALIBRATION: enter gameplay and equip ")+weaponKindName(s.twoHandCalibrationTarget)
@@ -1861,7 +1850,7 @@ void updateWeapon6Dof(){
     const auto& primaryController=weaponController();
     const auto& supportController=supportGripController();
     if(!primaryController.valid){
-        s.laserPoseValid=false;
+
         if(s.weaponPoseSubmitted){
             if(!s.weaponTrackingHeld)
                 log("[WEAPON] controller tracking temporarily invalid; holding last valid 6DoF pose");
@@ -1973,14 +1962,7 @@ void updateWeapon6Dof(){
         publishedWeaponPose.orientation.z,publishedWeaponPose.orientation.w,true);
     s.weaponPoseSubmitted=true;
 
-    // Publish the exact animated render-model muzzle in raw OpenXR tracking
-    // space. This uses the same visible barrel transform that DOOM uses for its
-    // native muzzle fire axis; no controller offsets or per-weapon lengths are
-    // guessed here.
-    s.laserPoseValid=false;
-    if(s.laserSightEnabled&&laserWeaponAllowed(kind))
-        s.laserPoseValid=renderedLaserPoseInTrackingSpace(
-            s.laserMuzzlePose.position,s.laserDirection);
+
 }
 void updateGameplayActions(XrTime displayTime){
     if(!s.actionsReady){s.primaryFireDown=false;return;}
@@ -2009,7 +1991,7 @@ void updateGameplayActions(XrTime displayTime){
         s.backWeaponState.selectionDeadlineNanoseconds=0;
         s.backWeaponPulseUntil=0;
         s.bodyFollowTurnX=0.f;s.previousManualTurnActive=false;
-        s.laserPoseValid=false;
+
         s.primaryFireDown=false;
         KharvoxCameraSetCrouchState(false);
         return;
@@ -3135,35 +3117,7 @@ bool createSwapchains() {
     // OpenXR expands this tiny transparent texture into a physical 4 mm beam
     // independently for both eyes. Two crossed quads are submitted later to
     // approximate a narrow cylindrical sight without a custom game shader.
-    if(s.laserSightEnabled){
-        auto& laser=s.laserQuad;
-        constexpr int64_t laserFormat=VK_FORMAT_R8G8B8A8_UNORM;
-        laser.width=8;laser.height=2;
-        if(!s.vk.cmdClearColorImage){
-            log("[LASER] Vulkan clear command unavailable; laser safely disabled");
-        }else if(std::find(formats.begin(),formats.end(),laserFormat)==formats.end()){
-            log("[LASER] runtime does not expose RGBA8 composition swapchains; laser safely disabled");
-        }else{
-            XrSwapchainCreateInfo createInfo{XR_TYPE_SWAPCHAIN_CREATE_INFO};
-            createInfo.usageFlags=XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT
-                |XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
-            createInfo.format=laserFormat;
-            createInfo.sampleCount=1;
-            createInfo.width=laser.width;
-            createInfo.height=laser.height;
-            createInfo.faceCount=1;
-            createInfo.arraySize=1;
-            createInfo.mipCount=1;
-            r=s.createSwapchain(s.session,&createInfo,&laser.handle);
-            if(XR_SUCCEEDED(r)&&initializeSwapchainImages(laser)){
-                log("[LASER] transparent red composition swapchain ready; physical diameter=0.004m");
-            }else{
-                log("[LASER] composition swapchain unavailable "+result(r)+"; laser safely disabled");
-                if(laser.handle!=XR_NULL_HANDLE)s.destroySwapchain(laser.handle);
-                laser={};
-            }
-        }
-    }
+
     log(initializePauseBindings(formats)
         ? "[PAUSE-BINDINGS] static controller image uploaded; pause root only"
         : "[PAUSE-BINDINGS] image unavailable; normal pause menu retained");
@@ -3228,7 +3182,7 @@ bool createSession(){
         std::array<VkExtent2D,2> extents{{{s.eyes[0].width,s.eyes[0].height},{s.eyes[1].width,s.eyes[1].height}}};
         std::array<std::vector<VkImage>,2> images{};
         for(size_t eye=0;eye<2;eye++)for(const auto&image:s.eyes[eye].images)images[eye].push_back(image.image);
-        if(s.showHands)
+        if(s.showHands||s.laserSightEnabled)
             s.handRenderer.initialize(s.physical,s.device,s.queue,s.queueFamily,s.vk,
                 static_cast<VkFormat>(s.format),extents,images,kharvox::runtimeDirectory(),
                 [](const std::string&message){log(message);});
@@ -4110,27 +4064,9 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
         && hudSource.format == VK_FORMAT_R8G8B8A8_UNORM
         && hudSource.extent.width > 0
         && hudSource.extent.height > 0;
-    const auto laserWeaponKind=KharvoxWeaponCurrentKind();
-    const bool laserRequested=s.laserSightEnabled
-        &&s.laserQuad.handle!=XR_NULL_HANDLE
-        &&s.laserPoseValid
-        &&laserWeaponAllowed(laserWeaponKind)
-        // Repeat the explicit deny at the final submission boundary so an
-        // asynchronous weapon switch can never reuse a firearm's last pose.
-        &&laserWeaponKind!=KharvoxWeaponKind::Chainsaw
-        &&!s.quadMode
-        &&KharvoxCameraGameplayActive()
-        &&!KharvoxCameraCutsceneActive()
-        &&!KharvoxHudPauseMenuActive()
-        &&!KharvoxHudDeathMenuActive()
-        &&!KharvoxHudFullscreenMenuActive();
     uint32_t hudImageIndex{};
     bool hudImageAcquired{};
     bool hudImageCopied{};
-    uint32_t laserImageIndex{};
-    bool laserImageAcquired{};
-    bool laserImageReady{};
-    bool laserNeedsInitialize{};
     constexpr float radiansToDegrees=57.2957795131f;
     const bool immersiveCameraArmed=kharvox::shouldArmImmersiveCamera(
         s.immersiveCinematicCameraRequested,s.quadMode,s.centeredQuadTransitionPending);
@@ -4596,32 +4532,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
             s.hudQuadRuntimeFailureLogged=true;
         }
     }
-    if(laserRequested){
-        XrSwapchainImageAcquireInfo acquire{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
-        r=s.acquireImage(s.laserQuad.handle,&acquire,&laserImageIndex);
-        if(XR_SUCCEEDED(r)&&laserImageIndex<s.laserQuad.images.size()){
-            laserImageAcquired=true;
-            XrSwapchainImageWaitInfo wait{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
-            wait.timeout=XR_INFINITE_DURATION;
-            r=s.waitImage(s.laserQuad.handle,&wait);
-            if(XR_FAILED(r)){
-                XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
-                s.releaseImage(s.laserQuad.handle,&release);
-                laserImageAcquired=false;
-            }else{
-                // OpenXR does not guarantee that a released non-static
-                // swapchain image preserves its pixels. Rewrite the red texel
-                // every frame; otherwise some runtimes return an opaque black
-                // image on later acquisitions.
-                laserNeedsInitialize=true;
-                laserImageReady=false;
-            }
-        }
-        if(!laserImageAcquired&&!s.laserQuadRuntimeFailureLogged){
-            log("[LASER] acquire/wait failed "+result(r)+"; laser omitted safely");
-            s.laserQuadRuntimeFailureLogged=true;
-        }
-    }
+
     const bool monoColorCache=steamLinkMonoColorCache||initialMonoColorCache;
     std::array<XrRect2Di,2> submittedRects{};
     if(steamXrAerReusePublishedPair)
@@ -4695,6 +4606,19 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
         rawEyeCaptureRecorded[currentRenderEye]=recordEyeSource(currentRenderEye,src,
             VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,it->second.extent,it->second.format,
             s.stereoCacheRevision[currentRenderEye]+1);
+    kharvox::hands::HandPose sceneLaser{};
+    XrVector3f laserOrigin{},laserDirection{};
+    if(s.laserSightEnabled&&handGameplayActive&&laserWeaponAllowed(KharvoxWeaponCurrentKind())
+        &&(!aerSourceMode||aerSourceQualified)
+        &&renderedLaserPoseInTrackingSpace(laserOrigin,laserDirection,
+            aerSourceQualified?aerCapturedInput.laserBodyTracking:laserBodyTrackingTransform(),
+            aerSourceQualified?aerSourceObservation.key.poseId:0,
+            aerSourceQualified?aerSourceObservation.key.eye:-1)){
+        const auto up=std::fabs(laserDirection.y)>.9f?XrVector3f{1,0,0}:XrVector3f{0,1,0};
+        const auto rotation=quaternionFromForwardUp(laserDirection,up);
+        sceneLaser={{laserOrigin.x,laserOrigin.y,laserOrigin.z},
+            {rotation.x,rotation.y,rotation.z,rotation.w},true};
+    }
     bool sourceHasIntegratedHands=false;
     auto integrateSceneHands=[&](VkImage source,VkImageLayout oldLayout,const XrPosef& sourcePose,const XrFovf& sourceFov){
         kharvox::hands::HandSceneTarget handSceneTarget{};
@@ -4716,6 +4640,11 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
                 kharvox::GameImageLifetime::key(handSceneTarget.depthView)};})
             &&handSceneTarget.colorFormat==it->second.format;
         if(!available){
+            static bool laserDepthMissingLogged=false;
+            if(sceneLaser.valid&&!laserDepthMissingLogged){
+                log("[LASER] scene depth unavailable; beam withheld (no overlay fallback)");
+                laserDepthMissingLogged=true;
+            }
             barrier(s.commandBuffer,source,oldLayout,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                 VK_ACCESS_MEMORY_WRITE_BIT,VK_ACCESS_TRANSFER_READ_BIT);
             return false;
@@ -4752,7 +4681,12 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
         const bool integrated=s.handRenderer.recordSceneIntegrated(
             s.commandBuffer,handSceneTarget,sourceHandView,
             integratedLeftHandPose,integratedRightHandPose,
-            integratedHandVisibility,integratedHandGameplay);
+            freshAerHands?kharvox::hands::HandVisibilityOutput{}:integratedHandVisibility,integratedHandGameplay,sceneLaser);
+        static bool laserSceneLogged=false;
+        if(integrated&&sceneLaser.valid&&!laserSceneLogged){
+            log("[LASER] scene-depth beam recorded with completed weapon source; compositor ribbons removed");
+            laserSceneLogged=true;
+        }
         barrierAspect(s.commandBuffer,handSceneTarget.depthImage,
             VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
             handSceneTarget.depthLayout,
@@ -4762,9 +4696,9 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
         barrier(s.commandBuffer,source,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
             VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,VK_ACCESS_TRANSFER_READ_BIT);
-        return integrated;
+        return integrated&&!freshAerHands;
     };
-    const bool sceneIntegrationEligible=!freshAerHands&&handGameplayActive&&stereoNow
+    const bool sceneIntegrationEligible=(!freshAerHands||sceneLaser.valid)&&handGameplayActive&&stereoNow
         &&!nativePackedStereo&&!skipAlternatingCapture
         &&captureViewValid;
     if(sceneIntegrationEligible){
@@ -5130,27 +5064,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
         s.hudQuad.initialized[hudImageIndex]=true;
         hudImageCopied=true;
     }
-    if(laserImageAcquired&&laserNeedsInitialize){
-        VkImage laserImage=s.laserQuad.images[laserImageIndex].image;
-        const VkImageLayout laserOldLayout=s.laserQuad.initialized[laserImageIndex]
-            ?VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:VK_IMAGE_LAYOUT_UNDEFINED;
-        barrier(s.commandBuffer,laserImage,laserOldLayout,
-            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,0,VK_ACCESS_TRANSFER_WRITE_BIT);
-        VkClearColorValue color{};
-        // Premultiplied 60% red. The quad omits the UNPREMULTIPLIED flag below,
-        // so its transparent pixels remain red instead of producing a dark or
-        // black fringe in SteamVR/Meta compositors.
-        color.float32[0]=0.60f;color.float32[1]=0.0f;color.float32[2]=0.0f;color.float32[3]=0.60f;
-        VkImageSubresourceRange range{};
-        range.aspectMask=VK_IMAGE_ASPECT_COLOR_BIT;
-        range.levelCount=1;
-        range.layerCount=1;
-        s.vk.cmdClearColorImage(s.commandBuffer,laserImage,
-            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,&color,1,&range);
-        barrier(s.commandBuffer,laserImage,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,VK_ACCESS_TRANSFER_WRITE_BIT,
-            VK_ACCESS_MEMORY_READ_BIT);
-    }
+
     // Alternating camera offsets are useful for proving stereo, but showing the
     // raw alternating render on the desktop produces extreme left/right flicker.
     // Keep the HMD eye caches untouched and mirror one stable eye to the game's
@@ -5244,7 +5158,6 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
         s.handRenderer.finishSceneIntegratedFrame();
         releaseAcquiredEyeImages();
         if(hudImageAcquired){XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};s.releaseImage(s.hudQuad.handle,&ri);}
-        if(laserImageAcquired){XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};s.releaseImage(s.laserQuad.handle,&ri);}
         log("copy submit failed "+std::to_string(submitResult));endEmptyFrame("copy-submit-failed");return;
     }
     if(steamRuntime){QueryPerformanceCounter(&copyWaitEnd);steamCopyWaitMs=performanceMilliseconds(copyWaitStart,copyWaitEnd);}
@@ -5255,7 +5168,6 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
         if(nativeFrameValid)kharvox::native::fail("owner native copy completion failed; restart required");
         releaseAcquiredEyeImages();
         if(hudImageAcquired){XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};s.releaseImage(s.hudQuad.handle,&ri);}
-        if(laserImageAcquired){XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};s.releaseImage(s.laserQuad.handle,&ri);}
         log(std::string(copyCompletion?"copy fence wait failed ":"copy queue wait failed ")+std::to_string(completionResult));endEmptyFrame("copy-completion-failed");return;
     }
     if(!earlyRelease){
@@ -5271,11 +5183,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
     if(nativeFrameValid)QueryPerformanceCounter(&nativeReleaseAt);
     releaseAcquiredEyeImages();
     if(hudImageAcquired)releaseImageChecked(s.hudQuad.handle);
-    if(laserImageAcquired){
-        if(laserNeedsInitialize)s.laserQuad.initialized[laserImageIndex]=true;
-        laserImageReady=true;
-        releaseImageChecked(s.laserQuad.handle);
-    }
+
     if(nativeFrameValid)QueryPerformanceCounter(&nativeReleaseDone);
     if(freshWorldPairRecorded){
         s.freshHandsInitialized=true;s.freshHandsWorldValid=true;
@@ -5499,68 +5407,13 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
     const float hudWidthMeters=std::max(0.05f,hudAngularWidthMeters);
     hudQuadLayer.size={hudWidthMeters,hudWidthMeters/hudContentAspect};
 
-    constexpr float laserLengthMeters=20.0f;
-    constexpr float laserDiameterMeters=0.004f;
-    std::array<XrCompositionLayerQuad,2> laserLayers{{
-        {XR_TYPE_COMPOSITION_LAYER_QUAD},{XR_TYPE_COMPOSITION_LAYER_QUAD}}};
-    bool laserLayerReady=laserImageReady&&laserRequested
-        &&KharvoxWeaponCurrentKind()!=KharvoxWeaponKind::Chainsaw
-        &&laserWeaponAllowed(KharvoxWeaponCurrentKind());
-    if(laserLayerReady){
-        static bool laserLayerActiveLogged=false;
-        if(!laserLayerActiveLogged){
-            log("[LASER] ACTIVE: animated muzzle-aligned stereo beam length=20m diameter=0.004m premultiplied-red alpha=0.60");
-            laserLayerActiveLogged=true;
-        }
-        const auto beamDirection=normalizeVector(s.laserDirection);
-        const XrVector3f controllerUp{0,1,0};
-        const auto firstUp=normalizeVector(subtractVector(controllerUp,
-            scaleVector(beamDirection,dotVector(controllerUp,beamDirection))),{0,1,0});
-        const auto firstNormal=normalizeVector(crossVector(beamDirection,firstUp),{1,0,0});
-        const std::array<XrVector3f,2> ribbonUp{{firstUp,firstNormal}};
-        const auto center=addVector(s.laserMuzzlePose.position,
-            scaleVector(beamDirection,laserLengthMeters*.5f));
-        const XrVector3f viewer=s.trackingHeadPositionValid?s.trackingHeadPosition
-            :XrVector3f{(s.views[0].pose.position.x+s.views[1].pose.position.x)*.5f,
-                (s.views[0].pose.position.y+s.views[1].pose.position.y)*.5f,
-                (s.views[0].pose.position.z+s.views[1].pose.position.z)*.5f};
-        const auto centerToViewer=subtractVector(viewer,center);
-        for(size_t index=0;index<laserLayers.size();++index){
-            auto normal=normalizeVector(crossVector(beamDirection,ribbonUp[index]),
-                index?XrVector3f{0,1,0}:XrVector3f{1,0,0});
-            // Quad layers are single-sided. The player is normally almost on
-            // the beam axis, so either crossed ribbon can otherwise present
-            // its back face (or exact edge) and disappear completely. Flip
-            // each normal independently toward the current HMD midpoint.
-            if(dotVector(normal,centerToViewer)<0.f)normal=scaleVector(normal,-1.f);
-            auto& layer=laserLayers[index];
-            layer.layerFlags=XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
-            layer.space=s.space;
-            layer.eyeVisibility=nativeFrame.rightEyeBlackDiagnostic?XR_EYE_VISIBILITY_LEFT:XR_EYE_VISIBILITY_BOTH;
-            layer.subImage.swapchain=s.laserQuad.handle;
-            layer.subImage.imageRect.offset={0,0};
-            layer.subImage.imageRect.extent={static_cast<int32_t>(s.laserQuad.width),
-                static_cast<int32_t>(s.laserQuad.height)};
-            // A Quad's local surface is XY with +Z facing the viewer. Map local
-            // X to the muzzle axis and submit two 90-degree ribbons so the
-            // physical 4 mm beam remains visible from every viewing angle.
-            layer.pose.orientation=quaternionFromForwardUp(scaleVector(normal,-1.f),
-                ribbonUp[index]);
-            layer.pose.position=center;
-            layer.size={laserLengthMeters,laserDiameterMeters};
-        }
-    }
-
     std::array<const XrCompositionLayerBaseHeader*,5> layers{};
     uint32_t layerCount{};
     layers[layerCount++]=s.quadMode
         ?reinterpret_cast<const XrCompositionLayerBaseHeader*>(&quad)
         :reinterpret_cast<const XrCompositionLayerBaseHeader*>(&projection);
     if(showPauseBindings) layers[layerCount++]=reinterpret_cast<const XrCompositionLayerBaseHeader*>(&bindingsLayer);
-    if(laserLayerReady){
-        layers[layerCount++]=reinterpret_cast<const XrCompositionLayerBaseHeader*>(&laserLayers[0]);
-        layers[layerCount++]=reinterpret_cast<const XrCompositionLayerBaseHeader*>(&laserLayers[1]);
-    }
+
     if(hudImageCopied){
         layers[layerCount++]=reinterpret_cast<const XrCompositionLayerBaseHeader*>(&hudQuadLayer);
         const uint64_t copied=++s.hudQuadCopiedFrames;
@@ -5583,9 +5436,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
     ei.layerCount=(aerSourceMode&&!s.steamXrAerPairReady)
         ||(nativeBackend&&!s.quadMode&&!nativeFrameValid)?0:layerCount;
     ei.layers=layers.data();
-    const std::string layerReason=laserLayerReady
-        ?(hudImageCopied?"projection+laser+hud-quad":"projection+laser")
-        :(hudImageCopied?"projection+hud-quad":(s.quadMode?"quad-layer":"projection-layer"));
+    const std::string layerReason=hudImageCopied?"projection+hud-quad":(s.quadMode?"quad-layer":"projection-layer");
     if(nativeFrameValid)QueryPerformanceCounter(&nativeEndAt);
     if(eyeCaptureRecorded)finishEyeCapture(pv,frame.predictedDisplayTime,nativeBackend);
     if(!s.quadMode&&ei.layerCount)for(int eye=0;eye<2;++eye)traceEye(kharvox::pose_trace::Submitted,eye,pv[eye].pose,pv[eye].fov,frame.predictedDisplayTime,0,steamXrAerPairPath?poseTracePublishedRevisions[eye]:s.stereoCacheRevision[eye],0,nativeBackend?0:(steamXrAerPairPath?poseTracePublishedIds[eye]:poseTraceCachedIds[eye]));
@@ -5760,7 +5611,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
         }
         s.aerInputHistory.remember({inputPoseId,KharvoxCameraLevelTransitionGeneration(),s.renderEye},
             {s.programmedEyePose[s.renderEye],s.programmedEyeFov[s.renderEye],
-             s.aerPairInputLeft,s.aerPairInputRight,s.programmedEyeArtificialTurn[s.renderEye],s.programmedEyeSnapGeneration[s.renderEye],s.aerPairInputCenter});
+             s.aerPairInputLeft,s.aerPairInputRight,s.programmedEyeArtificialTurn[s.renderEye],s.programmedEyeSnapGeneration[s.renderEye],s.aerPairInputCenter,laserBodyTrackingTransform()});
         traceEye(kharvox::pose_trace::Programmed,s.renderEye,s.programmedEyePose[s.renderEye],eyeRenderProjection(s.programmedEyeFov[s.renderEye]).symmetricFov,frame.predictedDisplayTime,0,0,0,poseTraceProgrammedIds[s.renderEye]);
     }
     if(XR_SUCCEEDED(r)&&s.submittedLayerFrames==1)log("Frame 1 submitted mode="+(s.quadMode?std::string("QUAD"):std::string("PROJECTION"))+" result="+result(r), true);

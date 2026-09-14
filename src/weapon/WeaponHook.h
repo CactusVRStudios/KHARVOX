@@ -44,7 +44,8 @@ KharvoxWeaponAmmoState KharvoxWeaponGetAmmoState(KharvoxWeaponKind kind);
 // Returns the current rendered weapon muzzle in DOOM world coordinates. The
 // pose is taken from the weapon model's animated joint matrices, not inferred
 // from the controller. Chainsaw/fists and stale weapon frames return false.
-bool KharvoxWeaponGetLaserMuzzlePose(float origin[3], float direction[3]);
+bool KharvoxWeaponGetLaserMuzzlePose(float origin[3], float direction[3],
+    float bodyOrigin[3], float bodyAxis[9], unsigned long long sourcePose=0, int sourceEye=-1);
 const char* KharvoxWeaponKindKey(KharvoxWeaponKind kind);
 const char* KharvoxWeaponKindDisplayName(KharvoxWeaponKind kind);
 KharvoxWeaponKind KharvoxWeaponKindFromKey(const char* key);

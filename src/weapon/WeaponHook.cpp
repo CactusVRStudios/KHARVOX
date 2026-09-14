@@ -1,3 +1,4 @@
+#include "LaserSourcePolicy.h"
 #include "../common/AerRenderOrder.h"
 #include "../common/DiagnosticLogging.h"
 #include "../common/PoseTrace.h"
@@ -161,17 +162,17 @@ std::array<std::atomic<float>, 3> lastWeaponPresentViewOffset{};
 std::array<std::atomic<int>, 4> lastWeaponPresentIntegers{};
 std::atomic<float> lastWeaponPresentModelScale{};
 std::atomic<float> lastWeaponPresentDepthHack{};
-std::atomic<unsigned> laserMuzzleSequence{};
-std::array<std::atomic<float>, 3> laserMuzzleWorldOrigin{};
-std::array<std::atomic<float>, 3> laserMuzzleWorldDirection{};
-std::atomic<KharvoxWeaponKind> laserMuzzleWeaponKind{KharvoxWeaponKind::Unknown};
-std::atomic<unsigned long long> laserMuzzleTick{};
-std::atomic<bool> laserMuzzleValid{};
+struct LaserSourceSnapshot {
+    std::array<float,3> origin{}, direction{}, bodyOrigin{};
+    std::array<float,9> bodyAxis{};
+    KharvoxWeaponKind kind{KharvoxWeaponKind::Unknown};
+    uint64_t tick{}, epoch{};
+};
+std::mutex laserSourceMutex;
+kharvox::AerInputHistory<LaserSourceSnapshot> laserSources;
+LaserSourceSnapshot latestLaserSource;
 std::atomic<unsigned> laserMuzzleKindsLogged{};
-std::atomic<unsigned> laserRenderProbeKindsLogged{};
 std::atomic<unsigned> laserMuzzleFailureKindsLogged{};
-std::array<std::atomic<size_t>, static_cast<size_t>(KharvoxWeaponKind::Count)> laserJointOffsetsPlusOne{};
-std::array<std::atomic<unsigned>, static_cast<size_t>(KharvoxWeaponKind::Count)> laserJointCounts{};
 constexpr size_t weaponObjectSnapshotBytes = 0x2000;
 std::array<unsigned char, weaponObjectSnapshotBytes> baselineWeaponObjectBytes{};
 bool baselineWeaponObjectValid{};
@@ -1194,201 +1195,9 @@ bool laserAllowedForWeapon(KharvoxWeaponKind kind) {
 }
 
 void invalidateLaserMuzzlePose() {
-    laserMuzzleSequence.fetch_add(1, std::memory_order_acq_rel);
-    laserMuzzleValid.store(false, std::memory_order_relaxed);
-    laserMuzzleWeaponKind.store(KharvoxWeaponKind::Unknown, std::memory_order_relaxed);
-    laserMuzzleTick.store(0, std::memory_order_relaxed);
-    laserMuzzleSequence.fetch_add(1, std::memory_order_release);
-}
-
-struct LaserJointSelection {
-    const float* matrix{};
-    std::array<float, 3> localOrigin{};
-    std::array<float, 3> localDirection{0.0f, 0.0f, 1.0f};
-    float distance{};
-};
-
-bool selectLaserMuzzleFromJointRun(const float* matrices, unsigned count,
-                                   LaserJointSelection& selection) {
-    if (!matrices || count < 4) return false;
-    const float* farthest{};
-    float farthestDistanceSquared = 4.0f;
-    for (unsigned joint = 0; joint < count; ++joint) {
-        const float* candidate = matrices + joint * 12;
-        if (jointMatrixScore(candidate) < 2.9f) continue;
-        const float x = candidate[3], y = candidate[7], z = candidate[11];
-        const float distanceSquared = x * x + y * y + z * z;
-        if (std::isfinite(distanceSquared) && distanceSquared > farthestDistanceSquared
-            && distanceSquared < 90000.0f) {
-            farthestDistanceSquared = distanceSquared;
-            farthest = candidate;
-        }
-    }
-    if (!farthest) return false;
-
-    selection.matrix = farthest;
-    selection.localOrigin = {farthest[3], farthest[7], farthest[11]};
-    selection.distance = std::sqrt(farthestDistanceSquared);
-    const std::array<float, 3> radial{
-        selection.localOrigin[0] / selection.distance,
-        selection.localOrigin[1] / selection.distance,
-        selection.localOrigin[2] / selection.distance};
-
-    // idJointMat stores its three local basis vectors in columns. Pick the
-    // column most parallel to the model-origin -> outer-joint line, then orient
-    // it away from the weapon grip. This works for +Z, -Z and weapons authored
-    // along another model axis without a per-weapon direction table.
-    float bestAlignment{};
-    for (int column = 0; column < 3; ++column) {
-        std::array<float, 3> basis{
-            farthest[column], farthest[4 + column], farthest[8 + column]};
-        const float length = std::sqrt(basis[0] * basis[0]
-            + basis[1] * basis[1] + basis[2] * basis[2]);
-        if (!std::isfinite(length) || length < 0.25f) continue;
-        for (float& value : basis) value /= length;
-        const float signedAlignment = basis[0] * radial[0]
-            + basis[1] * radial[1] + basis[2] * radial[2];
-        const float alignment = std::fabs(signedAlignment);
-        if (alignment > bestAlignment) {
-            bestAlignment = alignment;
-            if (signedAlignment < 0.0f)
-                for (float& value : basis) value = -value;
-            selection.localDirection = basis;
-        }
-    }
-    if (bestAlignment < 0.35f) selection.localDirection = radial;
-    return true;
-}
-
-bool findLaserJointRun(const unsigned char* bytes, size_t objectBytes,
-                       KharvoxWeaponKind kind, LaserJointSelection& selection,
-                       size_t& selectedOffset, unsigned& selectedCount) {
-    if (!bytes || objectBytes < 48 * 4 || !readableRange(bytes, objectBytes)) return false;
-    const size_t kindIndex = static_cast<size_t>(kind);
-    if (kindIndex < laserJointOffsetsPlusOne.size()) {
-        const size_t cachedPlusOne = laserJointOffsetsPlusOne[kindIndex].load(std::memory_order_acquire);
-        const unsigned cachedCount = laserJointCounts[kindIndex].load(std::memory_order_relaxed);
-        if (cachedPlusOne && cachedCount >= 4) {
-            const size_t cachedOffset = cachedPlusOne - 1;
-            if (cachedOffset + size_t(cachedCount) * 48 <= objectBytes
-                && selectLaserMuzzleFromJointRun(
-                    reinterpret_cast<const float*>(bytes + cachedOffset), cachedCount, selection)) {
-                selectedOffset = cachedOffset;
-                selectedCount = cachedCount;
-                return true;
-            }
-        }
-    }
-
-    size_t bestOffset{};
-    unsigned bestCount{};
-    LaserJointSelection bestSelection{};
-    float bestScore{};
-    for (size_t offset = 0; offset + 48 * 4 <= objectBytes; offset += 4) {
-        const auto first = reinterpret_cast<const float*>(bytes + offset);
-        unsigned run{};
-        while (offset + size_t(run + 1) * 48 <= objectBytes && run < 96
-            && jointMatrixScore(first + run * 12) >= 2.9f) ++run;
-        if (run < 4) continue;
-        LaserJointSelection candidate{};
-        if (selectLaserMuzzleFromJointRun(first, run, candidate)) {
-            const float score = float(std::min(run, 32u)) * 4.0f + candidate.distance;
-            if (score > bestScore) {
-                bestScore = score;
-                bestOffset = offset;
-                bestCount = run;
-                bestSelection = candidate;
-            }
-        }
-        offset += size_t(run) * 48 - 4;
-    }
-    if (!bestCount) return false;
-    selection = bestSelection;
-    selectedOffset = bestOffset;
-    selectedCount = bestCount;
-    if (kindIndex < laserJointOffsetsPlusOne.size()) {
-        laserJointCounts[kindIndex].store(bestCount, std::memory_order_relaxed);
-        laserJointOffsetsPlusOne[kindIndex].store(bestOffset + 1, std::memory_order_release);
-    }
-    return true;
-}
-
-void publishRenderedLaserMuzzlePose(void* renderObject, const float* origin,
-                                    const float* axis, float modelScale) {
-    const auto kind = activeWeaponKind.load(std::memory_order_acquire);
-    if (!laserAllowedForWeapon(kind) || !renderObject || !origin || !axis) {
-        invalidateLaserMuzzlePose();
-        return;
-    }
-    const unsigned kindBit = 1u << static_cast<unsigned>(kind);
-    const unsigned probeLogged = laserRenderProbeKindsLogged.fetch_or(kindBit, std::memory_order_relaxed);
-    if ((probeLogged & kindBit) == 0)
-        log(std::string("[LASER] weapon child-render probe active weapon=")
-            + KharvoxWeaponKindDisplayName(kind));
-
-    const auto bytes = static_cast<const unsigned char*>(renderObject);
-    LaserJointSelection joint{};
-    size_t jointBlockOffset{};
-    unsigned jointCount{};
-    if (!findLaserJointRun(bytes, weaponObjectSnapshotBytes, kind, joint,
-                           jointBlockOffset, jointCount)) {
-        const unsigned failures = laserMuzzleFailureKindsLogged.fetch_or(kindBit, std::memory_order_relaxed);
-        if ((failures & kindBit) == 0)
-            log(std::string("[LASER] no animated joint-matrix run found for ")
-                + KharvoxWeaponKindDisplayName(kind) + "; laser withheld instead of guessing");
-        invalidateLaserMuzzlePose();
-        return;
-    }
-
-    const float safeModelScale = std::isfinite(modelScale) && modelScale > 0.01f
-        ? modelScale : 1.0f;
-    const std::array<float, 3> localOrigin{
-        joint.localOrigin[0] * safeModelScale,
-        joint.localOrigin[1] * safeModelScale,
-        joint.localOrigin[2] * safeModelScale
-    };
-    const auto localDirection = joint.localDirection;
-
-    std::array<float, 3> worldOrigin{};
-    std::array<float, 3> worldDirection{};
-    for (int component = 0; component < 3; ++component) {
-        worldOrigin[component] = origin[component]
-            + localOrigin[0] * axis[component]
-            + localOrigin[1] * axis[3 + component]
-            + localOrigin[2] * axis[6 + component];
-        worldDirection[component] = localDirection[0] * axis[component]
-            + localDirection[1] * axis[3 + component]
-            + localDirection[2] * axis[6 + component];
-    }
-    const float worldLength = std::sqrt(worldDirection[0] * worldDirection[0]
-        + worldDirection[1] * worldDirection[1]
-        + worldDirection[2] * worldDirection[2]);
-    if (!std::isfinite(worldLength) || worldLength < 0.001f) {
-        invalidateLaserMuzzlePose();
-        return;
-    }
-    for (float& value : worldDirection) value /= worldLength;
-
-    laserMuzzleSequence.fetch_add(1, std::memory_order_acq_rel);
-    for (int component = 0; component < 3; ++component) {
-        laserMuzzleWorldOrigin[component].store(worldOrigin[component], std::memory_order_relaxed);
-        laserMuzzleWorldDirection[component].store(worldDirection[component], std::memory_order_relaxed);
-    }
-    laserMuzzleWeaponKind.store(kind, std::memory_order_relaxed);
-    laserMuzzleTick.store(GetTickCount64(), std::memory_order_relaxed);
-    laserMuzzleValid.store(true, std::memory_order_relaxed);
-    laserMuzzleSequence.fetch_add(1, std::memory_order_release);
-
-    const unsigned alreadyLogged = laserMuzzleKindsLogged.fetch_or(kindBit, std::memory_order_relaxed);
-    if ((alreadyLogged & kindBit) == 0) {
-        std::ostringstream out;
-        out << "[LASER] rendered muzzle acquired weapon=" << KharvoxWeaponKindDisplayName(kind)
-            << " jointBlock=0x" << std::hex << jointBlockOffset << std::dec
-            << " joints=" << jointCount << " muzzleDistance=" << joint.distance
-            << " worldOrigin=" << worldOrigin[0] << ',' << worldOrigin[1] << ',' << worldOrigin[2]
-            << " worldDirection=" << worldDirection[0] << ',' << worldDirection[1] << ',' << worldDirection[2];
-        log(out.str());
-    }
+    std::lock_guard lock(laserSourceMutex);
+    latestLaserSource={};
+    laserSources={};
 }
 
 bool validPropJoint(const float origin[3], const float axis[9]) {
@@ -1416,13 +1225,23 @@ void publishPropLaserMuzzlePose(void* propEntity, const float* propOrigin,
         return;
     }
 
+    thread_local uintptr_t jointEntity{};
+    thread_local KharvoxWeaponKind jointKind{};
+    thread_local unsigned stableJoint{};
+    thread_local bool stableJointValid{};
+    thread_local int stableConvention{},stableBasis{};
+    thread_local float stableSign{1.f};
+    const bool sameJoint=stableJointValid&&jointEntity==reinterpret_cast<uintptr_t>(propEntity)&&jointKind==kind;
+    if (jointEntity != reinterpret_cast<uintptr_t>(propEntity) || jointKind != kind) {
+        jointEntity=reinterpret_cast<uintptr_t>(propEntity);jointKind=kind;stableJointValid=false;
+    }
     unsigned selectedJoint{};
     unsigned validJoints{};
     unsigned consecutiveInvalid{};
     float farthestDistanceSquared = 4.0f;
     std::array<float, 3> localOrigin{};
     std::array<float, 9> localAxis{};
-    for (unsigned joint = 0; joint < 64; ++joint) {
+    for (unsigned joint = stableJointValid ? stableJoint : 0; joint < (stableJointValid ? stableJoint+1 : 64); ++joint) {
         float candidateOrigin[3]{}, candidateAxis[9]{};
         const bool valid = getJointTransform(
             propEntity, 1, joint, candidateOrigin, candidateAxis)
@@ -1457,6 +1276,7 @@ void publishPropLaserMuzzlePose(void* propEntity, const float* propOrigin,
         return;
     }
 
+    stableJoint=selectedJoint;stableJointValid=true;
     const float distance = std::sqrt(farthestDistanceSquared);
     const std::array<float, 3> radial{
         localOrigin[0] / distance, localOrigin[1] / distance, localOrigin[2] / distance};
@@ -1482,12 +1302,16 @@ void publishPropLaserMuzzlePose(void* propEntity, const float* propOrigin,
             const float alignment = std::fabs(signedAlignment);
             if (alignment > bestAlignment) {
                 bestAlignment = alignment;
+                if(!sameJoint){stableConvention=convention;stableBasis=basisIndex;stableSign=signedAlignment<0.f?-1.f:1.f;}
                 if (signedAlignment < 0.0f)
                     for (float& value : basis) value = -value;
                 localDirection = basis;
             }
         }
     }
+
+    for(int c=0;c<3;++c)localDirection[c]=stableSign*localAxis[
+        stableConvention==0?stableBasis*3+c:c*3+stableBasis];
 
     std::array<float, 3> worldOrigin{};
     std::array<float, 3> worldDirection{};
@@ -1509,15 +1333,23 @@ void publishPropLaserMuzzlePose(void* propEntity, const float* propOrigin,
     }
     for (float& value : worldDirection) value /= worldLength;
 
-    laserMuzzleSequence.fetch_add(1, std::memory_order_acq_rel);
-    for (int component = 0; component < 3; ++component) {
-        laserMuzzleWorldOrigin[component].store(worldOrigin[component], std::memory_order_relaxed);
-        laserMuzzleWorldDirection[component].store(worldDirection[component], std::memory_order_relaxed);
+    LaserSourceSnapshot snapshot{};
+    snapshot.origin=worldOrigin;snapshot.direction=worldDirection;snapshot.kind=kind;
+    snapshot.tick=GetTickCount64();snapshot.epoch=weaponSourceEpoch.load(std::memory_order_acquire);
+    kharvox::AerSourceKey key{};
+    if(KharvoxCameraUsesAerGameplaySource()) {
+        if(!weaponRootSourceValid || !kharvox::aerWeaponPropSourceMatches(weaponRootSource,
+            weaponRootSourcePresent,KharvoxCameraCurrentPresentSerial(),KharvoxCameraLevelTransitionGeneration(),
+            snapshot.epoch,pose.resetGeneration.load(std::memory_order_acquire))) return;
+        snapshot.bodyOrigin=weaponRootSource.camera.bodyOrigin;
+        snapshot.bodyAxis=weaponRootSource.camera.bodyAxis;
+        key=weaponRootSource.camera.key;
+    } else if(!KharvoxCameraGetBodyPose(snapshot.bodyOrigin.data(),snapshot.bodyAxis.data())) return;
+    {
+        std::lock_guard lock(laserSourceMutex);
+        latestLaserSource=snapshot;
+        laserSources.remember(key,snapshot);
     }
-    laserMuzzleWeaponKind.store(kind, std::memory_order_relaxed);
-    laserMuzzleTick.store(GetTickCount64(), std::memory_order_relaxed);
-    laserMuzzleValid.store(true, std::memory_order_relaxed);
-    laserMuzzleSequence.fetch_add(1, std::memory_order_release);
 
     const unsigned alreadyLogged = laserMuzzleKindsLogged.fetch_or(kindBit, std::memory_order_relaxed);
     if ((alreadyLogged & kindBit) == 0) {
@@ -2790,30 +2622,24 @@ KharvoxWeaponAmmoState KharvoxWeaponGetAmmoState(KharvoxWeaponKind kind) {
     return weaponAmmoStates[index].load(std::memory_order_acquire);
 }
 
-bool KharvoxWeaponGetLaserMuzzlePose(float origin[3], float direction[3]) {
-    if (!origin || !direction || !KharvoxWeaponIsTrackingActive()) return false;
-    const auto currentKind = activeWeaponKind.load(std::memory_order_acquire);
-    if (!laserAllowedForWeapon(currentKind)) return false;
-
-    for (int attempt = 0; attempt < 3; ++attempt) {
-        const unsigned before = laserMuzzleSequence.load(std::memory_order_acquire);
-        if (before & 1u) continue;
-        const bool valid = laserMuzzleValid.load(std::memory_order_relaxed);
-        const auto kind = laserMuzzleWeaponKind.load(std::memory_order_relaxed);
-        const auto tick = laserMuzzleTick.load(std::memory_order_relaxed);
-        float capturedOrigin[3]{}, capturedDirection[3]{};
-        for (int component = 0; component < 3; ++component) {
-            capturedOrigin[component] = laserMuzzleWorldOrigin[component].load(std::memory_order_relaxed);
-            capturedDirection[component] = laserMuzzleWorldDirection[component].load(std::memory_order_relaxed);
-        }
-        const unsigned after = laserMuzzleSequence.load(std::memory_order_acquire);
-        if (before != after || (after & 1u)) continue;
-        if (!valid || kind != currentKind || GetTickCount64() - tick > 250) return false;
-        std::memcpy(origin, capturedOrigin, sizeof(capturedOrigin));
-        std::memcpy(direction, capturedDirection, sizeof(capturedDirection));
-        return true;
+bool KharvoxWeaponGetLaserMuzzlePose(float origin[3], float direction[3],
+    float bodyOrigin[3], float bodyAxis[9], unsigned long long sourcePose, int sourceEye) {
+    if(!origin||!direction||!bodyOrigin||!bodyAxis||!KharvoxWeaponIsTrackingActive())return false;
+    LaserSourceSnapshot sample{};
+    {
+        std::lock_guard lock(laserSourceMutex);
+        if(sourcePose) {
+            if(!laserSources.find({sourcePose,KharvoxCameraLevelTransitionGeneration(),sourceEye},sample))return false;
+        }else sample=latestLaserSource;
     }
-    return false;
+    if(!kharvox::laserSourceUsable(sample.tick,GetTickCount64(),sample.epoch,
+        weaponSourceEpoch.load(std::memory_order_acquire),unsigned(sample.kind),unsigned(KharvoxWeaponCurrentKind()))
+        ||!laserAllowedForWeapon(sample.kind))return false;
+    std::copy(sample.origin.begin(),sample.origin.end(),origin);
+    std::copy(sample.direction.begin(),sample.direction.end(),direction);
+    std::copy(sample.bodyOrigin.begin(),sample.bodyOrigin.end(),bodyOrigin);
+    std::copy(sample.bodyAxis.begin(),sample.bodyAxis.end(),bodyAxis);
+    return true;
 }
 
 const char* KharvoxWeaponKindKey(KharvoxWeaponKind kind) {

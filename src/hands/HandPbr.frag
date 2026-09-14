@@ -39,6 +39,10 @@ vec3 normalFromMap(vec3 geometricNormal) {
 }
 
 void main() {
+    if(material.x < 0.0) {
+        outColor=vec4(outputTransfer==1 ? linearToSrgb(baseColor.rgb) : baseColor.rgb,1.0);
+        return;
+    }
     vec4 albedo = texture(baseColorTexture, uv) * baseColor;
     vec3 normal = normalize(worldNormal);
     // Blender marks the supplied hand material double-sided. glTF requires

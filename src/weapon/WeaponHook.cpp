@@ -138,6 +138,8 @@ using WeaponRenderUpdateFn = void(__fastcall*)(
     void*, const float*, const float*, const float*, int, int, int, int, float, float);
 GetHandsModelFn getHandsModel{};
 GetJointTransformFn getJointTransform{};
+using GetNamedJointTransformFn=bool(__fastcall*)(void*,int,const char*,float*,float*);
+GetNamedJointTransformFn getNamedJointTransform{};
 HideRenderModelMeshFn hideRenderModelMesh{};
 WeaponRenderUpdateFn originalWeaponRenderUpdate{};
 std::array<std::atomic<float>, 3> animatedGripPivot{};
@@ -1225,93 +1227,19 @@ void publishPropLaserMuzzlePose(void* propEntity, const float* propOrigin,
         return;
     }
 
-    thread_local uintptr_t jointEntity{};
-    thread_local KharvoxWeaponKind jointKind{};
-    thread_local unsigned stableJoint{};
-    thread_local bool stableJointValid{};
-    thread_local int stableConvention{},stableBasis{};
-    thread_local float stableSign{1.f};
-    const bool sameJoint=stableJointValid&&jointEntity==reinterpret_cast<uintptr_t>(propEntity)&&jointKind==kind;
-    if (jointEntity != reinterpret_cast<uintptr_t>(propEntity) || jointKind != kind) {
-        jointEntity=reinterpret_cast<uintptr_t>(propEntity);jointKind=kind;stableJointValid=false;
+    const unsigned kindBit=1u<<static_cast<unsigned>(kind);
+    std::array<float,3> localOrigin{},localDirection{};
+    std::array<float,9> localAxis{};
+    // Match DOOM's named muzzle locator, including authored offsets and rotation.
+    // The farthest animated joint is not a reliable barrel tip on any weapon.
+    if(!getNamedJointTransform||!getNamedJointTransform(propEntity,1,"muzzle",
+        localOrigin.data(),localAxis.data())||!validPropJoint(localOrigin.data(),localAxis.data())){
+        const auto seen=laserMuzzleFailureKindsLogged.fetch_or(kindBit,std::memory_order_relaxed);
+        if(!(seen&kindBit))log(std::string("[LASER] native muzzle locator unavailable weapon=")
+            +KharvoxWeaponKindDisplayName(kind)+"; no guessed bone fallback");
+        invalidateLaserMuzzlePose();return;
     }
-    unsigned selectedJoint{};
-    unsigned validJoints{};
-    unsigned consecutiveInvalid{};
-    float farthestDistanceSquared = 4.0f;
-    std::array<float, 3> localOrigin{};
-    std::array<float, 9> localAxis{};
-    for (unsigned joint = stableJointValid ? stableJoint : 0; joint < (stableJointValid ? stableJoint+1 : 64); ++joint) {
-        float candidateOrigin[3]{}, candidateAxis[9]{};
-        const bool valid = getJointTransform(
-            propEntity, 1, joint, candidateOrigin, candidateAxis)
-            && validPropJoint(candidateOrigin, candidateAxis);
-        if (!valid) {
-            if (validJoints && ++consecutiveInvalid >= 4) break;
-            continue;
-        }
-        consecutiveInvalid = 0;
-        ++validJoints;
-        const float distanceSquared = candidateOrigin[0] * candidateOrigin[0]
-            + candidateOrigin[1] * candidateOrigin[1]
-            + candidateOrigin[2] * candidateOrigin[2];
-        if (!std::isfinite(distanceSquared) || distanceSquared <= farthestDistanceSquared
-            || distanceSquared >= 90000.0f) continue;
-        farthestDistanceSquared = distanceSquared;
-        selectedJoint = joint;
-        std::copy(candidateOrigin, candidateOrigin + 3, localOrigin.begin());
-        std::copy(candidateAxis, candidateAxis + 9, localAxis.begin());
-    }
-
-    const unsigned kindBit = 1u << static_cast<unsigned>(kind);
-    if (farthestDistanceSquared <= 4.0f) {
-        const unsigned failures = laserMuzzleFailureKindsLogged.fetch_or(kindBit, std::memory_order_relaxed);
-        if ((failures & kindBit) == 0) {
-            std::ostringstream out;
-            out << "[LASER] weapon prop has no usable outer joint weapon="
-                << KharvoxWeaponKindDisplayName(kind) << " validJoints=" << validJoints;
-            log(out.str());
-        }
-        invalidateLaserMuzzlePose();
-        return;
-    }
-
-    stableJoint=selectedJoint;stableJointValid=true;
-    const float distance = std::sqrt(farthestDistanceSquared);
-    const std::array<float, 3> radial{
-        localOrigin[0] / distance, localOrigin[1] / distance, localOrigin[2] / distance};
-    std::array<float, 3> localDirection = radial;
-    float bestAlignment{};
-    // idMat3 convention differs between the public joint accessor and the
-    // renderer's packed idJointMat. Test both row and column bases and keep the
-    // one that points most closely from the weapon origin toward the selected
-    // outer joint.
-    for (int convention = 0; convention < 2; ++convention) {
-        for (int basisIndex = 0; basisIndex < 3; ++basisIndex) {
-            std::array<float, 3> basis{};
-            for (int component = 0; component < 3; ++component)
-                basis[component] = convention == 0
-                    ? localAxis[basisIndex * 3 + component]
-                    : localAxis[component * 3 + basisIndex];
-            const float length = std::sqrt(basis[0] * basis[0]
-                + basis[1] * basis[1] + basis[2] * basis[2]);
-            if (!std::isfinite(length) || length < 0.25f) continue;
-            for (float& value : basis) value /= length;
-            const float signedAlignment = basis[0] * radial[0]
-                + basis[1] * radial[1] + basis[2] * radial[2];
-            const float alignment = std::fabs(signedAlignment);
-            if (alignment > bestAlignment) {
-                bestAlignment = alignment;
-                if(!sameJoint){stableConvention=convention;stableBasis=basisIndex;stableSign=signedAlignment<0.f?-1.f:1.f;}
-                if (signedAlignment < 0.0f)
-                    for (float& value : basis) value = -value;
-                localDirection = basis;
-            }
-        }
-    }
-
-    for(int c=0;c<3;++c)localDirection[c]=stableSign*localAxis[
-        stableConvention==0?stableBasis*3+c:c*3+stableBasis];
+    for(int c=0;c<3;++c)localDirection[c]=localAxis[c];
 
     std::array<float, 3> worldOrigin{};
     std::array<float, 3> worldDirection{};
@@ -1355,8 +1283,9 @@ void publishPropLaserMuzzlePose(void* propEntity, const float* propOrigin,
     if ((alreadyLogged & kindBit) == 0) {
         std::ostringstream out;
         out << "[LASER] weapon-prop muzzle acquired weapon="
-            << KharvoxWeaponKindDisplayName(kind) << " joint=" << selectedJoint
-            << " validJoints=" << validJoints << " localDistance=" << distance
+            << KharvoxWeaponKindDisplayName(kind) << " source=native-muzzle-locator"
+            << " localOrigin=" << localOrigin[0] << ',' << localOrigin[1] << ',' << localOrigin[2]
+            << " localDirection=" << localDirection[0] << ',' << localDirection[1] << ',' << localDirection[2]
             << " worldOrigin=" << worldOrigin[0] << ',' << worldOrigin[1] << ',' << worldOrigin[2]
             << " worldDirection=" << worldDirection[0] << ',' << worldDirection[1] << ',' << worldDirection[2];
         log(out.str());
@@ -1876,6 +1805,11 @@ bool installUpdateHandsTransformHook(unsigned char* image) {
     originalUpdateHandsTransform = reinterpret_cast<UpdateHandsTransformFn>(trampoline);
     getHandsModel = reinterpret_cast<GetHandsModelFn>(image + 0xD60D10);
     getJointTransform = reinterpret_cast<GetJointTransformFn>(image + 0x15EE6C0);
+    // Signature checked against the game's named-locator entry, not a guessed vtable slot.
+    constexpr unsigned char namedJointSignature[]{0x48,0x89,0x5C,0x24,0x10,0x48,0x89,0x74,0x24,0x18,0x57,0x48,0x83,0xEC,0x60};
+    if(!std::memcmp(image+0x15EFB60,namedJointSignature,sizeof(namedJointSignature)))
+        getNamedJointTransform=reinterpret_cast<GetNamedJointTransformFn>(image+0x15EFB60);
+    else log("[LASER] named muzzle locator signature mismatch; affected lasers withheld");
     // 0x15EFEC0 clears the surface visibility bit (BTR). 0x15F0C40 is
     // the inverse ShowMesh operation (BTS), despite their adjacent layout.
     hideRenderModelMesh = reinterpret_cast<HideRenderModelMeshFn>(image + 0x15EFEC0);

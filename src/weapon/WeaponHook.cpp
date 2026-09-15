@@ -1,3 +1,4 @@
+#include "LaserWorldPose.h"
 #include "LaserSourcePolicy.h"
 #include "../common/AerRenderOrder.h"
 #include "../common/DiagnosticLogging.h"
@@ -138,6 +139,8 @@ using WeaponRenderUpdateFn = void(__fastcall*)(
     void*, const float*, const float*, const float*, int, int, int, int, float, float);
 GetHandsModelFn getHandsModel{};
 GetJointTransformFn getJointTransform{};
+using GetNamedJointTransformFn=bool(__fastcall*)(void*,int,const char*,float*,float*);
+GetNamedJointTransformFn getNamedJointTransform{};
 HideRenderModelMeshFn hideRenderModelMesh{};
 WeaponRenderUpdateFn originalWeaponRenderUpdate{};
 std::array<std::atomic<float>, 3> animatedGripPivot{};
@@ -1225,6 +1228,29 @@ void publishPropLaserMuzzlePose(void* propEntity, const float* propOrigin,
         return;
     }
 
+    const unsigned kindBit=1u<<static_cast<unsigned>(kind);
+    std::array<float,3> localOrigin{},localDirection{};
+    std::array<float,9> localAxis{};
+    // The named accessor returns WORLD space using the entity's cached
+    // +C8/+D4 transform. Undo that exact transform before applying the final
+    // source-qualified prop transform below (the hook has not copied D4 yet).
+    std::array<float,3> locatorWorld{},cachedOrigin{};
+    std::array<float,9> locatorWorldAxis{},cachedAxis{};
+    const auto bytes=static_cast<const unsigned char*>(propEntity);
+    bool queried=false,nativeLocator=false;
+    if(getNamedJointTransform&&readableRange(bytes+0xC8,12+36)){
+        std::memcpy(cachedOrigin.data(),bytes+0xC8,12);
+        std::memcpy(cachedAxis.data(),bytes+0xD4,36);
+        queried=getNamedJointTransform(propEntity,1,"muzzle",locatorWorld.data(),locatorWorldAxis.data());
+        nativeLocator=queried&&kharvox::laserWorldToLocal(locatorWorld.data(),locatorWorldAxis.data(),
+            cachedOrigin.data(),cachedAxis.data(),localOrigin.data(),localAxis.data())
+            &&validPropJoint(localOrigin.data(),localAxis.data());
+    }
+    if(nativeLocator){for(int c=0;c<3;++c)localDirection[c]=localAxis[c];}
+    else{
+        const auto seen=laserMuzzleFailureKindsLogged.fetch_or(kindBit,std::memory_order_relaxed);
+        if(!(seen&kindBit))log(std::string("[LASER] native locator fallback weapon=")
+            +KharvoxWeaponKindDisplayName(kind)+(queried?" reason=invalid-transform":" reason=lookup-unavailable"));
     thread_local uintptr_t jointEntity{};
     thread_local KharvoxWeaponKind jointKind{};
     thread_local unsigned stableJoint{};
@@ -1239,8 +1265,6 @@ void publishPropLaserMuzzlePose(void* propEntity, const float* propOrigin,
     unsigned validJoints{};
     unsigned consecutiveInvalid{};
     float farthestDistanceSquared = 4.0f;
-    std::array<float, 3> localOrigin{};
-    std::array<float, 9> localAxis{};
     for (unsigned joint = stableJointValid ? stableJoint : 0; joint < (stableJointValid ? stableJoint+1 : 64); ++joint) {
         float candidateOrigin[3]{}, candidateAxis[9]{};
         const bool valid = getJointTransform(
@@ -1263,7 +1287,6 @@ void publishPropLaserMuzzlePose(void* propEntity, const float* propOrigin,
         std::copy(candidateAxis, candidateAxis + 9, localAxis.begin());
     }
 
-    const unsigned kindBit = 1u << static_cast<unsigned>(kind);
     if (farthestDistanceSquared <= 4.0f) {
         const unsigned failures = laserMuzzleFailureKindsLogged.fetch_or(kindBit, std::memory_order_relaxed);
         if ((failures & kindBit) == 0) {
@@ -1280,7 +1303,7 @@ void publishPropLaserMuzzlePose(void* propEntity, const float* propOrigin,
     const float distance = std::sqrt(farthestDistanceSquared);
     const std::array<float, 3> radial{
         localOrigin[0] / distance, localOrigin[1] / distance, localOrigin[2] / distance};
-    std::array<float, 3> localDirection = radial;
+    localDirection = radial;
     float bestAlignment{};
     // idMat3 convention differs between the public joint accessor and the
     // renderer's packed idJointMat. Test both row and column bases and keep the
@@ -1312,6 +1335,8 @@ void publishPropLaserMuzzlePose(void* propEntity, const float* propOrigin,
 
     for(int c=0;c<3;++c)localDirection[c]=stableSign*localAxis[
         stableConvention==0?stableBasis*3+c:c*3+stableBasis];
+
+    }
 
     std::array<float, 3> worldOrigin{};
     std::array<float, 3> worldDirection{};
@@ -1351,12 +1376,17 @@ void publishPropLaserMuzzlePose(void* propEntity, const float* propOrigin,
         laserSources.remember(key,snapshot);
     }
 
+    static std::atomic<unsigned> nativeLocatorKindsLogged{};
+    if(nativeLocator&&!(nativeLocatorKindsLogged.fetch_or(kindBit,std::memory_order_relaxed)&kindBit))
+        log(std::string("[LASER] native WORLD locator accepted weapon=")+KharvoxWeaponKindDisplayName(kind)
+            +"; cached owner transform removed before source prop transform");
     const unsigned alreadyLogged = laserMuzzleKindsLogged.fetch_or(kindBit, std::memory_order_relaxed);
     if ((alreadyLogged & kindBit) == 0) {
         std::ostringstream out;
         out << "[LASER] weapon-prop muzzle acquired weapon="
-            << KharvoxWeaponKindDisplayName(kind) << " joint=" << selectedJoint
-            << " validJoints=" << validJoints << " localDistance=" << distance
+            << KharvoxWeaponKindDisplayName(kind) << " source=" << (nativeLocator?"native-muzzle-world-corrected":"stable-joint-fallback")
+            << " localOrigin=" << localOrigin[0] << ',' << localOrigin[1] << ',' << localOrigin[2]
+            << " localDirection=" << localDirection[0] << ',' << localDirection[1] << ',' << localDirection[2]
             << " worldOrigin=" << worldOrigin[0] << ',' << worldOrigin[1] << ',' << worldOrigin[2]
             << " worldDirection=" << worldDirection[0] << ',' << worldDirection[1] << ',' << worldDirection[2];
         log(out.str());
@@ -1876,6 +1906,11 @@ bool installUpdateHandsTransformHook(unsigned char* image) {
     originalUpdateHandsTransform = reinterpret_cast<UpdateHandsTransformFn>(trampoline);
     getHandsModel = reinterpret_cast<GetHandsModelFn>(image + 0xD60D10);
     getJointTransform = reinterpret_cast<GetJointTransformFn>(image + 0x15EE6C0);
+    // Signature checked against the game's named-locator entry, not a guessed vtable slot.
+    constexpr unsigned char namedJointSignature[]{0x48,0x89,0x5C,0x24,0x10,0x48,0x89,0x74,0x24,0x18,0x57,0x48,0x83,0xEC,0x60};
+    if(!std::memcmp(image+0x15EFB60,namedJointSignature,sizeof(namedJointSignature)))
+        getNamedJointTransform=reinterpret_cast<GetNamedJointTransformFn>(image+0x15EFB60);
+    else log("[LASER] named muzzle locator signature mismatch; affected lasers withheld");
     // 0x15EFEC0 clears the surface visibility bit (BTR). 0x15F0C40 is
     // the inverse ShowMesh operation (BTS), despite their adjacent layout.
     hideRenderModelMesh = reinterpret_cast<HideRenderModelMeshFn>(image + 0x15EFEC0);

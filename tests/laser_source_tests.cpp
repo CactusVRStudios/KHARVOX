@@ -1,6 +1,7 @@
 #include "../src/weapon/LaserSourcePolicy.h"
 #include "../src/common/AerSourceTracking.h"
 #include <stdexcept>
+#include "../src/weapon/LaserWorldPose.h"
 static void check(bool v){if(!v)throw std::runtime_error("laser source invariant");}
 int main(){
     using namespace kharvox;
@@ -19,4 +20,20 @@ int main(){
     check(!history.find({10,2,0},sample)); // level generation
     for(unsigned i=20;i<160;++i)history.remember({i,1,0},int(i));
     check(!history.find({10,1,0},sample)); // bounded history
+    // World origins must not be rejected by a model-local +/-300 bound.
+    // Round-trip rotated/scaled owner bases, including the 0.77 weapon scale.
+    for(float scale : {.77f,1.f,1.1f})for(float angle : {-1.f,0.f,1.f}){
+        const float c=std::cos(angle),s=std::sin(angle);
+        const float owner[9]{c*scale,s*scale,0,-s*scale,c*scale,0,0,0,scale};
+        const float origin[3]{2951,-1513,-350};
+        const float expected[3]{22,3,-2};
+        float world[3]{},axis[9]{},local[3]{},localAxis[9]{};
+        for(int i=0;i<3;++i){world[i]=origin[i];for(int j=0;j<3;++j)world[i]+=expected[j]*owner[j*3+i];}
+        for(int i=0;i<9;++i)axis[i]=owner[i];
+        check(laserWorldToLocal(world,axis,origin,owner,local,localAxis));
+        for(int i=0;i<3;++i)check(std::abs(local[i]-expected[i])<.001f);
+        for(int i=0;i<9;++i)check(std::abs(localAxis[i]-(i%4==0?1.f:0.f))<.0001f);
+    }
+    float zero[9]{},result[9]{};
+    check(!laserWorldToLocal(zero,zero,zero,zero,result,result));
 }

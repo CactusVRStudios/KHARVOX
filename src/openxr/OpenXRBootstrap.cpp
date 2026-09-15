@@ -2024,6 +2024,11 @@ void updateGameplayActions(XrTime displayTime){
     const bool faceButtonGameplayContext=gameplayWorld&&!pauseMenu
         &&!fullscreenMenu&&!deathMenu;
     XrActionStateGetInfo turnInfo{XR_TYPE_ACTION_STATE_GET_INFO};turnInfo.action=s.doomTurn;XrActionStateVector2f turnState{XR_TYPE_ACTION_STATE_VECTOR2F};const bool turnActive=XR_SUCCEEDED(s.getActionStateVector2f(s.session,&turnInfo,&turnState))&&turnState.isActive;if(turnActive)s.rightStick=turnState.currentState;else s.rightStick={};
+    // Independent vertical deadzone; never rescale X or alter turn sensitivity.
+    constexpr float rightStickVerticalDeadzone=.4f;
+    const float rightStickY=std::isfinite(s.rightStick.y)
+        ?std::copysign(std::clamp((std::abs(s.rightStick.y)-rightStickVerticalDeadzone)
+            /(1.f-rightStickVerticalDeadzone),0.f,1.f),s.rightStick.y):0.f;
     if(gameplay&&std::abs(s.rightStick.x)>=s.turnDeadzone
         &&kharvox::cancelPostCinematicYawGuard(s.postCinematicYawGuard)){
         log("[BODY-YAW] post-cinematic native yaw guard released reason=manual-turn absorbed="
@@ -2031,7 +2036,7 @@ void updateGameplayActions(XrTime displayTime){
     }
     const float fireValue=readFloatAction(s.doomFire);
     const bool triggerDown=fireValue>.55f;
-    const bool weaponSelectDown=gameplay&&turnActive&&s.rightStick.y<-.75f;
+    const bool weaponSelectDown=gameplay&&turnActive&&rightStickY<-.75f;
     const bool secondaryFireGripDown=kharvox::updateGripPressed(
         readFloatAction(s.doomSecondaryFireGrip),s.secondaryFireGripPressed,
         s.primaryGripUsesValveIndex
@@ -2295,7 +2300,8 @@ void updateGameplayActions(XrTime displayTime){
     const float physicalBodyTurnX=nativePhysicalBodyTurnX(gameplay&&!weaponWheelActive,manualTurnActive);
     const float gameplayTurnX=manualTurnActive?manualTurnX:physicalBodyTurnX;
     holdNativeTurnCvars(physicalBodyTurnX!=0.f?bodyFollowYawSpeed:manualTurnCarrierSpeed());
-    const XrVector2f nativeUiRightStick=centeredNativeUiStick(s.rightStick);
+    auto nativeUiRightStick=centeredNativeUiStick(s.rightStick);
+    nativeUiRightStick.y=rightStickY;
     XrVector2f wheelSelectionStick=s.leftStick;
     if(s.motionWheelEnabled){
         // Motion follows the weapon hand as in PR #1; the selection stick is independent.
@@ -2341,8 +2347,8 @@ void updateGameplayActions(XrTime displayTime){
         :(weaponWheelActive||gameplayTurnX!=0.f);
     if(xinputHookReady)updateVirtualRightStick(nativeRightStick,nativeRightStickActive);
     s.previousManualTurnActive=manualTurnActive;
-    const bool chainsawUp=gameplay&&turnActive&&!meleeDown&&s.rightStick.y>.75f;
-    if(!meleeDown&&s.rightStick.y<.55f)s.chainsawArmed=true;
+    const bool chainsawUp=gameplay&&turnActive&&!meleeDown&&rightStickY>.75f;
+    if(!meleeDown&&rightStickY<.55f)s.chainsawArmed=true;
     if(chainsawUp&&s.chainsawArmed){s.chainsawArmed=false;s.chainsawPulseUntil=displayTime+100000000;log(std::string("[INPUT] doom_chainsaw edge from ")+turnStickName()+" up");}
     const bool backWeaponPulseActive=gameplay&&displayTime<s.backWeaponPulseUntil;
     const bool backWeaponBfgPulse=backWeaponPulseActive

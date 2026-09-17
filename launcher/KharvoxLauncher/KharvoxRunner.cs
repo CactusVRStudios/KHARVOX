@@ -141,7 +141,7 @@ internal sealed class KharvoxLaunchOptions
 
 internal static class KharvoxRunner
 {
-    internal const string BuildId = "2026.09.13-launcher-v0.9-beta.1";
+    internal const string BuildId = "2026.09.17-launcher-v0.96-test.1";
     private const string LayerName = "VK_LAYER_KHARVOX_OPENXR";
     private const string RegistryPath = @"SOFTWARE\Khronos\Vulkan\ImplicitLayers";
     private static readonly CultureInfo Invariant = CultureInfo.InvariantCulture;
@@ -256,6 +256,7 @@ internal static class KharvoxRunner
         Action<string>? statusUpdate = null, string? bhapticsAppId = null,
         string? bhapticsApiKey = null)
     {
+        if (RendererSelection.IsSfs(options.RendererMode)) VulkanSfs.EnsureAvailable();
         var runtimeDir = AppContext.BaseDirectory;
         var dllPath = Path.Combine(runtimeDir, "KharvoxLayer.dll");
         var manifestPath = Path.Combine(runtimeDir, "KharvoxLayer.json");
@@ -295,8 +296,8 @@ internal static class KharvoxRunner
         using var launchGate = AcquireLaunchGate();
         using var launchState = BeginLaunch();
         EnsureNoRunningDoom();
-        if (FileVersionInfo.GetVersionInfo(dllPath).ProductVersion != "0.9.0-beta.1")
-            throw new InvalidOperationException("The 0.9 Beta launcher requires its matching 0.9 Beta KharvoxLayer.dll. Extract the complete Beta release into its own folder.");
+        if (FileVersionInfo.GetVersionInfo(dllPath).ProductVersion != "0.9.6-test.1")
+            throw new InvalidOperationException("The 0.96 Test launcher requires its matching 0.96 Test KharvoxLayer.dll. Extract the complete Beta release into its own folder.");
         using var gameIntro = await VrGameIntroSession.StartAsync(runtimeDir, statusUpdate, disableVrIntro: options.DisableVrIntro).ConfigureAwait(false);
         var previousNativeFailure = NativeLaunchRecovery.Prepare(runtimeDir, options.RendererMode);
         if (previousNativeFailure is not null)
@@ -350,6 +351,7 @@ internal static class KharvoxRunner
             // Isolation is complete: honor the launcher renderer selection.
             // Legacy renderer selections are normalized before launch.
             var nativeStereoEnabled = RendererSelection.IsNative(options.RendererMode);
+            var sfsEnabled = RendererSelection.IsSfs(options.RendererMode);
             RendererSelection.ClearObsoleteMarkers(runtimeDir);
             File.Delete(Path.Combine(runtimeDir, "fsr1_status.txt"));
             var fsr1Enabled = options.UseFsrUpscaling && options.RenderScale < 100m;
@@ -383,7 +385,7 @@ internal static class KharvoxRunner
             if (fsr1Enabled) WriteTemporary("enable_fsr_upscaling");
             if (options.LaserSight) WriteTemporary("enable_laser_sight");
             WriteTemporary("render_scale.cfg", Inv(effectiveRenderScale / 100m));
-            WriteRendererStatus(runtimeDir, nativeStereoEnabled
+            WriteRendererStatus(runtimeDir, sfsEnabled ? "Renderer: Vulkan Single-Frame Stereo (Test)" : nativeStereoEnabled
                 ? "Renderer: Native Stereo Experimental starting …"
                 : fsr1Enabled ? "Renderer: FSR1 AER upscaling starting …" : "Renderer: AER starting …");
             if (options.ImmersiveMode) WriteTemporary("enable_immersive_cinematics_and_glory_kills");
@@ -536,6 +538,8 @@ internal static class KharvoxRunner
                 try { File.Copy(logPath, Path.Combine(Path.GetTempPath(), "KHARVOX-previous-launch.log"), true); }
                 catch { }
             }
+            psi.EnvironmentVariables.Remove("KHARVOX_VULKAN_SFS");
+            if (sfsEnabled) VulkanSfs.Configure(psi, runtimeDir);
             var nativeValidationLog = NativeValidation.Configure(psi, nativeStereoEnabled, runtimeDir);
             try { File.Delete(logPath); } catch { }
             File.AppendAllText(logPath,
@@ -672,8 +676,8 @@ internal static class KharvoxRunner
                 // FSR1 writes its ACTIVE status only after the
                 // renderer has actually initialized. Do not turn a successful
                 // game start into a false-positive feature status here.
-                if (!nativeStereoEnabled && !fsr1Enabled)
-                    WriteRendererStatus(runtimeDir, "Renderer: AER 0.9 Beta");
+                if (!nativeStereoEnabled && !fsr1Enabled && !sfsEnabled)
+                    WriteRendererStatus(runtimeDir, "Renderer: AER 0.96 Test");
                 gameDetected?.Invoke();
                 launchSucceeded = true;
                 return;
@@ -689,7 +693,7 @@ internal static class KharvoxRunner
                 if (options.ExtendedLogging)
                     AppendDiagnostic(logPath, launchId,
                         "OpenXR session synchronized with shouldRender=false; preserving responsive DOOM process and skipping automatic restart");
-                WriteRendererStatus(runtimeDir, nativeStereoEnabled
+                WriteRendererStatus(runtimeDir, sfsEnabled ? "Renderer: Vulkan Single-Frame Stereo (Test)" : nativeStereoEnabled
                     ? "Renderer: Native Stereo EXP (OpenXR runtime not visible; waiting for frames)"
                     : "Renderer: OpenXR runtime not visible; waiting for frames");
                 statusUpdate?.Invoke("OpenXR session is running but the runtime is not presenting frames. DOOM remains running; return focus to the headset/runtime.");

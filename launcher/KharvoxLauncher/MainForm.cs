@@ -196,10 +196,10 @@ public sealed class MainForm : Form
         optionGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 194));
         optionGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         for (var i = 0; i < 11; i++) optionGrid.RowStyles.Add(new RowStyle(SizeType.Percent, 100f / 11f));
-        rendererMode.Items.AddRange(["AER", "Native Stereo Experimental"]);
+        rendererMode.Items.AddRange(["AER", "Native Stereo Experimental", VulkanSfs.Label]);
         rendererMode.SelectedIndexChanged += RendererModeChanged;
         renderScale.ValueChanged += OptionChanged;
-        var renderingInputWidth = TextRenderer.MeasureText("Native Stereo Experimental", Font).Width
+        var renderingInputWidth = TextRenderer.MeasureText(VulkanSfs.Label, Font).Width
             + SystemInformation.VerticalScrollBarWidth + 4;
         AddField(optionGrid, 0, "Renderer", MakeFixedWidth(rendererMode, renderingInputWidth));
         optionGrid.Controls.Add(new Label
@@ -445,7 +445,7 @@ public sealed class MainForm : Form
             .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "";
         footer.Controls.Add(new Label {
             Text = releaseVersion.ToString(releaseVersion.Build == 0 ? 2 : 3)
-                + (releaseInfo.Contains("-beta") ? " Beta" : ""),
+                + (releaseInfo.Contains("-test") ? " Test" : releaseInfo.Contains("-beta") ? " Beta" : ""),
             Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft,
             ForeColor = Color.Gray
         }, 0, 0);
@@ -568,11 +568,13 @@ public sealed class MainForm : Form
             status.Text = "Could not focus DOOM.";
     }
 
-    private string SelectedRendererKey() => rendererMode.SelectedIndex == 1 ? "NATIVE" : "AER";
+    private string SelectedRendererKey() => rendererMode.SelectedIndex == 2 ? VulkanSfs.Key : rendererMode.SelectedIndex == 1 ? "NATIVE" : "AER";
 
     private void RendererModeChanged(object? sender, EventArgs e)
     {
         if (rendererMode.SelectedIndex < 0) return;
+        statusToolTip.SetToolTip(rendererMode, rendererMode.SelectedIndex == 2
+            ? VulkanSfs.Blocker : "");
         useFsrUpscaling.Enabled = true;
         statusToolTip.SetToolTip(renderScale, "Scales scene and XR resolution in both renderers. 100% scene: 3840 x 2160. No application upper limit; GPU/runtime limits apply. Restart required.");
         OptionChanged(sender, e);
@@ -719,7 +721,7 @@ public sealed class MainForm : Form
 
             if (LauncherPresetPolicy.TryGet(preset.SelectedIndex, out var defaults))
             {
-                rendererMode.SelectedIndex = RendererSelection.IsNative(defaults.RendererMode) ? 1 : 0;
+                rendererMode.SelectedIndex = RendererSelection.Index(defaults.RendererMode);
                 renderScale.Value = defaults.RenderScale;
                 useFsrUpscaling.Checked = defaults.UseFsrUpscaling;
                 intense.Checked = defaults.ImmersiveMode;
@@ -982,7 +984,7 @@ public sealed class MainForm : Form
             otherCinematicsInQuad.Checked = s.SettingsVersion >= 15 && s.OtherCinematicsInQuad;
             cinewindowFollowsHeadset.Checked = s.SettingsVersion >= 16 && s.CinewindowFollowsHeadset;
             doomPath.Text = s.GamePath ?? string.Empty;
-            rendererMode.SelectedIndex = RendererSelection.IsNative(s.RendererMode) ? 1 : 0;
+            rendererMode.SelectedIndex = RendererSelection.Index(s.RendererMode);
             var defaultScale = AerDefaultRenderScale;
             var savedScale = s.RenderScale;
             renderScale.Value = savedScale >= renderScale.Minimum && savedScale <= renderScale.Maximum

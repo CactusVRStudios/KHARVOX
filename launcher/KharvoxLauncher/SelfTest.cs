@@ -34,6 +34,10 @@ internal static class SelfTest
             Directory.CreateDirectory(testRoot);
             VerifyModConflictPreflight(testRoot);
             VerifyProcessStatusPreservesExitCode();
+            bool sfsBlocked=false;
+            try { VulkanSfs.EnsureAvailable(); }
+            catch (InvalidOperationException e) { sfsBlocked=e.Message==VulkanSfs.Blocker; }
+            Require(sfsBlocked,"unverified SFS provider is blocked before launching the game");
             Require(KharvoxRunner.IsPimaxRuntimeManifest(@"C:\Pimax\pimax-openxr.json"), "Pimax runtime blocked");
             Require(KharvoxRunner.IsPimaxRuntimeManifest(@"C:\Runtime\PiOpenXR.json"), "PiOpenXR runtime blocked case-insensitively");
             Require(!KharvoxRunner.IsPimaxRuntimeManifest(@"C:\SteamVR\steamxr_win64.json"), "SteamVR remains supported");
@@ -833,11 +837,16 @@ internal static class SelfTest
         presets.SelectedIndex = 3;
         var renderer=Field<ComboBox>("rendererMode");
         Require(form.CreateLaunchOptions().RendererMode=="AER","fresh installation defaults to AER");
-        Require(renderer.Items.Count == 2 && renderer.Items[0].ToString() == "AER"
+        Require(renderer.Items.Count == 3 && renderer.Items[0].ToString() == "AER"
             && renderer.Items[1].ToString() == "Native Stereo Experimental", "exact renderer choices");
         renderer.SelectedIndex=1;
         Require(form.CreateLaunchOptions().RendererMode == "NATIVE", "Native selection");
         Require(Field<CheckBox>("useFsrUpscaling").Enabled, "Native FSR control enabled");
+        renderer.SelectedIndex=2;
+        Require(form.CreateLaunchOptions().RendererMode == VulkanSfs.Key, "SFS selection");
+        Require(renderer.Items[2].ToString() == VulkanSfs.Label, "technical SFS label");
+        Require(RendererSelection.Index(VulkanSfs.Key)==2, "SFS settings restore");
+        renderer.SelectedIndex=1;
         var migrationDirectory=Path.Combine(testRoot,"renderer-migration");
         Directory.CreateDirectory(migrationDirectory);
         foreach(var old in new[]{"NATIVE_MULTIVIEW","NATIVE_MULTIVIEW_VISIBLE","NATIVE_MULTIVIEW_HYBRID","NATIVE_CPU_RECORDING","NATIVE"}) {

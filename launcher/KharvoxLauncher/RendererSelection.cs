@@ -4,10 +4,13 @@ internal static class RendererSelection
 {
     internal static string Normalize(string? key) => key?.ToUpperInvariant() switch
     {
+        "VULKAN_SFS" => "VULKAN_SFS",
         "NATIVE" or "NATIVE_MULTIVIEW" or "NATIVE_MULTIVIEW_VISIBLE" or
         "NATIVE_MULTIVIEW_HYBRID" or "NATIVE_CPU_RECORDING" => "NATIVE",
         _ => "AER"
     };
+    internal static bool IsSfs(string? key) => Normalize(key) == VulkanSfs.Key;
+    internal static int Index(string? key) => IsSfs(key) ? 2 : IsNative(key) ? 1 : 0;
     internal static bool IsNative(string? key) => Normalize(key) == "NATIVE";
     internal static readonly string[] ObsoleteMarkers = {
         "native_test_multiview", "native_test_multiview_visible", "native_test_multiview_hybrid",

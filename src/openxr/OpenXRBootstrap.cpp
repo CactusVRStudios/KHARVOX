@@ -1,4 +1,5 @@
 #include "../common/RuntimeLog.h"
+#include "../common/VulkanSfs.h"
 #include "../common/AerRenderOrder.h"
 #include "../common/AerEyeBasis.h"
 #include "../common/AerCinematicProjection.h"
@@ -3453,6 +3454,10 @@ void KharvoxXRSetQueue(VkQueue q,uint32_t f,uint32_t i) {
     else log("XR session gated off (place enable_xr_session beside the KHARVOX module to enable)");
 }
 bool KharvoxXRStartSessionIfReady(){
+    // 0.96 provider bring-up only. The producer currently fails before a
+    // present, and its two-layer swapchain is not a verified SBS receipt.
+    // Never feed its stereo output into the ordinary AER path.
+    if(kharvox::vulkanSfsEnabled())return false;
     std::unique_lock<std::mutex>l(mutex);
     const bool steamRuntime=kharvox::isSteamBackedOpenXRRuntime(s.runtimeKind);
     if(steamRuntime&&steamSessionCreationInProgress)return false;

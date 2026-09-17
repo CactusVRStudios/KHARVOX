@@ -71,4 +71,3 @@ inline void captureShader(VkDevice device,VkShaderModule module,const VkShaderMo
     }catch(...){}
 }
 }
-

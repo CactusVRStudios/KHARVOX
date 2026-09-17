@@ -1,6 +1,16 @@
 # 0.96: Vulkan Single-Frame Stereo
 
-Status: **development branch builds; provider startup blocked; no playable SFS/VR release**.
+Status: **native reconstruction in progress; no playable SFS/VR release**.
+
+The current implementation and evidence are in
+[SFS_REVERSE_ENGINEERING.md](SFS_REVERSE_ENGINEERING.md). The native resource
+core, shader/pipeline identities and local profile loader are implemented;
+69/69 profile variants match real DOOM captures and 101/101 CTests pass.
+The launcher no longer loads the external provider. Live shader/resource
+integration and OpenXR stereo submission remain unfinished.
+
+The provider integration below records the earlier experiment, not the current
+implementation plan.
 
 Branch: `codex/beta-0.96-vulkan-single-frame-stereo`, based on `0cd5f29`.
 The unsuccessful 3DTV branch is retained at `ae00eba`; its closing report is
@@ -25,7 +35,7 @@ correct headset IPD, per-eye FOV, frame pose, controller timing and menu handoff
 still require a bridge. Merely splitting an SBS image does not establish those.
 The intended menu behavior remains the existing AER/quad presentation.
 
-## Implemented here
+## Earlier external-provider experiment
 
 - Third launcher choice `VULKAN_SFS`, labelled **Vulkan Single-Frame Stereo (Test)**,
   with settings restoration and a clear early refusal while startup is broken.
@@ -92,10 +102,9 @@ tools/prepare_sfs_provider.ps1 -ProviderRoot D:\DoomVR\vk3\Vk3DVision -DoomProfi
 tools/probe_sfs_provider.ps1 -GameExe 'D:\Games\dampf\steamapps\common\DOOM\DOOMx64vk.exe' -ProviderRoot D:\KHARVOX\out\sfs-provider-new -OutputDirectory D:\KHARVOX\out\sfs-evidence-new
 ```
 
-First milestone: a stable provider-only DOOM menu and gameplay image. Then capture
-both actual eye resources, identify their layouts/layers and synchronization,
-and calibrate projection against OpenXR. Only then enable the third renderer for
-gameplay and validate menu transitions, hand motion and headset performance.
+The provider-only milestone has been superseded by native reconstruction. See
+the remaining integration work in SFS_REVERSE_ENGINEERING.md. These scripts are
+retained solely to reproduce the historical external-DLL failure.
 
 Sources: [provider releases](https://github.com/helifax/Vk3DVision-Public/releases),
 [BSD-3-Clause license](https://github.com/helifax/Vk3DVision-Public/blob/main/LICENSE),

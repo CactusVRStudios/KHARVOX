@@ -1,4 +1,5 @@
 #include "../common/VulkanSfs.h"
+#include "../sfs/ShaderCapture.h"
 #include "../common/RuntimeLog.h"
 #include "../common/StallDiagnostics.h"
 #include "../common/DiagnosticLogging.h"
@@ -713,6 +714,8 @@ VKAPI_ATTR void VKAPI_CALL vkCmdSetScissor(VkCommandBuffer,uint32_t,uint32_t,con
 VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(VkDevice,VkPipelineCache,uint32_t,const VkGraphicsPipelineCreateInfo*,const VkAllocationCallbacks*,VkPipeline*);
 VKAPI_ATTR void VKAPI_CALL vkDestroyPipeline(VkDevice,VkPipeline,const VkAllocationCallbacks*);
 VKAPI_ATTR void VKAPI_CALL vkCmdPipelineBarrier(VkCommandBuffer,VkPipelineStageFlags,VkPipelineStageFlags,VkDependencyFlags,uint32_t,const VkMemoryBarrier*,uint32_t,const VkBufferMemoryBarrier*,uint32_t,const VkImageMemoryBarrier*);
+VKAPI_ATTR void VKAPI_CALL vkDestroyShaderModule(VkDevice,VkShaderModule,const VkAllocationCallbacks*);
+VKAPI_ATTR VkResult VKAPI_CALL vkCreateShaderModule(VkDevice,const VkShaderModuleCreateInfo*,const VkAllocationCallbacks*,VkShaderModule*);
 VKAPI_ATTR VkResult VKAPI_CALL vkCreateImage(VkDevice,const VkImageCreateInfo*,const VkAllocationCallbacks*,VkImage*);
 VKAPI_ATTR void VKAPI_CALL vkDestroyImage(VkDevice,VkImage,const VkAllocationCallbacks*);
 VKAPI_ATTR VkResult VKAPI_CALL vkCreateImageView(VkDevice,const VkImageViewCreateInfo*,const VkAllocationCallbacks*,VkImageView*);
@@ -848,7 +851,7 @@ static PFN_vkVoidFunction deviceProcBase(VkDevice d,const char* n){
         const auto dispatch=deviceState(key(d));
         return dispatch.gdpa?dispatch.gdpa(d,n):nullptr;
     }
-    auto s=deviceState(key(d));if(d&&s.runtimeAuxiliary)return s.gdpa?s.gdpa(d,n):nullptr; MATCH(vkGetDeviceProcAddr); MATCH(vkDestroyDevice); MATCH(vkGetDeviceQueue); MATCH(vkGetDeviceQueue2); MATCH(vkCreateSwapchainKHR); MATCH(vkDestroySwapchainKHR); MATCH(vkGetSwapchainImagesKHR); MATCH(vkAcquireNextImageKHR); MATCH(vkAcquireNextImage2KHR); MATCH(vkQueueSubmit); MATCH(vkQueueSubmit2); MATCH(vkQueuePresentKHR); MATCH(vkCmdPushConstants); MATCH(vkCmdUpdateBuffer); MATCH(vkMapMemory); MATCH(vkUnmapMemory); MATCH(vkBindBufferMemory); MATCH(vkUpdateDescriptorSets); MATCH(vkCmdBindDescriptorSets); MATCH(vkCmdBindPipeline); MATCH(vkCmdBindVertexBuffers); MATCH(vkCmdBindIndexBuffer); MATCH(vkCmdDraw); MATCH(vkCmdDrawIndexed); MATCH(vkCmdDrawIndirect); MATCH(vkCmdDrawIndexedIndirect); MATCH(vkCmdSetViewport); MATCH(vkCmdSetScissor); MATCH(vkCreateGraphicsPipelines); MATCH(vkDestroyPipeline); MATCH(vkCmdPipelineBarrier); MATCH(vkCreateImage); MATCH(vkDestroyImage); MATCH(vkCreateImageView); MATCH(vkDestroyImageView); MATCH(vkCreateFramebuffer); MATCH(vkDestroyFramebuffer); MATCH(vkCreateRenderPass); MATCH(vkCreateRenderPass2); MATCH(vkDestroyRenderPass); MATCH(vkCmdBeginRenderPass); MATCH(vkCmdBeginRenderPass2); MATCH(vkCmdNextSubpass); MATCH(vkCmdNextSubpass2); MATCH(vkCmdEndRenderPass); MATCH(vkCmdEndRenderPass2);
+    auto s=deviceState(key(d));if(d&&s.runtimeAuxiliary)return s.gdpa?s.gdpa(d,n):nullptr; MATCH(vkGetDeviceProcAddr); MATCH(vkDestroyDevice); MATCH(vkGetDeviceQueue); MATCH(vkGetDeviceQueue2); MATCH(vkCreateSwapchainKHR); MATCH(vkDestroySwapchainKHR); MATCH(vkGetSwapchainImagesKHR); MATCH(vkAcquireNextImageKHR); MATCH(vkAcquireNextImage2KHR); MATCH(vkQueueSubmit); MATCH(vkQueueSubmit2); MATCH(vkQueuePresentKHR); MATCH(vkCmdPushConstants); MATCH(vkCmdUpdateBuffer); MATCH(vkMapMemory); MATCH(vkUnmapMemory); MATCH(vkBindBufferMemory); MATCH(vkUpdateDescriptorSets); MATCH(vkCmdBindDescriptorSets); MATCH(vkCmdBindPipeline); MATCH(vkCmdBindVertexBuffers); MATCH(vkCmdBindIndexBuffer); MATCH(vkCmdDraw); MATCH(vkCmdDrawIndexed); MATCH(vkCmdDrawIndirect); MATCH(vkCmdDrawIndexedIndirect); MATCH(vkCmdSetViewport); MATCH(vkCmdSetScissor); MATCH(vkCreateShaderModule); MATCH(vkDestroyShaderModule); MATCH(vkCreateGraphicsPipelines); MATCH(vkDestroyPipeline); MATCH(vkCmdPipelineBarrier); MATCH(vkCreateImage); MATCH(vkDestroyImage); MATCH(vkCreateImageView); MATCH(vkDestroyImageView); MATCH(vkCreateFramebuffer); MATCH(vkDestroyFramebuffer); MATCH(vkCreateRenderPass); MATCH(vkCreateRenderPass2); MATCH(vkDestroyRenderPass); MATCH(vkCmdBeginRenderPass); MATCH(vkCmdBeginRenderPass2); MATCH(vkCmdNextSubpass); MATCH(vkCmdNextSubpass2); MATCH(vkCmdEndRenderPass); MATCH(vkCmdEndRenderPass2);
     return s.gdpa?s.gdpa(d,n):nullptr;
 }
 // These entry points sit OUTSIDE Native's wrappers so no Native bookkeeping
@@ -1066,7 +1069,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateDevice(VkPhysicalDevice p,const VkDeviceC
 #undef LOAD
       {std::lock_guard<std::mutex>l(stateMutex);devices[key(*out)]=d;}logLine("Device created");KharvoxXRSetQueueAccessCallbacks(lockQueueAccess,unlockQueueAccess);KharvoxXRSetDevice(p,*out,d.xr);kharvox::native::setQueueAccessCallbacks(lockQueueAccess,unlockQueueAccess);kharvox::native::setDevice(physicalDispatch.instance,p,*out,nextGdpa,nextGipa);}else {logLine("[VK-STARTUP] device creation failed result="+std::to_string(r),true);stopVulkanStartup("Vulkan/OpenXR device initialization failed. Ensure DOOM and the VR runtime use the same GPU. See the KHARVOX log in %TEMP%.");}return r;
 }
-VKAPI_ATTR void VKAPI_CALL vkDestroyDevice(VkDevice d,const VkAllocationCallbacks*a){auto k=key(d);auto s=deviceState(k);if(!s.runtimeAuxiliary){logLine("vkDestroyDevice");kharvox::native::beforeDeviceDestroy(d);KharvoxXRDeviceDestroyed();kharvox::hands::handSceneDeviceDestroyed();kharvox::hudgpu::deviceDestroyed();}if(s.destroy)s.destroy(d,a);std::lock_guard<std::mutex>l(stateMutex);devices.erase(k);}
+VKAPI_ATTR void VKAPI_CALL vkDestroyDevice(VkDevice d,const VkAllocationCallbacks*a){kharvox::sfs::forgetDevice(d);auto k=key(d);auto s=deviceState(k);if(!s.runtimeAuxiliary){logLine("vkDestroyDevice");kharvox::native::beforeDeviceDestroy(d);KharvoxXRDeviceDestroyed();kharvox::hands::handSceneDeviceDestroyed();kharvox::hudgpu::deviceDestroyed();}if(s.destroy)s.destroy(d,a);std::lock_guard<std::mutex>l(stateMutex);devices.erase(k);}
 VKAPI_ATTR void VKAPI_CALL vkGetDeviceQueue(VkDevice d,uint32_t f,uint32_t q,VkQueue*out){auto s=deviceState(key(d));if(out)*out=VK_NULL_HANDLE;if(s.getQueue&&out)s.getQueue(d,f,q,out);std::ostringstream x;x<<"Queue acquired family="<<f<<" index="<<q;logLine(x.str());if(out&&*out){KharvoxXRSetQueue(*out,f,q);kharvox::native::setQueue(*out,f,q);}}
 VKAPI_ATTR void VKAPI_CALL vkGetDeviceQueue2(VkDevice d,const VkDeviceQueueInfo2*i,VkQueue*out){auto s=deviceState(key(d));if(out)*out=VK_NULL_HANDLE;if(s.getQueue2&&out&&i)s.getQueue2(d,i,out);std::ostringstream x;x<<"Queue acquired family="<<(i?i->queueFamilyIndex:0)<<" index="<<(i?i->queueIndex:0);logLine(x.str());if(out&&*out&&i){KharvoxXRSetQueue(*out,i->queueFamilyIndex,i->queueIndex);kharvox::native::setQueue(*out,i->queueFamilyIndex,i->queueIndex);}}
 VKAPI_ATTR VkResult VKAPI_CALL vkCreateSwapchainKHR(VkDevice d,const VkSwapchainCreateInfoKHR*i,const VkAllocationCallbacks*a,VkSwapchainKHR*out){
@@ -1283,6 +1286,7 @@ VKAPI_ATTR void VKAPI_CALL vkCmdDrawIndexedIndirect(VkCommandBuffer cb,VkBuffer 
 VKAPI_ATTR void VKAPI_CALL vkCmdSetViewport(VkCommandBuffer cb,uint32_t first,uint32_t count,const VkViewport*viewports){kharvox::hudgpu::setViewport(cb,count,viewports);auto fn=commandFunction(cb,&DeviceDispatch::cmdSetViewport);if(fn)fn(cb,first,count,viewports);}
 VKAPI_ATTR void VKAPI_CALL vkCmdSetScissor(VkCommandBuffer cb,uint32_t first,uint32_t count,const VkRect2D*scissors){kharvox::hudgpu::setScissor(cb,count,scissors);auto fn=commandFunction(cb,&DeviceDispatch::cmdSetScissor);if(fn)fn(cb,first,count,scissors);}
 VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(VkDevice d,VkPipelineCache cache,uint32_t count,const VkGraphicsPipelineCreateInfo*i,const VkAllocationCallbacks*a,VkPipeline*out){
+    kharvox::sfs::capturePipelines(d,count,i);
     kharvox::DiagnosticDuration total("graphics-pipeline-total");
     auto s=deviceState(key(d));
     VkResult r;
@@ -1299,6 +1303,17 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(VkDevice d,VkPipelineCa
 }
 VKAPI_ATTR void VKAPI_CALL vkDestroyPipeline(VkDevice d,VkPipeline pipeline,const VkAllocationCallbacks*a){auto s=deviceState(key(d));kharvox::hands::handScenePipelineDestroyed(pipeline);kharvox::hudgpu::pipelineDestroyed(pipeline);if(s.destroyPipeline)s.destroyPipeline(d,pipeline,a);}
 VKAPI_ATTR void VKAPI_CALL vkCmdPipelineBarrier(VkCommandBuffer cb,VkPipelineStageFlags srcStage,VkPipelineStageFlags dstStage,VkDependencyFlags dependencies,uint32_t memoryBarrierCount,const VkMemoryBarrier*memoryBarriers,uint32_t bufferBarrierCount,const VkBufferMemoryBarrier*bufferBarriers,uint32_t imageBarrierCount,const VkImageMemoryBarrier*imageBarriers){kharvox::hands::handSceneImageBarriers(imageBarrierCount,imageBarriers);auto fn=kharvox::lookupDispatchMember(stateMutex,devices,key(cb),&DeviceDispatch::xr,&KharvoxVulkanDispatch::cmdPipelineBarrier);if(fn)fn(cb,srcStage,dstStage,dependencies,memoryBarrierCount,memoryBarriers,bufferBarrierCount,bufferBarriers,imageBarrierCount,imageBarriers);}
+VKAPI_ATTR VkResult VKAPI_CALL vkCreateShaderModule(VkDevice d,const VkShaderModuleCreateInfo* i,const VkAllocationCallbacks* a,VkShaderModule* out){
+    const auto dispatch=deviceState(key(d));
+    if(!dispatch.xr.createShaderModule)return VK_ERROR_EXTENSION_NOT_PRESENT;
+    auto r=dispatch.xr.createShaderModule(d,i,a,out);
+    if(r==VK_SUCCESS&&out)kharvox::sfs::captureShader(d,*out,i);
+    return r;
+}
+VKAPI_ATTR void VKAPI_CALL vkDestroyShaderModule(VkDevice d,VkShaderModule module,const VkAllocationCallbacks* a){
+    kharvox::sfs::forgetShader(d,module);const auto dispatch=deviceState(key(d));
+    if(dispatch.xr.destroyShaderModule)dispatch.xr.destroyShaderModule(d,module,a);
+}
 VKAPI_ATTR VkResult VKAPI_CALL vkCreateImage(VkDevice d,const VkImageCreateInfo*i,const VkAllocationCallbacks*a,VkImage*out){auto s=deviceState(key(d));if(!s.createImage)return VK_ERROR_EXTENSION_NOT_PRESENT;if(!i)return s.createImage(d,i,a,out);VkImageCreateInfo effective=*i;const bool hudQuadCandidate=kharvox::hudgpu::enabled()&&i->imageType==VK_IMAGE_TYPE_2D&&i->format==VK_FORMAT_R8G8B8A8_UNORM&&i->extent.width==960&&i->extent.height==540&&i->extent.depth==1&&(i->usage&VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)&&(i->usage&VK_IMAGE_USAGE_SAMPLED_BIT);if(hudQuadCandidate)effective.usage|=VK_IMAGE_USAGE_TRANSFER_SRC_BIT;auto r=s.createImage(d,&effective,a,out);if(r!=VK_SUCCESS&&hudQuadCandidate){logLine("[HUD9-SOURCE] internal candidate transfer-source usage rejected; retrying native image usage");effective=*i;r=s.createImage(d,i,a,out);}if(r==VK_SUCCESS&&out){kharvox::hands::handSceneImageCreated(*out,effective);kharvox::hudgpu::imageCreated(*out,effective);if(hudQuadCandidate&&(effective.usage&VK_IMAGE_USAGE_TRANSFER_SRC_BIT)){static std::atomic<bool> logged{};if(!logged.exchange(true))logLine("[HUD9-SOURCE] 960x540 internal RGBA candidate created with TRANSFER_SRC usage (not a headset resolution)");}}return r;}
 VKAPI_ATTR void VKAPI_CALL vkDestroyImage(VkDevice d,VkImage image,const VkAllocationCallbacks*a){auto s=deviceState(key(d));kharvox::hands::handSceneImageDestroyed(image);kharvox::hudgpu::imageDestroyed(image);if(s.destroyImage)s.destroyImage(d,image,a);}
 VKAPI_ATTR VkResult VKAPI_CALL vkCreateImageView(VkDevice d,const VkImageViewCreateInfo*i,const VkAllocationCallbacks*a,VkImageView*out){auto s=deviceState(key(d));auto r=s.createImageView?s.createImageView(d,i,a,out):VK_ERROR_EXTENSION_NOT_PRESENT;if(r==VK_SUCCESS&&i&&out){kharvox::hands::handSceneImageViewCreated(*out,*i);kharvox::hudgpu::imageViewCreated(*out,*i);}return r;}

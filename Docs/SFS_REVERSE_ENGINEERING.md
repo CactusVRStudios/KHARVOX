@@ -217,3 +217,54 @@ they have not had a further live campaign test. Evidence is in local
 `probe-gameplay-parity.log`. The refreshed native-runtime package passed the
 mandatory integration verifier. AER-compatible controls and settings are still
 shared; the remaining headset/visual validation listed above is outstanding.
+
+
+## PSVR2 / SteamVR / Radeon tester report (2026-09-18)
+
+Input: user-supplied Logs.zip, current launch 09:04:15–09:05:14, VULKAN_SFS,
+SteamVR/OpenXR 2.17.9, AMD Radeon RX 9070 XT. Both application and XR select the
+same GPU model. The session reaches FOCUSED; shouldRender=1 and xrEndFrame
+returns success for quad and gameplay projection. The process exits with code
+0. The tester nevertheless sees SteamVR's environment rather than game imagery.
+These logs alone do not establish compositor visibility.
+
+Three defects were addressed:
+
+1. Exactly 43 SFS shader compile failures contain `unimplemented op 261`, then
+   an undefined result identifier. This is legacy OpGroupAll in the AMD lighting
+   modules. The compiler now emits subgroup all/any votes with explicit scope
+   checking and control-dependency tracking. Workgroup scope is rejected instead
+   of being silently narrowed. Reference: [Khronos SPIR-V OpGroupAll](https://registry.khronos.org/SPIR-V/specs/unified1/SPIRV.html#OpGroupAll).
+2. The retained runtime callback isolated GDPA but still returned public-loader
+   GIPA device commands, including vkCreateImage and vkCreateGraphicsPipelines.
+   Those can re-enter the game device's SFS hooks. Both lookup paths now isolate
+   runtime device commands below the game transforms; instance and physical
+   commands retain their existing dispatch level. A generated allowlist from
+   the bundled Vulkan headers classifies commands by first handle argument.
+   Non-null GDPA alone is insufficient: an initial simulator test exposed a
+   driver returning physical commands there. That attempt was stopped at its
+   deadline, corrected, covered by regression tests, and retested successfully.
+   Runtime-hook contamination is a plausible cause of missing compositor output,
+   but is not proven as the sole cause on the tester's hardware.
+3. Launcher startup monitoring repeatedly read only the first 1 MiB, whereas
+   Frame 120 appears after the multi-megabyte shader diagnostics. It now reads
+   this launch's prefix plus its recent tail. Tests cover oversized logs, stale
+   prior-launch markers and device loss. OpenXR lifecycle diagnostics now include
+   the actual submitted layer count instead of only a descriptive layer reason.
+
+Validation: 108/108 CTests, launcher build/self-test, and 722/722 locally captured
+original/profile shader translations pass. A minimal legacy Groups SPIR-V fixture
+reproduces the opcode family and tests all/any plus unsupported-scope rejection;
+the tester's original SPIR-V modules were not included, so their complete shader
+set has not been replayed. A 45-second bounded Simulator test (PID 3748) reached
+at least 1,800 successful quad frames with layers=1 and zero lifecycle violations
+or end-frame errors, then was terminated at the deadline. This does not validate
+PSVR2 hardware, Radeon gameplay, or SteamVR compositor visibility.
+
+Complete local tester package: `out/beta096/psvr2-steamxr-fix1/`; archive
+`out/beta096/KHARVOX-0.96-SFS-PSVR2-SteamXR-fix1.zip`. Mandatory approved x64
+bHaptics and PSVR2 bridges/loaders are bundled and package-verified. Use the
+launcher and select Vulkan Single-Frame Stereo (Test). The next useful tester
+observations are menu visibility, campaign visibility, and fresh logs showing
+runtime-device-downstream routing, submitted layers and any shader failures.
+Local source logs and transformed game shaders remain outside Git/the report.

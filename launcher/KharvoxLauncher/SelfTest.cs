@@ -931,6 +931,24 @@ internal static class SelfTest
                     "[KHARVOX] " + startupMarker + "\n[KHARVOX][XR] Frame 120 stable mode=PROJECTION result=0",
                     startupMarker) == KharvoxRunner.StartupState.Healthy,
                 "minimal operational log confirms startup without extended diagnostics");
+            var largeStartupLog = Path.GetTempFileName();
+            try
+            {
+                File.WriteAllText(largeStartupLog, startupMarker + "\n" + new string('x', 2 * 1024 * 1024)
+                    + "\nFrame 120 stable mode=QUAD result=XR_SUCCESS\n");
+                Require(KharvoxRunner.ReadStartupLogState(largeStartupLog, 0, startupMarker)
+                    == KharvoxRunner.StartupState.Healthy, "large shader log cannot hide stable frames");
+                var nextLaunchOffset = new FileInfo(largeStartupLog).Length;
+                File.AppendAllText(largeStartupLog, "runtimeDir=D:\\other\\.\n" + new string('x', 2 * 1024 * 1024)
+                    + "\nFrame 120 stable mode=QUAD result=XR_SUCCESS\n");
+                Require(KharvoxRunner.ReadStartupLogState(largeStartupLog, nextLaunchOffset, startupMarker)
+                    != KharvoxRunner.StartupState.Healthy, "previous launch marker cannot validate a later process");
+                File.WriteAllText(largeStartupLog, startupMarker + "\n" + new string('x', 2 * 1024 * 1024)
+                    + "\ncopy submit failed -4\n");
+                Require(KharvoxRunner.ReadStartupLogState(largeStartupLog, 0, startupMarker)
+                    == KharvoxRunner.StartupState.DeviceLost, "tail GPU failure still overrides healthy startup");
+            }
+            finally { File.Delete(largeStartupLog); }
             Require(KharvoxRunner.PreserveGameAfterUnconfirmedStartup(KharvoxRunner.StartupState.TimedOut)
                     && KharvoxRunner.PreserveGameAfterUnconfirmedStartup(KharvoxRunner.StartupState.PresentStreamStalled),
                 "missing or stalled diagnostics must not terminate a live game");

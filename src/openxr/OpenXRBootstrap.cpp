@@ -366,11 +366,6 @@ bool isPhysicalCommand(const char*n);
 VKAPI_ATTR VkResult VKAPI_CALL bridgeCreateDevice(VkPhysicalDevice,const VkDeviceCreateInfo*ci,const VkAllocationCallbacks*a,VkDevice*out){return reentryCreateDevice?reentryCreateDevice(reentryPhysical,ci,a,out):VK_ERROR_INITIALIZATION_FAILED;}
 VKAPI_ATTR VkResult VKAPI_CALL runtimeManagedCreateDevice(VkPhysicalDevice,const VkDeviceCreateInfo*ci,const VkAllocationCallbacks*a,VkDevice*out){const auto createDevice=runtimeManagedReentryCreateDevice.load(std::memory_order_acquire);const auto physical=runtimeManagedReentryPhysical.load(std::memory_order_acquire);const auto downstreamCi=runtimeManagedDownstreamCreateInfo.load(std::memory_order_acquire);if(!createDevice||!physical||!ci)return VK_ERROR_INITIALIZATION_FAILED;VkDeviceCreateInfo merged=*ci;if(downstreamCi)merged.pNext=downstreamCi->pNext;log("[RUNTIME-ENABLE2] vkCreateDevice adapter reattached Vulkan loader chain thread="+std::to_string(GetCurrentThreadId()));return createDevice(physical,&merged,a,out);}
 VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL runtimeManagedGipa(VkInstance instance,const char* name) {
-    // The retained runtime callback must not return game-only SFS hooks for
-    // runtime command buffers (whose dispatch is owned by the runtime/driver).
-    if(kharvox::sfs::nativeProbeEnabled()&&s.device&&s.vk.getDeviceProcAddr
-        &&name&&!std::strcmp(name,"vkGetDeviceProcAddr"))
-        return reinterpret_cast<PFN_vkVoidFunction>(s.vk.getDeviceProcAddr);
     const auto loader = GetModuleHandleW(L"vulkan-1.dll");
     const auto loaderGipa = reinterpret_cast<PFN_vkGetInstanceProcAddr>(
         loader ? GetProcAddress(loader,"vkGetInstanceProcAddr") : nullptr);
@@ -378,12 +373,15 @@ VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL runtimeManagedGipa(VkInstance instance,
     const auto resolved = kharvox::resolveRuntimeVulkanProc(instance, name,
         runtimeManagedSessionLoaderRoute.load(std::memory_order_acquire), s.simulatorRuntime,
         runtimeManagedNextGipa.load(std::memory_order_acquire), loaderGipa,
-        createDevice ? reinterpret_cast<PFN_vkVoidFunction>(runtimeManagedCreateDevice) : nullptr);
+        createDevice ? reinterpret_cast<PFN_vkVoidFunction>(runtimeManagedCreateDevice) : nullptr,
+        kharvox::sfs::nativeProbeEnabled()?s.device:VK_NULL_HANDLE,
+        kharvox::sfs::nativeProbeEnabled()?s.vk.getDeviceProcAddr:nullptr);
     const char* route = "passthrough";
     switch (resolved.route) {
     case kharvox::RuntimeDispatchRoute::CreateDevice: route="create-device"; break;
     case kharvox::RuntimeDispatchRoute::SessionLoader: route="session-loader-gipa"; break;
     case kharvox::RuntimeDispatchRoute::PhysicalLoader: route="physical-loader"; break;
+    case kharvox::RuntimeDispatchRoute::RuntimeDevice: route="runtime-device-downstream"; break;
     default: break;
     }
     log(std::string("[RUNTIME-ENABLE2] GIPA thread=")+std::to_string(GetCurrentThreadId())+
@@ -3807,6 +3805,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
             if(s.steamEndCalls<=8||s.steamEndCalls%120==0||noteworthy){
                 log("[STEAM-XR-ORDER] cycle="+std::to_string(s.steamEndCalls)
                     +" reason="+reason
+                    +" layers="+std::to_string(endInfo.layerCount)
                     +" wait="+result(waitResult)
                     +" begin="+result(beginResult)
                     +" end="+result(endResult)

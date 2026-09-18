@@ -59,6 +59,28 @@ int main() {
         require(existing.function == reinterpret_cast<PFN_vkVoidFunction>(publicMemory));
         require(existing.route == RuntimeDispatchRoute::PhysicalLoader);
     }
+    for(const char* command:{"vkCreateImage","vkGetDeviceProcAddr","vkCmdPipelineBarrier2KHR","vkQueueSubmit"})
+        require(isRuntimeDeviceCommand(command));
+    for(const char* command:{"vkCreateInstance","vkCreateDevice","vkEnumeratePhysicalDevices",
+        "vkGetPhysicalDeviceProperties2","vkCreateWin32SurfaceKHR","vkDestroyInstance","vkUnknownCommand"})
+        require(!isRuntimeDeviceCommand(command));
+    const auto gameDevice=reinterpret_cast<VkDevice>(uintptr_t(99));
+    auto runtimeGdpa=+[](VkDevice d,const char* name)->PFN_vkVoidFunction{
+        require(d==reinterpret_cast<VkDevice>(uintptr_t(99)));
+        // Deliberately permissive, as observed with NVIDIA GDPA: even
+        // physical queries can return non-null, so pointer presence is unsafe.
+        return createAdapter;
+    };
+    for(const char* command:{"vkCreateImage","vkCreateGraphicsPipelines","vkCmdPipelineBarrier","vkGetDeviceProcAddr"}){
+        const auto result=resolveRuntimeVulkanProc(instance,command,true,false,downstream,loader,nullptr,gameDevice,runtimeGdpa);
+        require(result.route==RuntimeDispatchRoute::RuntimeDevice);
+        require(result.function==(!std::strcmp(command,"vkGetDeviceProcAddr")
+            ?reinterpret_cast<PFN_vkVoidFunction>(runtimeGdpa):createAdapter));
+    }
+    require(resolveRuntimeVulkanProc(instance,"vkGetPhysicalDeviceMemoryProperties",true,false,
+        downstream,loader,nullptr,gameDevice,runtimeGdpa).route==RuntimeDispatchRoute::SessionLoader);
+    require(!resolveRuntimeVulkanProc(instance,"vkUnknownCommand",true,false,
+        downstream,loader,nullptr,gameDevice,runtimeGdpa).function);
     VkPhysicalDeviceMemoryProperties props{};
     // Repeat after device creation, when the create adapter is no longer active.
     for (auto adapter : {PFN_vkVoidFunction(createAdapter), PFN_vkVoidFunction(nullptr)}) {

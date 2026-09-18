@@ -1,6 +1,8 @@
 #pragma once
 #include <vulkan/vulkan.h>
 #include <cstring>
+#include <algorithm>
+#include <iterator>
 
 namespace kharvox {
 inline bool selectXrGraphicsQueue(VkQueue current,VkQueue candidate,VkQueueFlags flags) {
@@ -25,7 +27,18 @@ inline bool isPhysicalDeviceCommand(const char* name) {
         !std::strcmp(name, "vkEnumerateDeviceLayerProperties"));
 }
 
-enum class RuntimeDispatchRoute { Downstream, CreateDevice, SessionLoader, PhysicalLoader };
+// Some drivers return non-null GDPA pointers for physical/instance queries.
+// Classify by the API's first dispatchable argument, never by pointer presence.
+inline bool isRuntimeDeviceCommand(const char* name){
+    if(!name)return false;
+    static constexpr const char* commands[]{
+#include "RuntimeDeviceCommands.inc"
+    };
+    return std::binary_search(std::begin(commands),std::end(commands),name,
+        [](const char* a,const char* b){return std::strcmp(a,b)<0;});
+}
+
+enum class RuntimeDispatchRoute { Downstream, CreateDevice, SessionLoader, PhysicalLoader, RuntimeDevice };
 struct RuntimeDispatchResult {
     PFN_vkVoidFunction function{};
     RuntimeDispatchRoute route{RuntimeDispatchRoute::Downstream};
@@ -38,8 +51,18 @@ struct RuntimeDispatchResult {
 inline RuntimeDispatchResult resolveRuntimeVulkanProc(
     VkInstance instance, const char* name, bool sessionLoader, bool simulator,
     PFN_vkGetInstanceProcAddr next, PFN_vkGetInstanceProcAddr loader,
-    PFN_vkVoidFunction createDevice) {
+    PFN_vkVoidFunction createDevice, VkDevice runtimeDevice=VK_NULL_HANDLE,
+    PFN_vkGetDeviceProcAddr runtimeGdpa=nullptr) {
     if (!name) return {};
+    // A retained GIPA can also request device commands. Route those below the
+    // game's stereo transforms just like GDPA; keep instance/physical commands
+    // on their existing loader level. Only the SFS caller supplies this route.
+    if(runtimeDevice&&runtimeGdpa&&isRuntimeDeviceCommand(name)){
+        if(!std::strcmp(name,"vkGetDeviceProcAddr"))
+            return {reinterpret_cast<PFN_vkVoidFunction>(runtimeGdpa),RuntimeDispatchRoute::RuntimeDevice};
+        if(auto command=runtimeGdpa(runtimeDevice,name))
+            return {command,RuntimeDispatchRoute::RuntimeDevice};
+    }
     if (sessionLoader && loader)
         return {loader(instance, name), RuntimeDispatchRoute::SessionLoader};
     if (!std::strcmp(name, "vkCreateDevice") && createDevice)

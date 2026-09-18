@@ -1323,22 +1323,34 @@ internal static class KharvoxRunner
         }
     }
 
-    private static StartupState ReadStartupLogState(string logPath, long logOffset, string expectedLayerMarker)
+    internal static StartupState ReadStartupLogState(string logPath, long logOffset, string expectedLayerMarker)
     {
         using var stream = new FileStream(logPath, FileMode.Open, FileAccess.Read,
             FileShare.ReadWrite | FileShare.Delete);
         if (stream.Length <= logOffset) return StartupState.TimedOut;
-        stream.Position = logOffset;
-        var bytesToRead = checked((int)Math.Min(stream.Length - logOffset, 1024 * 1024));
-        var buffer = new byte[bytesToRead];
-        var totalRead = 0;
-        while (totalRead < buffer.Length)
+        // Keep this launch's identity and the newest status. Shader diagnostics
+        // can exceed 1 MiB before Frame 120; repeatedly reading only the prefix
+        // then hides successful frames forever (PSVR2/AMD tester report).
+        const int headLimit = 64 * 1024, tailLimit = 1024 * 1024;
+        string ReadSegment(long start, int count)
         {
-            var read = stream.Read(buffer, totalRead, buffer.Length - totalRead);
-            if (read == 0) break;
-            totalRead += read;
+            stream.Position = start;
+            var buffer = new byte[count];
+            var readTotal = 0;
+            while (readTotal < count)
+            {
+                var read = stream.Read(buffer, readTotal, count - readTotal);
+                if (read == 0) break;
+                readTotal += read;
+            }
+            return Encoding.UTF8.GetString(buffer, 0, readTotal);
         }
-        return AnalyzeStartupLog(Encoding.UTF8.GetString(buffer, 0, totalRead), expectedLayerMarker);
+        var available = stream.Length - logOffset;
+        if (available <= headLimit + tailLimit)
+            return AnalyzeStartupLog(ReadSegment(logOffset, (int)available), expectedLayerMarker);
+        var head = ReadSegment(logOffset, headLimit);
+        var tail = ReadSegment(stream.Length - tailLimit, tailLimit);
+        return AnalyzeStartupLog(head + "\n" + tail, expectedLayerMarker);
     }
 
     // Missing/stalled diagnostics are not proof that a live game has failed.

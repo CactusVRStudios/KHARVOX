@@ -48,6 +48,18 @@ protected:
     }
     void emit_instruction(const Instruction& instruction)override{
         const auto op=static_cast<spv::Op>(instruction.op);const auto* words=stream(instruction);
+        // AMD DOOM modules use the legacy Groups vote opcode. SPIRV-Cross
+        // otherwise emits an unimplemented comment and leaves its result ID
+        // undefined. Only subgroup scope maps to GLSL's invocation vote.
+        if(op==spv::OpGroupAll||op==spv::OpGroupAny){
+            if(get_constant(words[2]).scalar()!=spv::ScopeSubgroup)
+                throw std::runtime_error("SFS: legacy group vote requires subgroup scope");
+            emit_unary_func_op(words[0],words[1],words[3],
+                op==spv::OpGroupAll?"allInvocationsARB":"anyInvocationARB");
+            require_extension_internal("GL_ARB_shader_group_vote");
+            register_control_dependent_expression(words[1]);
+            return;
+        }
         // DOOM's particle module stores an integer-backed buffer flag into a
         // local bool. Its original driver accepts it; GLSL requires conversion.
         if(op==spv::OpStore&&expression_type(words[0]).basetype==SPIRType::Boolean&&

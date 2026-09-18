@@ -18,6 +18,13 @@ foreach($name in @('KharvoxLayer.dll','KharvoxLayer.json','openxr_loader.dll','e
     if(!(Test-Path -LiteralPath (Join-Path $Runtime $name) -PathType Leaf)){throw "Missing native test runtime file: $name"}
 }
 if(!(Test-Path -LiteralPath (Join-Path $Runtime 'sfs-compiler-licenses') -PathType Container)){throw 'Bundle the SFS compiler licenses with this optional build.'}
+$stamp=Join-Path $Runtime 'native_sfs_build.txt'
+if(!(Test-Path -LiteralPath $stamp -PathType Leaf)){throw 'Native SFS build manifest is missing; use a compiler-enabled build.'}
+$capability=Get-Content -LiteralPath $stamp
+if($capability.Count -ne 2 -or $capability[0] -ne 'KHARVOX_NATIVE_SFS_1' -or
+    $capability[1] -ne (Get-FileHash -LiteralPath (Join-Path $Runtime 'KharvoxLayer.dll') -Algorithm SHA256).Hash){
+    throw 'Native SFS manifest does not match the runtime DLL.'
+}
 if(!(Get-ChildItem -LiteralPath $Profile -Filter '*.spv' -File | Select-Object -First 1)){throw 'Profile must contain locally compiled SPIR-V replacements.'}
 $settings=@{
     VK_LAYER_PATH=$Runtime; VK_INSTANCE_LAYERS='VK_LAYER_KHARVOX_OPENXR';

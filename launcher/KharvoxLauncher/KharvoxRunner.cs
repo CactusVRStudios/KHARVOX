@@ -538,7 +538,7 @@ internal static class KharvoxRunner
                 try { File.Copy(logPath, Path.Combine(Path.GetTempPath(), "KHARVOX-previous-launch.log"), true); }
                 catch { }
             }
-            psi.EnvironmentVariables.Remove("KHARVOX_VULKAN_SFS");
+            VulkanSfs.ClearEnvironment(psi);
             if (sfsEnabled) VulkanSfs.Configure(psi, runtimeDir);
             var nativeValidationLog = NativeValidation.Configure(psi, nativeStereoEnabled, runtimeDir);
             try { File.Delete(logPath); } catch { }

@@ -1,0 +1,5 @@
+if(NOT EXISTS "${LAYER}")
+  message(FATAL_ERROR "SFS layer missing: ${LAYER}")
+endif()
+file(SHA256 "${LAYER}" layer_hash)
+file(WRITE "${OUTPUT}" "KHARVOX_NATIVE_SFS_1\n${layer_hash}\n")

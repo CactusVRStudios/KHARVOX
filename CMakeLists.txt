@@ -134,6 +134,14 @@ if(KHARVOX_BUILD_LAYER)
       COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${PROJECT_SOURCE_DIR}/third-party/sfs-compiler-licenses"
         "$<TARGET_FILE_DIR:KharvoxLayer>/sfs-compiler-licenses"
+      COMMAND ${CMAKE_COMMAND}
+        "-DLAYER=$<TARGET_FILE:KharvoxLayer>"
+        "-DOUTPUT=$<TARGET_FILE_DIR:KharvoxLayer>/native_sfs_build.txt"
+        -P "${PROJECT_SOURCE_DIR}/tools/write_sfs_capability.cmake"
+      VERBATIM)
+  else()
+    add_custom_command(TARGET KharvoxLayer POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E rm -f "$<TARGET_FILE_DIR:KharvoxLayer>/native_sfs_build.txt"
       VERBATIM)
   endif()
   if(MSVC)

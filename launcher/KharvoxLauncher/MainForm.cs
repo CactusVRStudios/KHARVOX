@@ -574,7 +574,7 @@ public sealed class MainForm : Form
     {
         if (rendererMode.SelectedIndex < 0) return;
         statusToolTip.SetToolTip(rendererMode, rendererMode.SelectedIndex == 2
-            ? VulkanSfs.Blocker : "");
+            ? VulkanSfs.Description : "");
         useFsrUpscaling.Enabled = true;
         statusToolTip.SetToolTip(renderScale, "Scales scene and XR resolution in both renderers. 100% scene: 3840 x 2160. No application upper limit; GPU/runtime limits apply. Restart required.");
         OptionChanged(sender, e);

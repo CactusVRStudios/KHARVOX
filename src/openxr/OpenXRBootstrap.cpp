@@ -1263,6 +1263,10 @@ HWND findDoomWindow(){
     return doom;
 }
 void focusDoomWindow(){
+    // Window activation can synchronously message DOOM's UI thread while that
+    // thread waits for loading/render jobs. Never do this from the SFS frame
+    // path; the launcher/user owns foreground activation for this prototype.
+    if(kharvox::sfs::vrEnabled())return;
     if(!kharvox::shouldAutomaticallyFocusDoom(s.submittedLayerFrames))return;
     if(HWND doom=findDoomWindow()){
         if(GetForegroundWindow()==doom)return;

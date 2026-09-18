@@ -35,9 +35,10 @@ internal static class SelfTest
             VerifyModConflictPreflight(testRoot);
             VerifyProcessStatusPreservesExitCode();
             bool sfsBlocked=false;
-            try { VulkanSfs.EnsureAvailable(); }
+            try { VulkanSfs.EnsureAvailable(testRoot); }
             catch (InvalidOperationException e) { sfsBlocked=e.Message==VulkanSfs.Blocker; }
             Require(sfsBlocked,"unverified SFS provider is blocked before launching the game");
+            VerifySfsPackage(testRoot);
             Require(KharvoxRunner.IsPimaxRuntimeManifest(@"C:\Pimax\pimax-openxr.json"), "Pimax runtime blocked");
             Require(KharvoxRunner.IsPimaxRuntimeManifest(@"C:\Runtime\PiOpenXR.json"), "PiOpenXR runtime blocked case-insensitively");
             Require(!KharvoxRunner.IsPimaxRuntimeManifest(@"C:\SteamVR\steamxr_win64.json"), "SteamVR remains supported");
@@ -1040,6 +1041,48 @@ internal static class SelfTest
             && preset.SnapAngle == 45m && !preset.LeftHandMode
             && preset.LeftHandSwapMode == 0,
             name + " movement defaults");
+    }
+
+    private static void VerifySfsPackage(string root)
+    {
+        var runtime = Path.Combine(root, "sfs-fixture");
+        Directory.CreateDirectory(runtime);
+        var layer = Path.Combine(runtime, "KharvoxLayer.dll");
+        File.WriteAllText(layer, "Hash fixture only; never loaded or packaged");
+        using var sha = System.Security.Cryptography.SHA256.Create();
+        File.WriteAllLines(Path.Combine(runtime, "native_sfs_build.txt"), new[] {
+            "KHARVOX_NATIVE_SFS_1", BitConverter.ToString(sha.ComputeHash(File.ReadAllBytes(layer))).Replace("-", "") });
+        var licenses = Path.Combine(runtime, "sfs-compiler-licenses");
+        Directory.CreateDirectory(licenses);
+        foreach (var name in new[] { "SPIRV-Cross.txt", "glslang.txt", "SPIRV-Tools.txt" })
+            File.WriteAllText(Path.Combine(licenses, name), "Test fixture");
+        bool rejected = false;
+        try { VulkanSfs.EnsureAvailable(runtime); } catch (InvalidOperationException) { rejected = true; }
+        Require(rejected, "SFS package without local profile rejected");
+        var profile = Path.Combine(runtime, "sfs-profile");
+        Directory.CreateDirectory(profile);
+        var shader = Path.Combine(profile, "fixture.spv");
+        File.WriteAllBytes(shader, new byte[20]);
+        for (var i = 1; i < 75; ++i)
+            using (var writer = new BinaryWriter(File.Create(Path.Combine(profile, "fixture" + i + ".spv"))))
+                foreach (var word in new uint[] { 0x07230203, 0x00010000, 0, 1, 0 }) writer.Write(word);
+        rejected = false;
+        try { VulkanSfs.EnsureAvailable(runtime); } catch (InvalidOperationException) { rejected = true; }
+        Require(rejected, "SFS corrupt SPIR-V header rejected");
+        using (var writer = new BinaryWriter(File.Create(shader)))
+            foreach (var word in new uint[] { 0x07230203, 0x00010000, 0, 1, 0 }) writer.Write(word);
+        var start = new System.Diagnostics.ProcessStartInfo { UseShellExecute = false };
+        VulkanSfs.Configure(start, runtime);
+        Require(start.EnvironmentVariables["KHARVOX_SFS_NATIVE_VR"] == "1" &&
+            start.EnvironmentVariables["KHARVOX_SFS_PROFILE"] == profile, "SFS child selects native producer and local profile");
+        VulkanSfs.ClearEnvironment(start);
+        Require(start.EnvironmentVariables["KHARVOX_SFS_NATIVE_VR"] == null &&
+            start.EnvironmentVariables["KHARVOX_SFS_NATIVE_PROBE"] == null &&
+            start.EnvironmentVariables["KHARVOX_SFS_PROFILE"] == null, "AER child cannot inherit SFS flags");
+        File.AppendAllText(layer, "changed");
+        rejected = false;
+        try { VulkanSfs.EnsureAvailable(runtime); } catch (InvalidOperationException) { rejected = true; }
+        Require(rejected, "SFS manifest for a different DLL rejected");
     }
 
     private static void Require(bool condition, string check)

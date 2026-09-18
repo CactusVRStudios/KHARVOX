@@ -1,6 +1,6 @@
 # 0.96: Vulkan Single-Frame Stereo
 
-Status: **native reconstruction in progress; no playable SFS/VR release**.
+Status: **local experimental SFS test package; no validated VR release**.
 
 The current implementation and evidence are in
 [SFS_REVERSE_ENGINEERING.md](SFS_REVERSE_ENGINEERING.md). The native Vulkan
@@ -8,7 +8,24 @@ multiview producer, typed shader transformer, profile bindings and OpenXR eye
 transport are implemented. The external provider DLL is not loaded. A DOOM
 campaign test in OpenXR Simulator produced distinct left/right images. All
 105 CTests pass, including actual GPU sampling and IPD tests. This is not yet
-headset, hand-latency or full-game validation; the normal launcher remains gated.
+headset, hand-latency or full-game validation. The SFS launcher choice now starts
+only from a complete native test package: a build-generated SHA-256 manifest
+must match its DLL, all 75 local profile shaders must have valid SPIR-V headers,
+and compiler licenses must be present. Ordinary builds remain unavailable for
+this choice. AER launches explicitly clear inherited SFS flags.
+
+Local test package: `out/beta096/native-runtime/KharvoxLauncher.exe`. Select
+**Vulkan Single-Frame Stereo (Test)**. The launcher uses the active OpenXR runtime;
+the bounded script below can instead select Simulator for its child process.
+The local shader profile is included only in this user's test directory, not in
+the repository or a public release archive.
+
+The follow-up Simulator campaign capture (2026-09-18, frame 1810) confirms both
+640x700 eye surfaces are filled completely. Left source crop is
+`[0,83,773,540]`; right is `[187,83,960,540]`, matching the asymmetric runtime
+FOVs. Eye poses are separated by 64 mm. PNGs show coherent, different eye views.
+These are GPU-completed, pre-compositor surfaces; raw-source matching and actual
+headset visual comfort are not established by this capture.
 
 The optional compiler requires `KHARVOX_BUILD_SFS_COMPILER=ON`, explicit
 `KHARVOX_SPIRV_CROSS_SOURCE`, `KHARVOX_SPIRV_CROSS_LIB` and

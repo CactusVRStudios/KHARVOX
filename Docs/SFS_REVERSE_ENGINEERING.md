@@ -127,15 +127,24 @@ Evidence remains local: `out/beta096/shader-audit-current.json`, CTest output,
 
 ## Remaining validation
 
-Validate the final FOV crop in a new game capture, then real-headset tracking,
+The final FOV crop was verified in campaign capture
+`%TEMP%/KHARVOX-EyeCaptures/37884-127727828/`: both submission rectangles are
+`[0,0,640,700]`, with distinct asymmetric crops and 64 mm eye separation.
+The SFS frame path no longer automatically activates the desktop window:
+a subsequent stalled run exposed a render-thread synchronous Win32 message
+wait. User interaction may have contributed; disabling that automatic focus
+path avoids this blocking operation. The restarted campaign produced the capture.
+
+Still validate real-headset tracking,
 controller/weapon timing, shadows, particles, UI depth and level transitions.
 The current analytic projection rejects canted eye orientations and longitudinal
 eye offsets; such devices require a fuller view-space reconstruction. No PSVR2
 headset compatibility is claimed. Toolkit bridges/protocol tests remain intact.
 RenderPass2, synchronization2 and indirect compute paths are not covered by this
 DOOM-specific prototype. The compiler SDK has not yet been rebuilt from fully
-pinned glslang/SPIRV-Tools sources. The normal launcher therefore stays gated;
-explicit developer flags select this path for local investigation.
+pinned glslang/SPIRV-Tools sources. The launcher now permits the explicit SFS test
+choice with the matching compiler-enabled DLL manifest, full local profile and
+licenses. This package check does not certify headset compatibility.
 
 The original external provider's startup heap corruption is historical evidence;
 fixing or loading that DLL is no longer a prerequisite for this native path.

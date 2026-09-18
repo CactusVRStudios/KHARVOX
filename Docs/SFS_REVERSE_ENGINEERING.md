@@ -904,3 +904,33 @@ Residual climbing/weapon jump and exact reported lighting/seams are unresolved.
 Also noted for follow-up: SFS currently does not virtualize query pool slots;
 old logs contain consecutive query IDs, but their render-pass multiview state is
 not logged. Do not equate this potential issue with the reported light defect.
+## Test 20: projection audit corrections (2026-09-18)
+
+Corrected the ten lightInput.fragCoord cluster variants missed by the literal
+inputs.fragCoord matcher. World-position-derived centered cluster passes remain
+unchanged. The existing GPU lighting fixture now exercises this alternate name,
+including asymmetric eye FOV and mono auxiliary framebuffers.
+
+Shared particle compute 53feb817281c0c4e now transforms centered clip coordinates
+into eye zero BEFORE bounds checks, perspective division and final engine Y flip.
+Depth/normal sampling was already layer zero; coordinates now match that layer.
+This does not add a dispatch, duplicate shared SSBO updates, or alter view depth.
+Single-view screen-depth collision remains an approximation of scene geometry.
+
+SSR correction is all-or-nothing for recognized signatures: eye-local packed
+inverse/forward projection, eye-window hit to centered world reconstruction,
+and previous-frame projection all change together. The profile's zero-world-pos
+workaround is removed only for this complete pattern. r_SSR=0 remains protected;
+this test does not enable or claim headset-validated SSR.
+
+123/123 CTests pass, including two new SSR GPU readback tests (symmetric and
+asymmetric FOV plus mono auxiliary isolation), lighting alias coverage and the
+existing once-only shared indirect dispatch regression. Launcher self-test passes.
+All 1395 corpus compile variants pass; all ten missing cluster corrections, seven
+SSR modules and one particle collision module are observed in generated GLSL.
+Particle arithmetic/order guards and partial SSR rejection are also unit-tested;
+no new hardware gameplay validation of particle collisions was possible locally.
+
+Test 20 keeps Test 18 weapon placement and Test 19 camera-profile fixes. The actual
+climbing/weapon jump and specific UAC light/HUD/seams require tester confirmation;
+shader correction is not claimed proof that every reported visual defect is fixed.

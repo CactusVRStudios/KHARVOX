@@ -22,6 +22,8 @@ struct CompiledShader {
     unsigned clusterCorrections{}, worldCorrections{}, refractionCorrections{}, temporalCorrections{}, ssdoCorrections{};
     bool vertexProjectionApplied{};
     bool screenSpaceUiApplied{};
+    bool particleCollisionApplied{};
+    unsigned ssrCorrections{};
     // Descriptor bindings whose original 2D view must become an array view.
     struct Binding {uint32_t set{},binding{};bool storage{},depth{};};
     std::vector<Binding> arrayBindings;

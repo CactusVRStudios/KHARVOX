@@ -3,7 +3,24 @@
 #include <string>
 
 namespace kharvox::sfs {
-struct LightingCorrections { unsigned clusters{}, worldPositions{}, refractions{}, temporal{}, ssdo{}; };
+struct LightingCorrections { unsigned clusters{}, worldPositions{}, refractions{}, temporal{}, ssdo{}, ssr{}; };
+
+// Shared particle state must run once. Its depth/normal sampling already selects
+// array layer zero: project collision coordinates into that same eye before
+// bounds checks, perspective division and the engine's final Y flip.
+inline bool correctDoomParticleCollision(std::string& source) {
+    const std::regex clipW(R"(screenPosition\.w = dot4\([^;\n]+\);)");
+    std::smatch w;
+    if(source.find(".gpuparticlephysicsparms")==std::string::npos ||
+       source.find("samp_viewdepthmap")==std::string::npos || source.find("samp_viewnormalmap")==std::string::npos ||
+       source.find(".viewprojectionmatrixw")==std::string::npos || source.find("DoCollisionTest(")==std::string::npos ||
+       !std::regex_search(source,w,clipW))return false;
+    source.insert(size_t(w.position()+w.length()),
+        "\n    screenPosition.y = -screenPosition.y;\n"
+        "    screenPosition = khSfsProjection.clipFromCenter[0] * screenPosition + khSfsProjection.eyeTranslation[0];\n"
+        "    screenPosition.y = -screenPosition.y;\n");
+    return true;
+}
 
 // These are DOOM semantic anchors, also retained by its AMD modules, rather
 // than GPU-specific shader hashes. Unknown shader layouts remain untouched.
@@ -40,16 +57,18 @@ inline LightingCorrections correctDoomLighting(std::string& source) {
         }
     }
     const std::string anchor="clusterCoordinate.y = 1.0 - clusterCoordinate.y;";
-    std::smatch uniform;
+    std::smatch uniform,depthInput;
     const std::regex projection(R"((\w+)\.projectionmatrixz)");
+    const std::regex fragDepth(R"((\w+\.fragCoord)\.z)");
     if(source.find(anchor)!=std::string::npos && std::regex_search(source,uniform,projection)
-       && source.find("inputs.fragCoord.z")!=std::string::npos) {
+       && std::regex_search(source,depthInput,fragDepth)) {
         // Remove the fixed-display profile adjustment before installing the
         // inverse headset projection, including the depth-dependent IPD term.
         const auto matrix=uniform[1].str()+".projectionmatrixz";
+        const auto depth=depthInput[1].str()+".z";
         source=std::regex_replace(source,std::regex(R"(clusterCoordinate\.x -= [^;\n]*\.stereo\.x \* 0\.5\)?;)"),"");
         const auto replacement=anchor+"\n    clusterCoordinate.xy = clamp(khSfsCenterUv(clusterCoordinate.xy, "
-            +matrix+".w / (inputs.fragCoord.z + "+matrix+".z), true), vec2(0.0), vec2(0.99999994));";
+            +matrix+".w / ("+depth+" + "+matrix+".z), true), vec2(0.0), vec2(0.99999994));";
         size_t pos=0;
         while((pos=source.find(anchor,pos))!=std::string::npos){source.replace(pos,anchor.size(),replacement);pos+=replacement.size();++result.clusters;}
     }
@@ -78,6 +97,29 @@ inline LightingCorrections correctDoomLighting(std::string& source) {
             source.insert(size_t(p.position()+p.length()),"\n    winPosPrev = khSfsPreviousUv(winPosPrev, rcpHW);");
             ++result.temporal;
         }
+    }
+    // SSR rays live in eye-local view space, but hit reconstruction and history
+    // matrices are centered. Convert all four boundaries together; never apply
+    // a partial rewrite or retain the profile's zero-position workaround.
+    const std::string windowZ="return vec3(vec2(0.5) + (projection.xy * (viewPos.xy / vec2(viewPos.z))), (projection.w / viewPos.z) + projection.z);";
+    const std::regex hitWindow(R"(vec3 (\w+) = vec3\(best_hit\.xy \* (\w+)\.resolutionscale\.zw, best_hit\.z\);)");
+    const std::regex previousWindow(R"(vec2 (\w+) = \(tc_reproj\.xy \* 0\.5\) \+ vec2\(0\.5\);)");
+    std::smatch hit,previousHit;
+    if(source.find(".ssrparms")!=std::string::npos && source.find(".windowpostoglobalx")!=std::string::npos &&
+       source.find(".prevglobalpostowindowx")!=std::string::npos && source.find(viewReturn)!=std::string::npos &&
+       source.find(windowZ)!=std::string::npos && std::regex_search(source,hit,hitWindow) &&
+       std::regex_search(source,previousHit,previousWindow)){
+        source.replace(source.find(viewReturn),viewReturn.size(),"winPos.xy = khSfsCenterRayUv(winPos.xy);\n    "+viewReturn);
+        source.replace(source.find(windowZ),windowZ.size(),
+            "return vec3(khSfsEyeRayUv(vec2(0.5) + (projection.xy * (viewPos.xy / vec2(viewPos.z)))), (projection.w / viewPos.z) + projection.z);");
+        std::regex_search(source,hit,hitWindow);
+        const auto p=hit[1].str(),low=hit[2].str();
+        source.insert(size_t(hit.position()+hit.length()),"\n    "+p+".xy = khSfsCenterUv("+p+".xy, "+low+".projectionmatrixz.w / ("+p+".z + "+low+".projectionmatrixz.z), false);");
+        std::regex_search(source,previousHit,previousWindow);
+        const auto prev=previousHit[1].str();
+        source.insert(size_t(previousHit.position()+previousHit.length()),"\n    "+prev+" = khSfsPreviousUv("+prev+", 1.0 / tc_reproj.w);");
+        source=std::regex_replace(source,std::regex(R"(scene\.world_pos = vec3\(0\.0\);)"),"");
+        ++result.ssr;
     }
     return result;
 }

@@ -120,6 +120,14 @@ if(BUILD_TESTING AND WIN32)
   endforeach()
   add_test(NAME sfs-lighting-asymmetric-gpu COMMAND KharvoxSfslightingGpuTests "${sfs_fixtures}/sampling.vert.spv" "${sfs_fixtures}/lighting.frag.spv" asymmetric)
   set_tests_properties(sfs-lighting-asymmetric-gpu PROPERTIES TIMEOUT 30)
+  add_custom_command(OUTPUT "${sfs_fixtures}/ssr.frag.spv"
+    COMMAND "${KHARVOX_GLSLANG_ROOT}/bin/glslang.exe" -V --target-env vulkan1.1
+      "${PROJECT_SOURCE_DIR}/tests/shaders/sfs_ssr.frag" -o "${sfs_fixtures}/ssr.frag.spv"
+    DEPENDS "${PROJECT_SOURCE_DIR}/tests/shaders/sfs_ssr.frag" VERBATIM)
+  target_sources(KharvoxSfslightingGpuTests PRIVATE "${sfs_fixtures}/ssr.frag.spv")
+  add_test(NAME sfs-ssr-projection-gpu COMMAND KharvoxSfslightingGpuTests "${sfs_fixtures}/sampling.vert.spv" "${sfs_fixtures}/ssr.frag.spv")
+  add_test(NAME sfs-ssr-asymmetric-gpu COMMAND KharvoxSfslightingGpuTests "${sfs_fixtures}/sampling.vert.spv" "${sfs_fixtures}/ssr.frag.spv" asymmetric)
+  set_tests_properties(sfs-ssr-projection-gpu sfs-ssr-asymmetric-gpu PROPERTIES TIMEOUT 30)
   add_custom_command(OUTPUT "${sfs_fixtures}/shadow-projection.vert.spv"
     COMMAND "${KHARVOX_GLSLANG_ROOT}/bin/glslang.exe" -V --target-env vulkan1.1
       "${PROJECT_SOURCE_DIR}/tests/shaders/sfs_shadow_projection.vert" -o "${sfs_fixtures}/shadow-projection.vert.spv"

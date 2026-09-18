@@ -68,6 +68,21 @@ int main(int argc,char** argv){try{
     check(shader.find("world_pos -=")==std::string::npos);
     check(shader.find("khSfsCenterUv(clusterCoordinate.xy, freqLow_fragmentUniforms.projectionmatrixz.w")!=std::string::npos);
     check(shader.find("khSfsCenterUv(khSfsUv, zLinear, false)")!=std::string::npos);
+    for(const std::string input:{"inputs","lightInput"}){
+        std::string clustered="clusterCoordinate.y = 1.0 - clusterCoordinate.y;\nfloat z = "+input+".fragCoord.z;\nvec4 p = low.projectionmatrixz;";
+        check(correctDoomLighting(clustered).clusters==1);
+        check(clustered.find("low.projectionmatrixz.w / ("+input+".fragCoord.z + low.projectionmatrixz.z)")!=std::string::npos);
+    }
+    std::string worldClusters="vec3 ndcPos = clipPos.xyz / vec3(clipPos.w);\nvec3 clusterCoordinate = vec3(texCoord,0);";
+    const auto worldClustersBefore=worldClusters;
+    check(!correctDoomLighting(worldClusters).clusters&&worldClusters==worldClustersBefore);
+    std::string particle="// low.gpuparticlephysicsparms samp_viewdepthmap samp_viewnormalmap low.viewprojectionmatrixw\n"
+        "screenPosition.w = dot4(p, m);\nbool visible = screenPosition.x < screenPosition.w;\nDoCollisionTest(screenPosition);";
+    check(correctDoomParticleCollision(particle));
+    check(particle.find("khSfsProjection.clipFromCenter[0]")<particle.find("bool visible"));
+    check(particle.find("screenPosition.y = -screenPosition.y;")<particle.find("khSfsProjection.clipFromCenter[0]"));
+    std::string unrelatedParticle="screenPosition.w = dot4(p, m);";
+    check(!correctDoomParticleCollision(unrelatedParticle));
     // A partial/unknown reconstruction must not erase its profile correction.
     std::string partial="world_pos -= (camera_horizontal_world_normalized * adjustment_magnitude);";
     const auto before=partial;correctDoomLighting(partial);check(partial==before);
@@ -96,6 +111,26 @@ int main(int argc,char** argv){try{
     // Never change a partial or unrelated packed-projection shader.
     auto partialAo=ao.substr(0,ao.find("vec2 GetWindowPos"));const auto partialAoBefore=partialAo;
     check(correctDoomLighting(partialAo).ssdo==0&&partialAo==partialAoBefore);
+    const std::string ssr=R"(
+        // low.ssrparms low.windowpostoglobalx high.prevglobalpostowindowx
+        vec3 GetViewPos(vec3 winPos, vec4 inverseProjection0, vec4 inverseProjection1) {
+            return vec3((inverseProjection0.xy * winPos.xy) + inverseProjection0.zw, inverseProjection1.z) / vec3((inverseProjection1.x * winPos.z) + inverseProjection1.y);
+        }
+        vec3 GetWindowPosZ(vec3 viewPos, vec4 projection) {
+            return vec3(vec2(0.5) + (projection.xy * (viewPos.xy / vec2(viewPos.z))), (projection.w / viewPos.z) + projection.z);
+        }
+        scene.world_pos = vec3(0.0);
+        vec3 p = vec3(best_hit.xy * low.resolutionscale.zw, best_hit.z);
+        vec2 uv = (tc_reproj.xy * 0.5) + vec2(0.5);
+    )";
+    auto fixedSsr=ssr;check(correctDoomLighting(fixedSsr).ssr==1);
+    check(fixedSsr.find("winPos.xy = khSfsCenterRayUv(winPos.xy)")!=std::string::npos);
+    check(fixedSsr.find("return vec3(khSfsEyeRayUv(")!=std::string::npos);
+    check(fixedSsr.find("p.xy = khSfsCenterUv(p.xy,")!=std::string::npos);
+    check(fixedSsr.find("uv = khSfsPreviousUv(uv, 1.0 / tc_reproj.w)")!=std::string::npos);
+    check(fixedSsr.find("scene.world_pos = vec3(0.0)")==std::string::npos);
+    auto partialSsr=ssr.substr(0,ssr.find("vec2 uv"));const auto originalSsr=partialSsr;
+    check(!correctDoomLighting(partialSsr).ssr&&partialSsr==originalSsr);
     std::cout<<"Generic/profile lighting anchors and replacement without double correction passed\n";
     return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

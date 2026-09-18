@@ -339,7 +339,19 @@ private:
         workerThreadId=GetCurrentThreadId();
         ready.notify_all();
         for(;;){
-            wake.wait(lock,[this]{return stopping||taskPending;});
+            if(s.simulatorRuntime){
+                // The simulator creates its preview window on this lifecycle
+                // thread. WM_ACTIVATE sent by DOOM can otherwise block forever
+                // when no new XR task arrives because DOOM is inside that send.
+                wake.wait_for(lock,std::chrono::milliseconds(8),[this]{return stopping||taskPending;});
+                if(!stopping&&!taskPending){
+                    lock.unlock();
+                    MSG message{};
+                    for(unsigned n=0;n<64&&PeekMessageW(&message,nullptr,0,0,PM_REMOVE);++n){TranslateMessage(&message);DispatchMessageW(&message);}
+                    lock.lock();
+                    continue;
+                }
+            }else wake.wait(lock,[this]{return stopping||taskPending;});
             if(stopping&&!taskPending)break;
             auto current=std::move(task);
             lock.unlock();
@@ -3217,7 +3229,7 @@ bool createSession(){
             +(created==VK_SUCCESS?" private copy fence available; use selected per frame":" copy fence unavailable; queueWaitIdle fallback retained"));
     }
     log("Session created");return true;}
-void barrierAspect(VkCommandBuffer cb,VkImage img,VkImageLayout oldL,VkImageLayout newL,VkAccessFlags src,VkAccessFlags dst,VkImageAspectFlags aspect,uint32_t baseLayer=0){VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};b.srcAccessMask=src;b.dstAccessMask=dst;b.oldLayout=oldL;b.newLayout=newL;b.srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;b.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;b.image=img;b.subresourceRange.aspectMask=aspect;b.subresourceRange.baseArrayLayer=baseLayer;b.subresourceRange.levelCount=1;b.subresourceRange.layerCount=1;s.vk.cmdPipelineBarrier(cb,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,0,0,nullptr,0,nullptr,1,&b);}
+void barrierAspect(VkCommandBuffer cb,VkImage img,VkImageLayout oldL,VkImageLayout newL,VkAccessFlags src,VkAccessFlags dst,VkImageAspectFlags aspect,uint32_t baseLayer=0){VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};b.srcAccessMask=src;b.dstAccessMask=dst;b.oldLayout=kharvox::sfs::sourceLayout(s.device,img,oldL);b.newLayout=kharvox::sfs::sourceLayout(s.device,img,newL);b.srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;b.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;b.image=img;b.subresourceRange.aspectMask=aspect;b.subresourceRange.baseArrayLayer=baseLayer;b.subresourceRange.levelCount=1;b.subresourceRange.layerCount=1;s.vk.cmdPipelineBarrier(cb,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,0,0,nullptr,0,nullptr,1,&b);}
 void barrier(VkCommandBuffer cb,VkImage img,VkImageLayout oldL,VkImageLayout newL,VkAccessFlags src,VkAccessFlags dst){barrierAspect(cb,img,oldL,newL,src,dst,VK_IMAGE_ASPECT_COLOR_BIT);}
 void invalidateAlternatingStereoHistory(bool clearProgrammedViews){
     s.aerSourceCacheValid={};s.aerSourceCacheKeys={};s.aerSourceModeActive=false;s.aerPublishedSourcePoseId=0;
@@ -4648,7 +4660,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
     std::array<bool,2> rawEyeCaptureRecorded{};
     if(stereoNow&&!s.quadMode&&!nativePackedStereo&&!skipAlternatingCapture)
         rawEyeCaptureRecorded[currentRenderEye]=recordEyeSource(currentRenderEye,src,
-            VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,it->second.extent,it->second.format,
+            kharvox::sfs::sourceLayout(s.device,src,VK_IMAGE_LAYOUT_PRESENT_SRC_KHR),it->second.extent,it->second.format,
             s.stereoCacheRevision[currentRenderEye]+1);
     kharvox::hands::HandPose sceneLaser{};
     XrVector3f laserOrigin{},laserDirection{};
@@ -5151,7 +5163,11 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
     VkTimelineSemaphoreSubmitInfo timelineSubmit{VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO};timelineSubmit.waitSemaphoreValueCount=uint32_t(waitValues.size());timelineSubmit.pWaitSemaphoreValues=waitValues.data();timelineSubmit.signalSemaphoreValueCount=afwSignalPrepared?1u:0u;timelineSubmit.pSignalSemaphoreValues=afwSignalPrepared?&afwSignalValue:nullptr;
     VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};submit.pNext=(afwPrepared||afwSignalPrepared)?&timelineSubmit:nullptr;submit.waitSemaphoreCount=uint32_t(submitWaits.size());submit.pWaitSemaphores=submitWaits.empty()?nullptr:submitWaits.data();submit.pWaitDstStageMask=waitStages.empty()?nullptr:waitStages.data();submit.commandBufferCount=1;submit.pCommandBuffers=&s.commandBuffer;submit.signalSemaphoreCount=afwSignalPrepared?1u:0u;submit.pSignalSemaphores=afwSignalPrepared?&afwSignalSemaphore:nullptr;
     VkFence copyCompletion=VK_NULL_HANDLE;
-    const bool earlyReleaseRequested=!sfsBackend&&kharvox::rendererDefaults::earlyXrRelease;
+    const bool sourceRingBackend=sfsBackend&&kharvox::sfs::sourceRingActive(s.device);
+    // Owned sources can use the existing ordered XR release contract: submit
+    // before release/endFrame, then prove completion before reusing parameters,
+    // command buffers or hand attachments. Readbacks keep synchronous retirement.
+    const bool earlyReleaseRequested=(!sfsBackend||sourceRingBackend)&&kharvox::rendererDefaults::earlyXrRelease;
     const bool nativePairReady=nativeFrameValid&&updateEyeSwapchains&&eyeImageAcquired[0]&&eyeImageAcquired[1];
     const bool queueSynchronized=queueAccessLockCallback&&queueAccessUnlockCallback;
     const bool readbackRecorded=nativeXrCaptureRecorded||nativeWatchRecorded||eyeCaptureRecorded
@@ -5519,6 +5535,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
         reportNativeDeviceLost("deferredWaitForFences",completionResult);
         copyLifetime.completed(completionResult==VK_SUCCESS);
         if(!copyLifetime.canRetireResources())kharvox::native::fail("early XR release copy completion failed; resources retained");
+        if(sfsBackend)kharvox::sfs::copyCompleted(s.device);
         s.handRenderer.finishSceneIntegratedFrame();
     }
     if(nativeFrameValid){

@@ -446,3 +446,57 @@ implemented. Next work must close its semaphore/fence and external-image ownersh
 contract, then replace the desktop-WSI coupling and measure the same gameplay
 scene with matching per-eye resolution and quality. The original provider-only
 heap-corruption reproduction still prevents a valid local provider A/B baseline.
+
+## Owned-source transport test, 2026-09-18
+
+The follow-up implements a native Vulkan/OpenXR adaptation of the provider's
+owned-source acquisition. KHARVOX_SFS_SOURCE_RING=1 enables it only with native
+SFS VR; the prepared launcher's sfs_source_ring marker selects it automatically.
+The test selection is Vulkan SFS Source Ring (NVIDIA Test), requiring NVIDIA.
+AER clears these settings and keeps its existing output path.
+
+SourceRing.h allocates dedicated, device-local two-layer source images and
+returns synthetic swapchain handles. Acquisition signals the application's
+semaphore/fence through a real queue submission. Present consumes application
+wait semaphores exactly once (XR copy or retirement) and fences source reuse.
+Source images use GENERAL instead of PRESENT_SRC_KHR; render-pass, application
+barrier and XR-copy transitions are translated together. Desktop WSI acquire
+and present are bypassed. The DOOM desktop window is black by design; menus
+continue through the existing XR quad path.
+
+DOOM explicitly requires TWO swapchain images: after enumeration, executable
+RVA 0x1904cb5 compares the count with 2 and 0x1904cba branches to the error path.
+An initial five-source trial reproduced that error. The implementation now honors
+the requested count (two in DOOM). The provider's modulo-five presentation work
+ring is NOT its DOOM source-image count. This test does not implement that
+five-slot work ring or claim five frames in flight.
+
+For eligible SteamVR/VDXR projection frames, the owned-source path can use the
+existing ordered early-release policy: submit XR copies, release/end the XR
+frame, then wait for the private copy fence before reusing command buffers,
+parameters or hand resources. Readbacks retain synchronous completion. This is
+not a wait-free or fully pipelined renderer. The same-device OpenXR Vulkan
+consumer does not need the reference's Vulkan-to-D3D keyed-mutex bridge.
+
+The simulator additionally needs Windows messages pumped on its idle XR worker:
+its preview window is created there, and a synchronous WM_ACTIVATE from DOOM
+otherwise deadlocks while that worker waits for a new task. Pumping is restricted
+to the simulator. Focus switching then continued without the previous hang.
+Production runtime thread behavior is unchanged.
+
+Validation: Release build, 116/116 CTests, launcher self-test. Two new real-GPU
+tests repeatedly compare both layers' frame/eye-specific pixels, semaphore/fence
+signaling, exhausted acquisitions and swapchain replacement. The second goes
+through NativeSfs, including multiview render-pass and PRESENT-to-GENERAL layout
+translation. Bounded simulator runs reached the menu without XR lifecycle errors.
+Automatic campaign loading was unavailable (Unknown command 'loadGame').
+Automated menu interaction also failed in the ordinary WSI baseline. Campaign
+and physical-headset behavior remain unverified. Early release is covered by
+policy tests, not a local SteamVR headset run.
+
+Artifact: out/beta096/KHARVOX-0.96-SFS-Source-Ring-NVIDIA-test1.zip.
+Evidence: out/beta096/source-ring-ctest.log, source-ring-probe*.log,
+source-ring-baseline.log and the final packaged-runtime probe.
+Equal performance or complete equivalence with Vk3DVision has NOT been
+established. Comparable gameplay at matching per-eye resolution/quality and a
+working reference-provider baseline remain necessary to establish that claim.

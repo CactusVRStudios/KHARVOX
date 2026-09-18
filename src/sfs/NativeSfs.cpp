@@ -1,5 +1,6 @@
 #include "NativeSfs.h"
 #include "NativeDispatch.h"
+#include "SourceRing.h"
 #include "ShaderCompiler.h"
 #include "ShaderProfile.h"
 #include "PipelineIdentity.h"
@@ -32,6 +33,7 @@ struct CommandState {
 };
 struct State {
     VkDevice device{};NativeDispatch dispatch;
+    std::unique_ptr<SourceRing> sources;
     std::recursive_mutex mutex;
     Images images;
     std::unordered_map<VkSwapchainKHR,std::vector<VkImage>> swapchains;
@@ -121,8 +123,13 @@ VKAPI_ATTR VkResult VKAPI_CALL createView(VkDevice d,const VkImageViewCreateInfo
 RESULT_END}
 VKAPI_ATTR void VKAPI_CALL destroyView(VkDevice d,VkImageView view,const VkAllocationCallbacks* a){auto s=state(d);std::lock_guard<std::recursive_mutex> lock(s->mutex);auto eyes=s->eyeViews.find(view);if(eyes!=s->eyeViews.end()){for(auto eye:eyes->second)if(eye)FN(vkDestroyImageView)(d,eye,nullptr);s->eyeViews.erase(eyes);}s->viewInfos.erase(view);s->viewLayers.erase(view);FN(vkDestroyImageView)(d,view,a);}
 VKAPI_ATTR VkResult VKAPI_CALL createPass(VkDevice d,const VkRenderPassCreateInfo* i,const VkAllocationCallbacks* a,VkRenderPass* out){RESULT_BEGIN
-    RenderPassPlan plan(*i,true);if(!plan.valid())return VK_ERROR_FEATURE_NOT_PRESENT;
-    auto r=FN(vkCreateRenderPass)(d,i,a,out);if(r!=VK_SUCCESS)return r;VkRenderPass stereo{};r=FN(vkCreateRenderPass)(d,&plan.info(),a,&stereo);
+    auto input=*i;std::vector<VkAttachmentDescription> attachments;
+    if(s->sources&&i->attachmentCount){attachments.assign(i->pAttachments,i->pAttachments+i->attachmentCount);for(auto& attachment:attachments){
+        if(attachment.initialLayout==VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)attachment.initialLayout=VK_IMAGE_LAYOUT_GENERAL;
+        if(attachment.finalLayout==VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)attachment.finalLayout=VK_IMAGE_LAYOUT_GENERAL;
+    }input.pAttachments=attachments.data();}
+    RenderPassPlan plan(input,true);if(!plan.valid())return VK_ERROR_FEATURE_NOT_PRESENT;
+    auto r=FN(vkCreateRenderPass)(d,&input,a,out);if(r!=VK_SUCCESS)return r;VkRenderPass stereo{};r=FN(vkCreateRenderPass)(d,&plan.info(),a,&stereo);
     if(r!=VK_SUCCESS){FN(vkDestroyRenderPass)(d,*out,a);*out=VK_NULL_HANDLE;return r;}s->passes[*out]=stereo;return VK_SUCCESS;
 RESULT_END}
 VKAPI_ATTR void VKAPI_CALL destroyPass(VkDevice d,VkRenderPass pass,const VkAllocationCallbacks* a){auto s=state(d);std::lock_guard<std::recursive_mutex> lock(s->mutex);auto it=s->passes.find(pass);if(it!=s->passes.end()){FN(vkDestroyRenderPass)(d,it->second,a);s->passes.erase(it);}FN(vkDestroyRenderPass)(d,pass,a);}
@@ -240,7 +247,12 @@ VKAPI_ATTR void VKAPI_CALL dispatch(VkCommandBuffer cb,uint32_t x,uint32_t y,uin
 COMMAND_END}
 VkImageSubresourceRange range(const std::shared_ptr<State>& s,VkImage image,VkImageSubresourceRange value){if(s->images.layers(image)==2&&value.baseArrayLayer==0&&value.layerCount==1)value.layerCount=2;return value;}
 VKAPI_ATTR void VKAPI_CALL barriers(VkCommandBuffer cb,VkPipelineStageFlags src,VkPipelineStageFlags dst,VkDependencyFlags deps,uint32_t nm,const VkMemoryBarrier* m,uint32_t nb,const VkBufferMemoryBarrier* b,uint32_t ni,const VkImageMemoryBarrier* i){COMMAND_BEGIN
-    std::vector<VkImageMemoryBarrier> images;if(ni)images.assign(i,i+ni);for(auto& image:images)image.subresourceRange=range(s,image.image,image.subresourceRange);FN(vkCmdPipelineBarrier)(cb,src,dst,deps,nm,m,nb,b,ni,images.data());
+    std::vector<VkImageMemoryBarrier> images;if(ni)images.assign(i,i+ni);for(auto& image:images){image.subresourceRange=range(s,image.image,image.subresourceRange);
+        if(s->sources&&s->sources->ownsImage(image.image)){
+            if(image.oldLayout==VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)image.oldLayout=VK_IMAGE_LAYOUT_GENERAL;
+            if(image.newLayout==VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)image.newLayout=VK_IMAGE_LAYOUT_GENERAL;
+        }
+    }FN(vkCmdPipelineBarrier)(cb,src,dst,deps,nm,m,nb,b,ni,images.data());
 COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL clearColor(VkCommandBuffer cb,VkImage image,VkImageLayout layout,const VkClearColorValue* value,uint32_t count,const VkImageSubresourceRange* ranges){COMMAND_BEGIN
     std::vector<VkImageSubresourceRange> copies(ranges,ranges+count);for(auto& r:copies)r=range(s,image,r);FN(vkCmdClearColorImage)(cb,image,layout,value,count,copies.data());
@@ -271,7 +283,7 @@ bool initialize(VkDevice d,VkPhysicalDevice,PFN_vkGetDeviceProcAddr gdpa,const V
         {std::lock_guard<std::mutex> lock(devicesMutex);devices[dispatchKey(d)]=s;}note(vrEnabled()?"native SFS experimental OpenXR producer initialized":"native multiview probe initialized; fixed identity projection; NOT VR");return true;
     }catch(const std::exception& e){note(e.what());if(s->params)FN(vkDestroyBuffer)(d,s->params,nullptr);if(s->paramsMemory)FN(vkFreeMemory)(d,s->paramsMemory,nullptr);return false;}
 }
-void shutdown(VkDevice d){if(!nativeProbeEnabled())return;std::shared_ptr<State> s;try{s=state(d);}catch(const std::exception&){return;}std::lock_guard<std::recursive_mutex> lock(s->mutex);s->commands.clear();for(auto& entry:s->eyeViews)for(auto eye:entry.second)if(eye)FN(vkDestroyImageView)(d,eye,nullptr);s->eyeViews.clear();for(auto& module:s->compiled)FN(vkDestroyShaderModule)(d,module.second,nullptr);FN(vkDestroyBuffer)(d,s->params,nullptr);FN(vkFreeMemory)(d,s->paramsMemory,nullptr);std::lock_guard<std::mutex> devicesLock(devicesMutex);for(auto it=devices.begin();it!=devices.end();)if(it->second==s)it=devices.erase(it);else ++it;}
+void shutdown(VkDevice d){if(!nativeProbeEnabled())return;std::shared_ptr<State> s;try{s=state(d);}catch(const std::exception&){return;}std::lock_guard<std::recursive_mutex> lock(s->mutex);s->commands.clear();if(s->sources){if(FN(vkDeviceWaitIdle)(d)!=VK_SUCCESS)commandFailure("SFS source shutdown retirement failed");s->sources->clearAfterDeviceIdle();}for(auto& entry:s->eyeViews)for(auto eye:entry.second)if(eye)FN(vkDestroyImageView)(d,eye,nullptr);s->eyeViews.clear();for(auto& module:s->compiled)FN(vkDestroyShaderModule)(d,module.second,nullptr);FN(vkDestroyBuffer)(d,s->params,nullptr);FN(vkFreeMemory)(d,s->paramsMemory,nullptr);std::lock_guard<std::mutex> devicesLock(devicesMutex);for(auto it=devices.begin();it!=devices.end();)if(it->second==s)it=devices.erase(it);else ++it;}
 bool vrEnabled(){static const bool enabled=[] {char value[8]{};return GetEnvironmentVariableA("KHARVOX_SFS_NATIVE_VR",value,8)==1&&value[0]=='1';}();return nativeProbeEnabled()&&enabled;}
 bool eyeAttachmentView(VkDevice d,VkImageView original,uint32_t eye,VkImageView& result){
     result=VK_NULL_HANDLE;if(!nativeProbeEnabled()||eye>1)return false;
@@ -331,7 +343,7 @@ bool pair(VkDevice d,VkImage image,VkExtent2D extent,VkFormat format,native::Ste
     if(found==s->imagePoses.end()||s->images.layers(image)!=2)return false;
     const auto& pose=found->second;
     result={};result.pose=pose;result.generation=pose.serial;
-    for(uint32_t e=0;e<2;++e)result.eyes[e]={image,extent,format,VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,pose.views[e].pose,pose.views[e].fov,e,pose.serial};
+    for(uint32_t e=0;e<2;++e)result.eyes[e]={image,extent,format,sourceLayout(d,image,VK_IMAGE_LAYOUT_PRESENT_SRC_KHR),pose.views[e].pose,pose.views[e].fov,e,pose.serial};
     return true;
 }
 void swapchainImages(VkDevice d,VkSwapchainKHR chain,uint32_t count,const VkImage* images){
@@ -350,6 +362,23 @@ void swapchainDestroyed(VkDevice d,VkSwapchainKHR chain){
     auto found=s->swapchains.find(chain);if(found==s->swapchains.end())return;
     for(auto image:found->second){s->imagePoses.erase(image);s->images.destroy(d,image,nullptr,nullptr);}
     s->swapchains.erase(found);
+}
+bool sourceRingRequested(){static const bool enabled=[] {char value[8]{};return GetEnvironmentVariableA("KHARVOX_SFS_SOURCE_RING",value,8)==1&&value[0]=='1';}();return vrEnabled()&&enabled;}
+bool configureSourceRing(VkDevice d,PFN_vkGetDeviceProcAddr resolver,const VkPhysicalDeviceMemoryProperties& memory,VkQueue queue,void(*lock)(),void(*unlock)()){
+    auto s=state(d);std::lock_guard<std::recursive_mutex> guard(s->mutex);
+    auto sources=std::make_unique<SourceRing>();if(!sources->initialize(d,queue,resolver,memory,lock,unlock))return false;
+    s->sources=std::move(sources);note("source ring ACTIVE: application-owned stereo images (engine-requested count), GENERAL layout, same-device OpenXR, desktop WSI bypass");return true;
+}
+bool sourceRingActive(VkDevice d){if(!nativeProbeEnabled())return false;try{return bool(state(d)->sources);}catch(const std::exception&){return false;}}
+bool sourceSwapchain(VkDevice d,VkSwapchainKHR chain){return sourceRingActive(d)&&state(d)->sources->owns(chain);}
+VkResult createSourceSwapchain(VkDevice d,const VkSwapchainCreateInfoKHR& info,VkSwapchainKHR* output){return state(d)->sources->create(info,output);}
+VkResult sourceImages(VkDevice d,VkSwapchainKHR chain,uint32_t* count,VkImage* images){return state(d)->sources->enumerate(chain,count,images);}
+VkResult acquireSource(VkDevice d,VkSwapchainKHR chain,uint64_t timeout,VkSemaphore sem,VkFence fence,uint32_t* index){return state(d)->sources->acquire(chain,timeout,sem,fence,index);}
+VkResult presentSource(VkDevice d,VkQueue queue,const VkPresentInfoKHR& info,bool consumed){return state(d)->sources->present(queue,info,consumed);}
+void destroySourceSwapchain(VkDevice d,VkSwapchainKHR chain){if(state(d)->sources->destroy(chain)!=VK_SUCCESS)commandFailure("SFS source destruction retirement failed");}
+VkImageLayout sourceLayout(VkDevice d,VkImage image,VkImageLayout layout){
+    if(layout!=VK_IMAGE_LAYOUT_PRESENT_SRC_KHR||!sourceRingActive(d))return layout;
+    return state(d)->sources->ownsImage(image)?VK_IMAGE_LAYOUT_GENERAL:layout;
 }
 PFN_vkVoidFunction wrapProc(VkDevice d,const char* name,PFN_vkVoidFunction next){if(!nativeProbeEnabled()||!next)return next;
     try{state(d);}catch(const std::exception&){return next;}

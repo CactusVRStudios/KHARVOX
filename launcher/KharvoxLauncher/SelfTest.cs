@@ -1102,7 +1102,12 @@ internal static class SelfTest
             Require(start.EnvironmentVariables[option.Key] == option.Value, "SFS preserves shared VR option " + option.Key);
         Require(start.EnvironmentVariables["KHARVOX_SFS_NATIVE_VR"] == "1" &&
             start.EnvironmentVariables["KHARVOX_SFS_PROFILE"] == profile, "SFS child selects native producer and local profile");
+        Require(start.EnvironmentVariables["KHARVOX_SFS_SOURCE_RING"] == null, "standard SFS keeps WSI transport");
+        File.WriteAllText(Path.Combine(runtime, "sfs_source_ring"), "NVIDIA test");
+        VulkanSfs.Configure(start, runtime);
+        Require(start.EnvironmentVariables["KHARVOX_SFS_SOURCE_RING"] == "1", "source ring package selects owned images");
         VulkanSfs.ClearEnvironment(start);
+        Require(start.EnvironmentVariables["KHARVOX_SFS_SOURCE_RING"] == null, "AER cannot inherit source ring transport");
         Require(start.EnvironmentVariables["KHARVOX_SFS_NATIVE_VR"] == null &&
             start.EnvironmentVariables["KHARVOX_SFS_NATIVE_PROBE"] == null &&
             start.EnvironmentVariables["KHARVOX_SFS_PROFILE"] == null, "AER child cannot inherit SFS flags");

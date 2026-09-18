@@ -8,8 +8,11 @@ namespace KharvoxLauncher;
 internal static class VulkanSfs
 {
     internal const string Key = "VULKAN_SFS";
-    internal const string Label = "Vulkan Single-Frame Stereo (Test)";
-    internal const string Description = "Experimental same-frame stereo. Headset tracking, hand timing and full game compatibility are still being tested.";
+    internal static string Label => File.Exists(Path.Combine(AppContext.BaseDirectory, "sfs_source_ring"))
+        ? "Vulkan SFS Source Ring (NVIDIA Test)" : "Vulkan Single-Frame Stereo (Test)";
+    internal static string Description => File.Exists(Path.Combine(AppContext.BaseDirectory, "sfs_source_ring"))
+        ? "NVIDIA test: application-owned stereo images go directly to OpenXR. The DOOM desktop window stays black; use the headset for menus."
+        : "Experimental same-frame stereo. Headset tracking, hand timing and full game compatibility are still being tested.";
     internal const string Blocker = "This package does not contain a complete native Vulkan SFS test build. Use the prepared 0.96 native test package or select AER.";
 
     internal static void EnsureAvailable(string? runtime = null)
@@ -42,7 +45,8 @@ internal static class VulkanSfs
     internal static void ClearEnvironment(ProcessStartInfo start)
     {
         foreach (var name in new[] { "KHARVOX_VULKAN_SFS", "KHARVOX_SFS_NATIVE_PROBE",
-            "KHARVOX_SFS_NATIVE_VR", "KHARVOX_SFS_PROFILE", "KHARVOX_SFS_CAPTURE_ONCE" })
+            "KHARVOX_SFS_NATIVE_VR", "KHARVOX_SFS_PROFILE", "KHARVOX_SFS_CAPTURE_ONCE",
+            "KHARVOX_SFS_SOURCE_RING", "KHARVOX_SFS_PROFILE_TIMING" })
             start.EnvironmentVariables.Remove(name);
     }
 
@@ -52,6 +56,8 @@ internal static class VulkanSfs
         ClearEnvironment(start);
         start.EnvironmentVariables["KHARVOX_SFS_NATIVE_PROBE"] = "1";
         start.EnvironmentVariables["KHARVOX_SFS_NATIVE_VR"] = "1";
+        if (File.Exists(Path.Combine(runtime, "sfs_source_ring")))
+            start.EnvironmentVariables["KHARVOX_SFS_SOURCE_RING"] = "1";
         start.EnvironmentVariables["KHARVOX_SFS_PROFILE"] = Path.Combine(runtime, "sfs-profile");
     }
 }

@@ -7,6 +7,8 @@ param(
     [ValidateRange(0.1,4.0)][double]$RenderScale=0.5,
     [switch]$CaptureEyes,
     [switch]$ShowHands,
+    [string]$GameArguments,
+    [switch]$SourceRing,
     [switch]$NativeViewmodel
 )
 $ErrorActionPreference='Stop'
@@ -32,6 +34,7 @@ if(!(Get-ChildItem -LiteralPath $Profile -Filter '*.spv' -File | Select-Object -
 $settings=@{
     VK_LAYER_PATH=$Runtime; VK_INSTANCE_LAYERS='VK_LAYER_KHARVOX_OPENXR';
     KHARVOX_ENABLE_LAYER='1'; KHARVOX_SFS_NATIVE_PROBE='1'; KHARVOX_SFS_NATIVE_VR='1';
+    KHARVOX_SFS_SOURCE_RING=$(if($SourceRing){'1'}else{'0'});
     KHARVOX_SFS_PROFILE=$Profile; KHARVOX_EXTENDED_LOGGING='1'; KHARVOX_RENDER_SCALE=$RenderScale.ToString([Globalization.CultureInfo]::InvariantCulture);
     # Match the launcher's tracked weapon path by default. The earlier probe
     # left this unset, displaying DOOM's animated arms/viewmodel instead.
@@ -52,7 +55,7 @@ try{
         $saved[$key]=[Environment]::GetEnvironmentVariable($key,'Process')
         [Environment]::SetEnvironmentVariable($key,$settings[$key],'Process')
     }
-    $owned=Start-Process -FilePath $Game -WorkingDirectory (Split-Path $Game) -WindowStyle Hidden -PassThru -ArgumentList '+com_skipKeyPressOnLoadScreens 1 +r_renderAPI 1 +com_skipIntroVideo 1 +r_fullscreen 0 +r_mode 19 +r_windowWidth 960 +r_windowHeight 540'
+    $owned=Start-Process -FilePath $Game -WorkingDirectory (Split-Path $Game) -WindowStyle Hidden -PassThru -ArgumentList ('+com_skipKeyPressOnLoadScreens 1 +r_renderAPI 1 +com_skipIntroVideo 1 +r_fullscreen 0 +r_mode 19 +r_windowWidth 960 +r_windowHeight 540 ' + $GameArguments)
     Write-Output "Native Vulkan SFS test PID $($owned.Id); deadline $Seconds seconds; tracked weapon=$(!$NativeViewmodel); custom hands=$ShowHands. Load the campaign with Enter, then Space."
     if($owned.WaitForExit($Seconds*1000)){Write-Output "Game exit code: $($owned.ExitCode)"}
     else{Write-Output "Test deadline reached; stopping only owned PID $($owned.Id)."; $owned.Kill(); $owned.WaitForExit()}

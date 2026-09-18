@@ -11,6 +11,8 @@ int main(int argc,char** argv){try{
     options.computeStereo=kharvox::sfs::hasStereoStorageOutput(words);
     options.profileReplacement=argc>3&&std::string(argv[3])=="profile";
     options.screenSpaceUi=argc>4&&std::string(argv[4])=="ui";
+    options.monoscopicView=argc>3&&std::string(argv[3])=="mono";
+    if(options.monoscopicView)options.computeStereo=false;
     if(argc>3&&std::string(argv[3])=="profile")options.computeStereo=false;
     auto result=kharvox::sfs::compileStereoShader(words,options);
     std::ofstream output(argv[2],std::ios::binary);output.write(reinterpret_cast<const char*>(result.words.data()),result.words.size()*4);

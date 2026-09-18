@@ -145,6 +145,10 @@ int main(int argc,char** argv){try{
 #endif
     VkFramebufferCreateInfo fbInfo{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};fbInfo.renderPass=pass;fbInfo.attachmentCount=1;fbInfo.pAttachments=&view;fbInfo.width=fbInfo.height=8;fbInfo.layers=1;
     VkFramebuffer framebuffer{};ok(vkCreateFramebuffer(device,&fbInfo,nullptr,&framebuffer));
+#ifdef KHARVOX_SFS_TEST_LIGHTING
+    auto monoFbInfo=fbInfo;monoFbInfo.pAttachments=&leftAttachment;
+    VkFramebuffer monoFramebuffer{};ok(vkCreateFramebuffer(device,&monoFbInfo,nullptr,&monoFramebuffer));
+#endif
 
     struct Texture {VkImage image{};VkDeviceMemory memory{};VkImageView view{};uint32_t layers{};VkImageAspectFlags aspect{VK_IMAGE_ASPECT_COLOR_BIT};};
     auto makeTexture=[&](bool stereo){
@@ -209,6 +213,9 @@ int main(int argc,char** argv){try{
     VkGraphicsPipelineCreateInfo pi{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};pi.stageCount=2;pi.pStages=stages;pi.pVertexInputState=&vi;pi.pInputAssemblyState=&ia;pi.pViewportState=&vp;pi.pRasterizationState=&raster;pi.pMultisampleState=&ms;pi.pDepthStencilState=&depth;pi.pColorBlendState=&blend;pi.layout=pipelineLayout;pi.renderPass=pass;
     VkPipeline pipeline{};ok(vkCreateGraphicsPipelines(device,VK_NULL_HANDLE,1,&pi,nullptr,&pipeline));
     VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};bi.size=512;bi.usage=VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+#ifdef KHARVOX_SFS_TEST_LIGHTING
+    bi.size=768;
+#endif
     VkBuffer buffer{};ok(vkCreateBuffer(device,&bi,nullptr,&buffer));vkGetBufferMemoryRequirements(device,buffer,&req);
     alloc.allocationSize=req.size;alloc.memoryTypeIndex=memoryType(req.memoryTypeBits,VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     VkDeviceMemory bufferMemory{};ok(vkAllocateMemory(device,&alloc,nullptr,&bufferMemory));ok(vkBindBufferMemory(device,buffer,bufferMemory,0));
@@ -243,12 +250,29 @@ int main(int argc,char** argv){try{
     vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT|VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,1,&barrier,0,nullptr,0,nullptr);
     VkBufferImageCopy read{};read.imageSubresource={VK_IMAGE_ASPECT_DEPTH_BIT,0,0,2};read.imageExtent={8,8,1};
     vkCmdCopyImageToBuffer(command,image,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,buffer,1,&read);
+#ifdef KHARVOX_SFS_TEST_LIGHTING
+    // Same pipeline, one-layer auxiliary framebuffer: no HMD light/SSDO
+    // reconstruction must leak into this view. Preserve stereo readback too.
+    barrier.srcAccessMask=VK_ACCESS_TRANSFER_READ_BIT;barrier.dstAccessMask=VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT|VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,0,1,&barrier,0,nullptr,0,nullptr);
+    rp.framebuffer=monoFramebuffer;
+    vkCmdBeginRenderPass(command,&rp,VK_SUBPASS_CONTENTS_INLINE);
+    vkCmdDraw(command,3,1,0,0);vkCmdEndRenderPass(command);
+    barrier.srcAccessMask=VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;barrier.dstAccessMask=VK_ACCESS_TRANSFER_READ_BIT;
+    vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT|VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,1,&barrier,0,nullptr,0,nullptr);
+    read.bufferOffset=512;read.imageSubresource.layerCount=1;
+    vkCmdCopyImageToBuffer(command,image,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,buffer,1,&read);
+#endif
     barrier.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;barrier.dstAccessMask=VK_ACCESS_HOST_READ_BIT;
     vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&barrier,0,nullptr,0,nullptr);
     ok(vkEndCommandBuffer(command));VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};submit.commandBufferCount=1;submit.pCommandBuffers=&command;
     VkFenceCreateInfo fenceInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};VkFence fence{};ok(vkCreateFence(device,&fenceInfo,nullptr,&fence));
     ok(vkQueueSubmit(queue,1,&submit,fence));ok(vkWaitForFences(device,1,&fence,VK_TRUE,10000000000ull));
-    void* mapped{};ok(vkMapMemory(device,bufferMemory,0,512,0,&mapped));
+    void* mapped{};ok(vkMapMemory(device,bufferMemory,0,bi.size,0,&mapped));
+#ifdef KHARVOX_SFS_TEST_LIGHTING
+    for(unsigned pixel=128;pixel<192;++pixel)
+        check(std::abs(static_cast<float*>(mapped)[pixel]-.383f)<1e-6f,"Mono auxiliary view inherited stereo lighting/projection");
+#endif
     for(unsigned pixel=0;pixel<128;++pixel){float expected=pixel<64?.375f:.875f;
 #ifdef KHARVOX_SFS_TEST_AFFINE
         expected+=pixel<64?.032f:-.032f;
@@ -306,6 +330,9 @@ int main(int argc,char** argv){try{
 #endif
     for(auto t:{stereoTexture,monoTexture}){vkDestroyImageView(device,t.view,nullptr);registry.destroy(device,t.image,nullptr,vkDestroyImage);vkFreeMemory(device,t.memory,nullptr);}
     vkDestroyCommandPool(device,pool,nullptr);vkDestroyBuffer(device,buffer,nullptr);vkFreeMemory(device,bufferMemory,nullptr);
+#ifdef KHARVOX_SFS_TEST_LIGHTING
+    vkDestroyFramebuffer(device,monoFramebuffer,nullptr);
+#endif
     vkDestroyFramebuffer(device,framebuffer,nullptr);vkDestroyRenderPass(device,pass,nullptr);vkDestroyImageView(device,view,nullptr);
     registry.destroy(device,image,nullptr,vkDestroyImage);vkFreeMemory(device,imageMemory,nullptr);
 #ifdef KHARVOX_SFS_TEST_RUNTIME

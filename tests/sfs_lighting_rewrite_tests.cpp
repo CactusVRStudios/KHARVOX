@@ -14,6 +14,11 @@ int main(int argc,char** argv){try{
         ShaderCompileOptions options;options.vertexProjection=needsStereoProjection(words,false);check(options.vertexProjection);
         const auto compiled=compileStereoShader(words,options);
         check(compiled.vertexProjectionApplied==(i!=1)); // Atlas vs camera, same MVP member.
+        options.monoscopicView=true;
+        const auto mono=compileStereoShader(words,options);
+        check(!mono.vertexProjectionApplied&&!mono.screenSpaceUiApplied);
+        check(mono.glsl.find("khSfsProjection")==std::string::npos);
+        options.monoscopicView=false;
         options.screenSpaceUi=true;
         const auto ui=compileStereoShader(words,options);
         check(ui.screenSpaceUiApplied==(i==2));

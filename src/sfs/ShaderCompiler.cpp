@@ -128,7 +128,7 @@ CompiledShader compileStereoShader(const std::vector<uint32_t>& original,const S
     // must not shift the atlas. Recognize the same semantic form on other GPUs.
     const bool atlasPosition=source.find("vec2 atlasTilePos = vec2(in_VmtrTC.x, in_VmtrTC.y);")!=std::string::npos &&
         source.find("gl_Position = vec4((atlasTilePos * 2.0) - vec2(1.0), 0.0, 1.0);")!=std::string::npos;
-    const bool vertexProjection=request.vertexProjection&&!atlasPosition;
+    const bool vertexProjection=request.vertexProjection&&!atlasPosition&&!request.monoscopicView;
     result.vertexProjectionApplied=vertexProjection;
     // The 5d8a profile family also contains packed, virtual-textured world
     // geometry. Its near-camera depth pass must retain IPD even below the HUD
@@ -142,8 +142,8 @@ CompiledShader compileStereoShader(const std::vector<uint32_t>& original,const S
     static const std::regex displacement(R"(([A-Za-z_]\w*\.vk3d_params\[[^\]]+\]\.stereo)\.x \* \(([^()\n]+) - \1\.[xy]\))");
     source=std::regex_replace(source,displacement,"($1.x * ($2) + $1.z)");
     LightingCorrections lighting;
-    if(model==spv::ExecutionModelFragment || (model==spv::ExecutionModelGLCompute &&
-       (request.computeStereo || (request.profileReplacement && hasStereoStorageOutput(original)))))
+    if(!request.monoscopicView&&(model==spv::ExecutionModelFragment || (model==spv::ExecutionModelGLCompute &&
+       (request.computeStereo || (request.profileReplacement && hasStereoStorageOutput(original))))))
         lighting=correctDoomLighting(source);
     result.clusterCorrections=lighting.clusters;result.worldCorrections=lighting.worldPositions;
     result.refractionCorrections=lighting.refractions;

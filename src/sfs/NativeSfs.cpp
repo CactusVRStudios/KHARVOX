@@ -117,22 +117,23 @@ template<class T>std::shared_ptr<State> state(T handle){
 #define COMMAND_BEGIN try {CommandCpuTiming timing;auto s=state(cb);std::shared_lock<std::shared_mutex> lock(s->mutex);timing.acquired();
 #define COMMAND_END }catch(const std::exception& e){commandFailure(e.what());}
 
-VkShaderModule compiledModule(const std::shared_ptr<State>& s,VkShaderModule original,uint64_t variant,bool& stereoCompute,bool shadowProjection=false,int indirectEye=-1){
+VkShaderModule compiledModule(const std::shared_ptr<State>& s,VkShaderModule original,uint64_t variant,bool& stereoCompute,bool shadowProjection=false,int indirectEye=-1,bool monoView=false){
     const auto found=s->shaders.find(original);if(found==s->shaders.end())throw std::runtime_error("Untracked game shader module");
     const auto& words=found->second;const auto primary=profileHash(words.data(),uint32_t(words.size()*4));
     VkShaderStageFlagBits stage{};
     for(size_t i=5;i<words.size();){auto n=words[i]>>16;if(!n||n>words.size()-i)throw std::runtime_error("Invalid game SPIR-V");if((words[i]&65535)==15){stage=words[i+1]==0?VK_SHADER_STAGE_VERTEX_BIT:words[i+1]==4?VK_SHADER_STAGE_FRAGMENT_BIT:words[i+1]==5?VK_SHADER_STAGE_COMPUTE_BIT:VkShaderStageFlagBits(0);break;}i+=n;}
     if(!stage)throw std::runtime_error("Unsupported SFS shader execution model");
-    const auto replacement=loadProfileShader(s->profile,primary,variant,stage);
+    const auto replacement=monoView?ProfileShader{}:loadProfileShader(s->profile,primary,variant,stage);
     const auto& input=replacement?replacement.words:words;
     stereoCompute=hasStereoStorageOutput(input);
     const bool sharedShadow=shadowProjection&&!replacement&&stage==VK_SHADER_STAGE_VERTEX_BIT;
-    const auto key=shaderKey(primary)+"_"+shaderKey(variant)+(sharedShadow?"_shadow":"")+(indirectEye>=0?"_indirect"+std::to_string(indirectEye):"");
+    const auto key=shaderKey(primary)+"_"+shaderKey(variant)+(sharedShadow?"_shadow":"")+(indirectEye>=0?"_indirect"+std::to_string(indirectEye):"")+(monoView?"_mono":"");
     auto cached=s->compiled.find(key);if(cached!=s->compiled.end())return cached->second;
     ShaderCompileOptions options;options.computeStereo=stereoCompute&&!replacement;
     options.profileReplacement=bool(replacement);
     options.screenSpaceUi=doomUiShader(primary);
     options.indirectEye=indirectEye;
+    options.monoscopicView=monoView;
     options.vertexProjection=!sharedShadow&&needsStereoProjection(input,bool(replacement));
     auto shader=compileStereoShader(input,options);
     note("shader="+key+" stage="+std::to_string(stage)+" profile="+(replacement?"matched":"generic")+
@@ -241,11 +242,17 @@ VKAPI_ATTR VkResult VKAPI_CALL graphics(VkDevice d,VkPipelineCache cache,uint32_
                         +" op="+std::to_string(b.colorBlendOp)+" mask="+std::to_string(b.colorWriteMask));}
             }
         }
-        for(auto& stage:stages){const auto& code=s->shaders.at(stage.module);const auto variant=profileHash(code.data(),uint32_t(code.size()*4),seed);bool compute{};stage.module=compiledModule(s,stage.module,variant,compute,doomShadowProjection(info));}info.pStages=stages.data();
+        auto monoStages=stages;
+        for(size_t k=0;k<stages.size();++k){auto& stage=stages[k];const auto original=stage.module;
+            const auto& code=s->shaders.at(original);const auto variant=profileHash(code.data(),uint32_t(code.size()*4),seed);bool compute{};
+            stage.module=compiledModule(s,original,variant,compute,doomShadowProjection(info));
+            monoStages[k].module=compiledModule(s,original,variant,compute,doomShadowProjection(info),-1,true);
+        }
+        info.pStages=monoStages.data();
         // Derivative batch indices must not escape their original batch.
         if(info.flags&VK_PIPELINE_CREATE_DERIVATIVE_BIT)throw std::runtime_error("SFS derivative pipelines need batch remapping");
         auto r=FN(vkCreateGraphicsPipelines)(d,cache,1,&info,a,&out[j]);if(r!=VK_SUCCESS)return r;
-        info.renderPass=s->passes.at(info.renderPass);VkPipeline stereo{};r=FN(vkCreateGraphicsPipelines)(d,cache,1,&info,a,&stereo);if(r!=VK_SUCCESS){FN(vkDestroyPipeline)(d,out[j],a);out[j]=VK_NULL_HANDLE;return r;}s->stereoPipelines[out[j]]=stereo;
+        info.pStages=stages.data();info.renderPass=s->passes.at(info.renderPass);VkPipeline stereo{};r=FN(vkCreateGraphicsPipelines)(d,cache,1,&info,a,&stereo);if(r!=VK_SUCCESS){FN(vkDestroyPipeline)(d,out[j],a);out[j]=VK_NULL_HANDLE;return r;}s->stereoPipelines[out[j]]=stereo;
     }return VK_SUCCESS;
 RESULT_END}
 VKAPI_ATTR VkResult VKAPI_CALL compute(VkDevice d,VkPipelineCache cache,uint32_t count,const VkComputePipelineCreateInfo* infos,const VkAllocationCallbacks* a,VkPipeline* out){RESULT_BEGIN

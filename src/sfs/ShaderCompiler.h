@@ -12,6 +12,9 @@ struct ShaderCompileOptions {
     // Indirect group counts stay GPU-owned. A fixed-eye variant executes the
     // original dispatch grid once for its own layer, without rewriting counts.
     int indirectEye{-1};
+    // One-layer auxiliary views keep their own projection/reconstruction.
+    // Descriptor-array promotion is still required by the shared image layout.
+    bool monoscopicView{};
 };
 struct CompiledShader {
     std::vector<uint32_t> words;

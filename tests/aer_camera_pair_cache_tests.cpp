@@ -38,4 +38,10 @@ int main(){
     sample(game,90,false,90);
     cache.begin(aerSecondRenderEye,true);
     sample(game,90,false,90); // Mode change invalidates incomplete histories.
+    // SFS uses only phase zero: walking must capture each new body position,
+    // never freeze it for an alternating second CPU eye.
+    for(int frame=0;frame<4;++frame){
+        cache.begin(aerFirstRenderEye,true);
+        sample(game,100.f+frame,false,100.f+frame);
+    }
 }

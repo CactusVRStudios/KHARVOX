@@ -1,4 +1,5 @@
 #include "AerCameraPairCache.h"
+#include "../sfs/NativeSfs.h"
 #include "CyberdemonQuadPolicy.h"
 #include "DoomViewEffects.h"
 #include "../common/AerRenderOrder.h"
@@ -1916,7 +1917,10 @@ extern "C" void __fastcall patchCamera(void* rawContext, void* rawReturnAddress)
     sample.fovX = sourceFovX;
     sample.fovY = sourceFovY;
     sample.returnAddress = returnAddress;
-    if(gameplayCamera&&stereoEnabled&&eyeOffset!=0&&!kharvox::native::requested()){
+    // SFS produces both eyes from this centered CPU view. Its weapon still
+    // needs the same source-bound body/controller snapshot as AER.
+    const bool centeredSfsSource=kharvox::sfs::vrEnabled();
+    if(gameplayCamera&&stereoEnabled&&(eyeOffset!=0||centeredSfsSource)&&!kharvox::native::requested()){
         kharvox::AerWorldView observed;
         std::memcpy(observed.pose.data(),cameraBytes+0xC0,sizeof(observed.pose));
         std::memcpy(observed.fov.data(),cameraBytes+0x70,sizeof(observed.fov));
@@ -1925,7 +1929,7 @@ extern "C" void __fastcall patchCamera(void* rawContext, void* rawReturnAddress)
         observed.context=playerPhysicsOwner.load(std::memory_order_acquire);observed.poseId=renderHead.poseId;
         observed.present=KharvoxCameraCurrentPresentSerial();
         observed.domain=animatedSequenceActive.load(std::memory_order_acquire)?2u:0u;
-        observed.level=KharvoxCameraLevelTransitionGeneration();observed.eye=kharvox::aerEyeFromDoomOffset(eyeOffset);
+        observed.level=KharvoxCameraLevelTransitionGeneration();observed.eye=centeredSfsSource?0:kharvox::aerEyeFromDoomOffset(eyeOffset);
         aerWorldViewHistory.remember(observed);
         if(!observed.domain&&aerRenderPairEnabled.load(std::memory_order_acquire)){
             kharvox::AerWeaponCamera weaponCamera;

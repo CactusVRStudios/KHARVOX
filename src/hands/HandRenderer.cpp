@@ -850,7 +850,7 @@ bool HandRenderer::recordSceneIntegrated(VkCommandBuffer commandBuffer,
     impl_->sceneFramebuffers.push_back(framebuffer);
     if(privateDepth){
         copyHandSceneDepth(impl_->vk,commandBuffer,target.depthImage,privateDepth->target.image,
-            target.extent,handSceneDepthAspect(target.depthFormat),privateDepth->initialized);
+            target.extent,handSceneDepthAspect(target.depthFormat),privateDepth->initialized,target.depthArrayLayer);
         privateDepth->initialized=true;
     }
     VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};

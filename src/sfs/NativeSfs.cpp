@@ -40,6 +40,8 @@ struct State {
     std::unordered_map<std::string,VkShaderModule> compiled;
     std::unordered_map<VkRenderPass,VkRenderPass> passes;
     std::unordered_map<VkImageView,uint32_t> viewLayers;
+    std::unordered_map<VkImageView,VkImageViewCreateInfo> viewInfos;
+    std::unordered_map<VkImageView,std::array<VkImageView,2>> eyeViews;
     std::unordered_map<VkFramebuffer,bool> framebufferStereo;
     std::unordered_map<VkPipeline,VkPipeline> stereoPipelines;
     std::unordered_map<VkPipeline,bool> computeStereo;
@@ -99,13 +101,15 @@ VKAPI_ATTR VkResult VKAPI_CALL createShader(VkDevice d,const VkShaderModuleCreat
 RESULT_END}
 VKAPI_ATTR void VKAPI_CALL destroyShader(VkDevice d,VkShaderModule shader,const VkAllocationCallbacks* a){auto s=state(d);std::lock_guard<std::recursive_mutex> lock(s->mutex);s->shaders.erase(shader);FN(vkDestroyShaderModule)(d,shader,a);}
 VKAPI_ATTR VkResult VKAPI_CALL createImage(VkDevice d,const VkImageCreateInfo* i,const VkAllocationCallbacks* a,VkImage* out){RESULT_BEGIN
-    return s->images.create(d,*i,a,out,FN(vkCreateImage));
+    auto info=*i;
+    if(stereoImage(info)&&(info.usage&VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT))info.usage|=VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    return s->images.create(d,info,a,out,FN(vkCreateImage));
 RESULT_END}
 VKAPI_ATTR void VKAPI_CALL destroyImage(VkDevice d,VkImage image,const VkAllocationCallbacks* a){auto s=state(d);s->images.destroy(d,image,a,FN(vkDestroyImage));}
 VKAPI_ATTR VkResult VKAPI_CALL createView(VkDevice d,const VkImageViewCreateInfo* i,const VkAllocationCallbacks* a,VkImageView* out){RESULT_BEGIN
-    auto info=s->images.shaderViewInfo(*i);auto r=FN(vkCreateImageView)(d,&info,a,out);if(r==VK_SUCCESS)s->viewLayers[*out]=(s->images.layers(i->image)==2&&info.subresourceRange.baseArrayLayer==0&&info.subresourceRange.layerCount>=2)?2:1;return r;
+    auto info=s->images.shaderViewInfo(*i);auto r=FN(vkCreateImageView)(d,&info,a,out);if(r==VK_SUCCESS){s->viewLayers[*out]=(s->images.layers(i->image)==2&&info.subresourceRange.baseArrayLayer==0&&info.subresourceRange.layerCount>=2)?2:1;if(!info.pNext)s->viewInfos[*out]=info;}return r;
 RESULT_END}
-VKAPI_ATTR void VKAPI_CALL destroyView(VkDevice d,VkImageView view,const VkAllocationCallbacks* a){auto s=state(d);std::lock_guard<std::recursive_mutex> lock(s->mutex);s->viewLayers.erase(view);FN(vkDestroyImageView)(d,view,a);}
+VKAPI_ATTR void VKAPI_CALL destroyView(VkDevice d,VkImageView view,const VkAllocationCallbacks* a){auto s=state(d);std::lock_guard<std::recursive_mutex> lock(s->mutex);auto eyes=s->eyeViews.find(view);if(eyes!=s->eyeViews.end()){for(auto eye:eyes->second)if(eye)FN(vkDestroyImageView)(d,eye,nullptr);s->eyeViews.erase(eyes);}s->viewInfos.erase(view);s->viewLayers.erase(view);FN(vkDestroyImageView)(d,view,a);}
 VKAPI_ATTR VkResult VKAPI_CALL createPass(VkDevice d,const VkRenderPassCreateInfo* i,const VkAllocationCallbacks* a,VkRenderPass* out){RESULT_BEGIN
     RenderPassPlan plan(*i,true);if(!plan.valid())return VK_ERROR_FEATURE_NOT_PRESENT;
     auto r=FN(vkCreateRenderPass)(d,i,a,out);if(r!=VK_SUCCESS)return r;VkRenderPass stereo{};r=FN(vkCreateRenderPass)(d,&plan.info(),a,&stereo);
@@ -256,8 +260,19 @@ bool initialize(VkDevice d,VkPhysicalDevice,PFN_vkGetDeviceProcAddr gdpa,const V
         {std::lock_guard<std::mutex> lock(devicesMutex);devices[dispatchKey(d)]=s;}note(vrEnabled()?"native SFS experimental OpenXR producer initialized":"native multiview probe initialized; fixed identity projection; NOT VR");return true;
     }catch(const std::exception& e){note(e.what());if(s->params)FN(vkDestroyBuffer)(d,s->params,nullptr);if(s->paramsMemory)FN(vkFreeMemory)(d,s->paramsMemory,nullptr);return false;}
 }
-void shutdown(VkDevice d){if(!nativeProbeEnabled())return;std::shared_ptr<State> s;try{s=state(d);}catch(const std::exception&){return;}std::lock_guard<std::recursive_mutex> lock(s->mutex);s->commands.clear();for(auto& module:s->compiled)FN(vkDestroyShaderModule)(d,module.second,nullptr);FN(vkDestroyBuffer)(d,s->params,nullptr);FN(vkFreeMemory)(d,s->paramsMemory,nullptr);std::lock_guard<std::mutex> devicesLock(devicesMutex);for(auto it=devices.begin();it!=devices.end();)if(it->second==s)it=devices.erase(it);else ++it;}
+void shutdown(VkDevice d){if(!nativeProbeEnabled())return;std::shared_ptr<State> s;try{s=state(d);}catch(const std::exception&){return;}std::lock_guard<std::recursive_mutex> lock(s->mutex);s->commands.clear();for(auto& entry:s->eyeViews)for(auto eye:entry.second)if(eye)FN(vkDestroyImageView)(d,eye,nullptr);s->eyeViews.clear();for(auto& module:s->compiled)FN(vkDestroyShaderModule)(d,module.second,nullptr);FN(vkDestroyBuffer)(d,s->params,nullptr);FN(vkFreeMemory)(d,s->paramsMemory,nullptr);std::lock_guard<std::mutex> devicesLock(devicesMutex);for(auto it=devices.begin();it!=devices.end();)if(it->second==s)it=devices.erase(it);else ++it;}
 bool vrEnabled(){static const bool enabled=[] {char value[8]{};return GetEnvironmentVariableA("KHARVOX_SFS_NATIVE_VR",value,8)==1&&value[0]=='1';}();return nativeProbeEnabled()&&enabled;}
+bool eyeAttachmentView(VkDevice d,VkImageView original,uint32_t eye,VkImageView& result){
+    result=VK_NULL_HANDLE;if(!nativeProbeEnabled()||eye>1)return false;
+    auto s=state(d);std::lock_guard<std::recursive_mutex> lock(s->mutex);
+    auto found=s->viewInfos.find(original);if(found==s->viewInfos.end())return false;
+    auto info=found->second;
+    if(info.viewType!=VK_IMAGE_VIEW_TYPE_2D_ARRAY||info.subresourceRange.layerCount<2)return false;
+    auto& cached=s->eyeViews[original][eye];
+    if(!cached){info.viewType=VK_IMAGE_VIEW_TYPE_2D;info.subresourceRange.baseArrayLayer+=eye;info.subresourceRange.layerCount=1;
+        if(FN(vkCreateImageView)(d,&info,nullptr,&cached)!=VK_SUCCESS)return false;}
+    result=cached;return true;
+}
 void prepare(VkDevice d,const native::FramePose& pose,const XrFovf& source){
     if(!vrEnabled())return;auto s=state(d);std::lock_guard<std::recursive_mutex> lock(s->mutex);
     FrameUniforms uniforms;

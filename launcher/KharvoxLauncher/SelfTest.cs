@@ -1072,7 +1072,16 @@ internal static class SelfTest
         using (var writer = new BinaryWriter(File.Create(shader)))
             foreach (var word in new uint[] { 0x07230203, 0x00010000, 0, 1, 0 }) writer.Write(word);
         var start = new System.Diagnostics.ProcessStartInfo { UseShellExecute = false };
+        var sharedOptions = new Dictionary<string, string> {
+            ["KHARVOX_WEAPON_6DOF"] = "1", ["KHARVOX_SHOW_HANDS"] = "0",
+            ["KHARVOX_LEFT_HANDED"] = "1", ["KHARVOX_TURN_MODE"] = "snap",
+            ["KHARVOX_RENDER_SCALE"] = "0.75", ["KHARVOX_USE_FSR1"] = "1",
+            ["KHARVOX_LASER_SIGHT"] = "1", ["KHARVOX_VIRTUAL_GUNSTOCK"] = "1"
+        };
+        foreach (var option in sharedOptions) start.EnvironmentVariables[option.Key] = option.Value;
         VulkanSfs.Configure(start, runtime);
+        foreach (var option in sharedOptions)
+            Require(start.EnvironmentVariables[option.Key] == option.Value, "SFS preserves shared VR option " + option.Key);
         Require(start.EnvironmentVariables["KHARVOX_SFS_NATIVE_VR"] == "1" &&
             start.EnvironmentVariables["KHARVOX_SFS_PROFILE"] == profile, "SFS child selects native producer and local profile");
         VulkanSfs.ClearEnvironment(start);

@@ -1090,7 +1090,9 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateDevice(VkPhysicalDevice p,const VkDeviceC
           auto memoryProperties=reinterpret_cast<PFN_vkGetPhysicalDeviceMemoryProperties>(physicalDispatch.gipa(physicalDispatch.instance,"vkGetPhysicalDeviceMemoryProperties"));
           if(!memoryProperties)stopVulkanStartup("Native SFS memory properties unavailable");
           memoryProperties(p,&memory);logLine("[SFS] initializing native resource state");
-          if(!kharvox::sfs::initialize(*out,p,nextGdpa,memory))stopVulkanStartup("Native SFS probe initialization failed");
+          // Keep HUD, hand-depth and resource-lifetime observers in the chain.
+          // deviceProcBase forwards to the driver without re-entering SFS.
+          if(!kharvox::sfs::initialize(*out,p,deviceProcBase,memory))stopVulkanStartup("Native SFS probe initialization failed");
       }
       KharvoxXRSetQueueAccessCallbacks(lockQueueAccess,unlockQueueAccess);KharvoxXRSetDevice(p,*out,d.xr);kharvox::native::setQueueAccessCallbacks(lockQueueAccess,unlockQueueAccess);kharvox::native::setDevice(physicalDispatch.instance,p,*out,nextGdpa,nextGipa);}else {logLine("[VK-STARTUP] device creation failed result="+std::to_string(r),true);stopVulkanStartup("Vulkan/OpenXR device initialization failed. Ensure DOOM and the VR runtime use the same GPU. See the KHARVOX log in %TEMP%.");}return r;
 }

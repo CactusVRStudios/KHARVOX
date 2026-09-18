@@ -581,7 +581,7 @@ internal static class KharvoxRunner
                     (steamVrLayerIsolation ? Inv(steamNativeSourceScale) + "%" : "inactive") +
                 " steamVrAsyncReprojection=" + steamVrAsyncReprojection +
                 " externalOpenXrApiLayer=" + (steamVrLayerIsolation ? "disabled" : "runtime-default") +
-                " doomAsyncCompute=disabled renderer=" + (nativeStereoEnabled ? "NATIVE (experimental; headset unvalidated)" : "AER") +
+                " doomAsyncCompute=disabled renderer=" + (sfsEnabled ? "VULKAN_SFS" : nativeStereoEnabled ? "NATIVE (experimental; headset unvalidated)" : "AER") +
                 " fsr1=" + (fsr1Enabled ? "enabled" : "disabled") + Environment.NewLine +
                 "[KHARVOX][LAUNCHER] gameArguments=" + psi.Arguments + Environment.NewLine);
             if (nativeValidationLog is not null)

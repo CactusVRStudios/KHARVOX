@@ -108,6 +108,14 @@ int main(int argc,char** argv){try{
     original.subresourceRange={VK_IMAGE_ASPECT_DEPTH_BIT,0,1,0,1};
     auto transformed=registry.viewInfo(original);
     VkImageView view{};ok(vkCreateImageView(device,&transformed,nullptr,&view));
+#ifdef KHARVOX_SFS_TEST_RUNTIME
+    VkImageView leftAttachment{},rightAttachment{},cachedAttachment{};
+    check(kharvox::sfs::eyeAttachmentView(device,view,0,leftAttachment),"Left hand attachment unavailable");
+    check(kharvox::sfs::eyeAttachmentView(device,view,1,rightAttachment),"Right hand attachment unavailable");
+    check(leftAttachment!=rightAttachment&&leftAttachment!=view&&rightAttachment!=view,"Eye attachment views alias");
+    check(kharvox::sfs::eyeAttachmentView(device,view,1,cachedAttachment)&&cachedAttachment==rightAttachment,"Eye attachment cache unstable");
+    check(!kharvox::sfs::eyeAttachmentView(device,view,2,cachedAttachment),"Invalid attachment eye accepted");
+#endif
     VkAttachmentDescription attachment{};attachment.format=input.format;attachment.samples=VK_SAMPLE_COUNT_1_BIT;
     attachment.loadOp=VK_ATTACHMENT_LOAD_OP_CLEAR;attachment.storeOp=VK_ATTACHMENT_STORE_OP_STORE;
     attachment.initialLayout=VK_IMAGE_LAYOUT_UNDEFINED;attachment.finalLayout=VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;

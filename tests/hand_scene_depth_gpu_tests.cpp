@@ -9,6 +9,10 @@
 
 static void check(bool value,const char* reason){if(!value)throw std::runtime_error(reason);}
 static void ok(VkResult value){check(value==VK_SUCCESS,"Vulkan operation failed");}
+#ifndef KHARVOX_TEST_DEPTH_LAYER
+#define KHARVOX_TEST_DEPTH_LAYER 0
+#endif
+constexpr uint32_t sourceLayer=KHARVOX_TEST_DEPTH_LAYER;
 int main(){try{
     auto loader=LoadLibraryW(L"vulkan-1.dll");check(loader,"Vulkan loader unavailable");
     auto gipa=reinterpret_cast<PFN_vkGetInstanceProcAddr>(GetProcAddress(loader,"vkGetInstanceProcAddr"));
@@ -50,7 +54,7 @@ int main(){try{
     std::array<VkImage,2> images{};std::array<VkDeviceMemory,2> imageMemory{};
     for(size_t i=0;i<images.size();++i){
         VkImageCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};ci.imageType=VK_IMAGE_TYPE_2D;ci.format=VK_FORMAT_D24_UNORM_S8_UINT;
-        ci.extent={8,8,1};ci.mipLevels=1;ci.arrayLayers=1;ci.samples=VK_SAMPLE_COUNT_1_BIT;ci.tiling=VK_IMAGE_TILING_OPTIMAL;
+        ci.extent={8,8,1};ci.mipLevels=1;ci.arrayLayers=i==0?sourceLayer+1:1;ci.samples=VK_SAMPLE_COUNT_1_BIT;ci.tiling=VK_IMAGE_TILING_OPTIMAL;
         ci.usage=VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT|VK_IMAGE_USAGE_TRANSFER_SRC_BIT|VK_IMAGE_USAGE_TRANSFER_DST_BIT;
         ok(vkCreateImage(device,&ci,nullptr,&images[i]));VkMemoryRequirements req{};vkGetImageMemoryRequirements(device,images[i],&req);
         VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};ai.allocationSize=req.size;ai.memoryTypeIndex=memoryType(req.memoryTypeBits,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
@@ -67,11 +71,14 @@ int main(){try{
     const VkImageSubresourceRange range{VK_IMAGE_ASPECT_DEPTH_BIT|VK_IMAGE_ASPECT_STENCIL_BIT,0,1,0,1};
     auto transition=[&](VkImage image,VkImageLayout from,VkImageLayout to){
         VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};b.image=image;b.oldLayout=from;b.newLayout=to;b.subresourceRange=range;
+        if(image==images[0])b.subresourceRange.layerCount=sourceLayer+1;
         b.srcQueueFamilyIndex=b.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;b.srcAccessMask=from==VK_IMAGE_LAYOUT_UNDEFINED?0:VK_ACCESS_MEMORY_READ_BIT|VK_ACCESS_MEMORY_WRITE_BIT;b.dstAccessMask=VK_ACCESS_MEMORY_READ_BIT|VK_ACCESS_MEMORY_WRITE_BIT;
         vkCmdPipelineBarrier(cb,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,0,0,nullptr,0,nullptr,1,&b);
     };
     transition(images[0],VK_IMAGE_LAYOUT_UNDEFINED,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-    VkClearDepthStencilValue clear{0.25f,0x5a};vkCmdClearDepthStencilImage(cb,images[0],VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,&clear,1,&range);
+    VkClearDepthStencilValue clear{0.75f,0x33};vkCmdClearDepthStencilImage(cb,images[0],VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,&clear,1,&range);
+    auto sourceRange=range;sourceRange.baseArrayLayer=sourceLayer;
+    clear={0.25f,0x5a};vkCmdClearDepthStencilImage(cb,images[0],VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,&clear,1,&sourceRange);
     transition(images[0],VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
     for(uint32_t iteration=0;iteration<2;++iteration){
         if(iteration){
@@ -79,10 +86,11 @@ int main(){try{
             VkClearDepthStencilValue overwrite{0.75f,0};vkCmdClearDepthStencilImage(cb,images[1],VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,&overwrite,1,&range);
             transition(images[1],VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
         }
-        kharvox::hands::copyHandSceneDepth(dispatch,cb,images[0],images[1],{8,8},range.aspectMask,iteration!=0);
+        kharvox::hands::copyHandSceneDepth(dispatch,cb,images[0],images[1],{8,8},range.aspectMask,iteration!=0,sourceLayer);
         for(uint32_t i=0;i<2;++i){
             transition(images[i],VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
             VkBufferImageCopy copy{};copy.bufferOffset=iteration*groupBytes+i*pixels*4;copy.imageSubresource={VK_IMAGE_ASPECT_DEPTH_BIT,0,0,1};copy.imageExtent={8,8,1};
+            if(i==0)copy.imageSubresource.baseArrayLayer=sourceLayer;
             vkCmdCopyImageToBuffer(cb,images[i],VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,buffer,1,&copy);
             if(i==0){copy.bufferOffset=iteration*groupBytes+pixels*8;copy.imageSubresource.aspectMask=VK_IMAGE_ASPECT_STENCIL_BIT;vkCmdCopyImageToBuffer(cb,images[i],VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,buffer,1,&copy);}
             transition(images[i],VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);

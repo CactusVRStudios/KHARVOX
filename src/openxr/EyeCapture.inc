@@ -36,7 +36,7 @@ void releaseEyeSource(EyeSourceCapture& c) {
     c={};
 }
 bool recordEyeSource(int eye,VkImage source,VkImageLayout layout,VkExtent2D extent,
-                     VkFormat format,uint64_t revision) {
+                     VkFormat format,uint64_t revision,uint32_t sourceLayer=0) {
     if(!eyeCapture.requested||GetTickCount64()<eyeCapture.due)return false;
     auto& c=eyeSourceCapture[eye];
     if(c.valid&&!c.completed)return false;
@@ -66,13 +66,13 @@ bool recordEyeSource(int eye,VkImage source,VkImageLayout layout,VkExtent2D exte
     c.extent=extent;c.bytes=bytes;c.format=format;c.revision=revision;c.frame=s.frame;
     c.generation=KharvoxCameraLevelTransitionGeneration();c.cache=s.stereoCache[eye];
     c.aa=readCaptureAa();c.completed=false;c.valid=true;
-    barrier(s.commandBuffer,source,layout,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-        VK_ACCESS_MEMORY_READ_BIT|VK_ACCESS_MEMORY_WRITE_BIT,VK_ACCESS_TRANSFER_READ_BIT);
-    VkBufferImageCopy region{};region.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};
+    barrierAspect(s.commandBuffer,source,layout,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        VK_ACCESS_MEMORY_READ_BIT|VK_ACCESS_MEMORY_WRITE_BIT,VK_ACCESS_TRANSFER_READ_BIT,VK_IMAGE_ASPECT_COLOR_BIT,sourceLayer);
+    VkBufferImageCopy region{};region.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,sourceLayer,1};
     region.imageExtent={extent.width,extent.height,1};
     copy(s.commandBuffer,source,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,c.buffer,1,&region);
-    barrier(s.commandBuffer,source,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,layout,
-        VK_ACCESS_TRANSFER_READ_BIT,VK_ACCESS_MEMORY_READ_BIT|VK_ACCESS_MEMORY_WRITE_BIT);
+    barrierAspect(s.commandBuffer,source,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,layout,
+        VK_ACCESS_TRANSFER_READ_BIT,VK_ACCESS_MEMORY_READ_BIT|VK_ACCESS_MEMORY_WRITE_BIT,VK_IMAGE_ASPECT_COLOR_BIT,sourceLayer);
     VkMemoryBarrier host{VK_STRUCTURE_TYPE_MEMORY_BARRIER};host.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;host.dstAccessMask=VK_ACCESS_HOST_READ_BIT;
     s.vk.cmdPipelineBarrier(s.commandBuffer,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&host,0,nullptr,0,nullptr);
     return true;

@@ -4112,10 +4112,17 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
         kharvox::native::FramePose next{};next.serial=s.frame+1;
         next.displayTime=frame.predictedDisplayTime;next.head=locatedMonoPose;
         next.views=s.views;next.worldScale=s.worldScale;
+        next.bodyTracking=laserBodyTrackingTransform();
         next.exactProjectionCrop=s.runtimeKind==kharvox::OpenXRRuntimeKind::MetaOculus;
         next.cinematic=!s.quadMode&&s.immersiveCinematicActive&&KharvoxCameraWorldActive();
         next.scripted=!s.quadMode&&!next.cinematic&&s.nativeAdaptiveParticipantGuardActive&&KharvoxCameraWorldActive();
         next.gameplay=!s.quadMode&&!next.cinematic&&!next.scripted&&KharvoxCameraGameplayActive()&&!KharvoxCameraCutsceneActive();
+        // Snapshot the inputs before recording the source ID into the SFS
+        // frame. Refresh phase zero each frame; there is no second CPU eye.
+        if(sfsBackend){
+            KharvoxCameraSetAerRenderPair(kharvox::aerFirstRenderEye,next.gameplay);
+            KharvoxWeaponSetAerRenderPair(kharvox::aerFirstRenderEye,next.gameplay,KharvoxCameraDiagnosticPoseId());
+        }
         next.source={KharvoxCameraDiagnosticPoseId(),KharvoxCameraLevelTransitionGeneration(),
             kharvox::native::sceneDomain(s.quadMode,next.cinematic,next.scripted,next.gameplay)};
         next.weaponKind=static_cast<uint32_t>(KharvoxWeaponCurrentKind());
@@ -4145,7 +4152,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
             else if(next.cinematic&&s.immersiveCinematicLayerPositionHeld)next.head.position=s.immersiveCinematicLayerPosition;
             kharvox::sfs::prepare(s.device,next,locatedImmersiveRenderFov);
         }else kharvox::native::prepare(next);
-        KharvoxCameraSetAerRenderPair(0,false);KharvoxWeaponSetAerRenderPair(0,false);
+        if(!sfsBackend){KharvoxCameraSetAerRenderPair(0,false);KharvoxWeaponSetAerRenderPair(0,false);}
         KharvoxCameraSetStereoEye(0,(locatedImmersiveRenderFov.angleRight-locatedImmersiveRenderFov.angleLeft)*radiansToDegrees,
             (locatedImmersiveRenderFov.angleUp-locatedImmersiveRenderFov.angleDown)*radiansToDegrees,0,0,
             kharvox::native::renderScene(s.quadMode,next.gameplay,next.cinematic||next.scripted));
@@ -4646,23 +4653,29 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
     if(s.laserSightEnabled&&handGameplayActive&&laserWeaponAllowed(KharvoxWeaponCurrentKind())
         &&(!aerSourceMode||aerSourceQualified)
         &&renderedLaserPoseInTrackingSpace(laserOrigin,laserDirection,
-            aerSourceQualified?aerCapturedInput.laserBodyTracking:laserBodyTrackingTransform(),
-            aerSourceQualified?aerSourceObservation.key.poseId:0,
-            aerSourceQualified?aerSourceObservation.key.eye:-1)){
+            aerSourceQualified?aerCapturedInput.laserBodyTracking:sfsBackend&&nativeFrameValid?nativeFrame.pose.bodyTracking:laserBodyTrackingTransform(),
+            aerSourceQualified?aerSourceObservation.key.poseId:sfsBackend&&nativeFrameValid?nativeFrame.pose.source.poseId:0,
+            aerSourceQualified?aerSourceObservation.key.eye:sfsBackend&&nativeFrameValid?0:-1)){
         const auto up=std::fabs(laserDirection.y)>.9f?XrVector3f{1,0,0}:XrVector3f{0,1,0};
         const auto rotation=quaternionFromForwardUp(laserDirection,up);
         sceneLaser={{laserOrigin.x,laserOrigin.y,laserOrigin.z},
             {rotation.x,rotation.y,rotation.z,rotation.w},true};
     }
     bool sourceHasIntegratedHands=false;
-    auto integrateSceneHands=[&](VkImage source,VkImageLayout oldLayout,const XrPosef& sourcePose,const XrFovf& sourceFov){
+    auto integrateSceneHands=[&](VkImage source,VkImageLayout oldLayout,const XrPosef& sourcePose,const XrFovf& sourceFov,uint32_t sourceLayer=0){
         kharvox::hands::HandSceneTarget handSceneTarget{};
         kharvox::hands::HandSceneTarget sourceTarget{};
-        const bool nativeRight=nativeBackend&&nativeFrameValid&&source==nativeFrame.eyes[1].image;
+        const bool nativeRight=!sfsBackend&&nativeBackend&&nativeFrameValid&&source==nativeFrame.eyes[1].image;
         const bool available=gameImages.select([&]{
             if(!kharvox::hands::handSceneTargetForColor(nativeRight?nativeFrame.eyes[0].image:source,
                 it->second.extent,sourceTarget))return false;
             handSceneTarget=sourceTarget;
+            if(sfsBackend){
+                handSceneTarget.copyDepthForHands=true;
+                handSceneTarget.depthArrayLayer=sourceLayer;
+                return kharvox::sfs::eyeAttachmentView(s.device,sourceTarget.colorView,sourceLayer,handSceneTarget.colorView)
+                    &&kharvox::sfs::eyeAttachmentView(s.device,sourceTarget.depthView,sourceLayer,handSceneTarget.depthView);
+            }
             return !nativeRight||kharvox::native::handSceneTarget(nativeFrame,sourceTarget,handSceneTarget);
         },[&]{return std::array{
                 kharvox::GameImageLifetime::key(sourceTarget.colorImage),
@@ -4680,21 +4693,21 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
                 log("[LASER] scene depth unavailable; beam withheld (no overlay fallback)");
                 laserDepthMissingLogged=true;
             }
-            barrier(s.commandBuffer,source,oldLayout,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                VK_ACCESS_MEMORY_WRITE_BIT,VK_ACCESS_TRANSFER_READ_BIT);
+            barrierAspect(s.commandBuffer,source,oldLayout,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                VK_ACCESS_MEMORY_WRITE_BIT,VK_ACCESS_TRANSFER_READ_BIT,VK_IMAGE_ASPECT_COLOR_BIT,sourceLayer);
             return false;
         }
-        barrier(s.commandBuffer,source,oldLayout,
+        barrierAspect(s.commandBuffer,source,oldLayout,
             VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
             VK_ACCESS_MEMORY_READ_BIT|VK_ACCESS_MEMORY_WRITE_BIT,
-            VK_ACCESS_COLOR_ATTACHMENT_READ_BIT|VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+            VK_ACCESS_COLOR_ATTACHMENT_READ_BIT|VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,VK_IMAGE_ASPECT_COLOR_BIT,sourceLayer);
         const VkImageAspectFlags depthAspect=
             kharvox::hands::handSceneDepthAspect(handSceneTarget.depthFormat);
         barrierAspect(s.commandBuffer,handSceneTarget.depthImage,
             handSceneTarget.depthLayout,VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
             VK_ACCESS_MEMORY_READ_BIT|VK_ACCESS_MEMORY_WRITE_BIT,
             VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT|VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-            depthAspect);
+            depthAspect,handSceneTarget.depthArrayLayer);
         kharvox::hands::HandEyeView sourceHandView{};
         sourceHandView.pose.position[0]=sourcePose.position.x;
         sourceHandView.pose.position[1]=sourcePose.position.y;
@@ -4727,10 +4740,10 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
             handSceneTarget.depthLayout,
             VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT|VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
             VK_ACCESS_MEMORY_READ_BIT|VK_ACCESS_MEMORY_WRITE_BIT,
-            depthAspect);
-        barrier(s.commandBuffer,source,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            depthAspect,handSceneTarget.depthArrayLayer);
+        barrierAspect(s.commandBuffer,source,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-            VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,VK_ACCESS_TRANSFER_READ_BIT);
+            VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,VK_ACCESS_TRANSFER_READ_BIT,VK_IMAGE_ASPECT_COLOR_BIT,sourceLayer);
         return integrated&&!freshAerHands;
     };
     const bool sceneIntegrationEligible=(!freshAerHands||sceneLaser.valid)&&handGameplayActive&&stereoNow
@@ -4764,13 +4777,13 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
             VkImage eyeSource=src;
             if(nativeBackend&&nativeFrameValid){
                 eyeSource=nativeFrame.eyes[e].image;
-                if(!sfsBackend&&!s.quadMode)rawEyeCaptureRecorded[e]=recordEyeSource(e,eyeSource,
+                if(!s.quadMode)rawEyeCaptureRecorded[e]=recordEyeSource(e,eyeSource,
                     e==0?VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:nativeFrame.eyes[e].layout,
-                    eyeSourceExtent,nativeFrame.eyes[e].format,s.stereoCacheRevision[e]+1);
-                if(!sfsBackend&&handGameplayActive&&s.showHands){
+                    eyeSourceExtent,nativeFrame.eyes[e].format,s.stereoCacheRevision[e]+1,sfsBackend?uint32_t(e):0);
+                if(handGameplayActive&&(s.showHands||sceneLaser.valid)){
                     integratedNativeHands[e]=integrateSceneHands(eyeSource,
                         e==0?VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:nativeFrame.eyes[e].layout,
-                        nativeFrame.eyes[e].pose,nativeFrame.eyes[e].fov);
+                        nativeFrame.eyes[e].pose,nativeFrame.eyes[e].fov,sfsBackend?uint32_t(e):0);
                 }else if(e==1)barrierAspect(s.commandBuffer,eyeSource,nativeFrame.eyes[e].layout,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,VK_ACCESS_MEMORY_WRITE_BIT,VK_ACCESS_TRANSFER_READ_BIT,VK_IMAGE_ASPECT_COLOR_BIT,sfsBackend?1:0);
             }
             s.vk.cmdCopyImage(s.commandBuffer,eyeSource,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,cache,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,1,&cacheCopy);
@@ -5639,8 +5652,10 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
         &&s.steamXrAerCaptureValid;
     const bool synchronizeAerPair=synchronizeAnimatedAerPair
         ||synchronizeSteamXrAerPair;
-    KharvoxCameraSetAerRenderPair(s.renderEye,synchronizeAerPair);
-    KharvoxWeaponSetAerRenderPair(s.renderEye,synchronizeAerPair,KharvoxCameraDiagnosticPoseId());
+    if(!sfsBackend){
+        KharvoxCameraSetAerRenderPair(s.renderEye,synchronizeAerPair);
+        KharvoxWeaponSetAerRenderPair(s.renderEye,synchronizeAerPair,KharvoxCameraDiagnosticPoseId());
+    }
     if(s.alternatingStereo&&!nativePackedStereo&&s.programmedEyeViewValid[s.renderEye]){
         poseTraceProgrammedIds[s.renderEye]=KharvoxCameraDiagnosticPoseId();
         const auto inputPoseId=poseTraceProgrammedIds[s.renderEye];

@@ -7,7 +7,7 @@
 #include <cstdint>
 namespace kharvox::hands { struct HandSceneTarget; }
 namespace kharvox::native {
-struct FramePose { FrameSourceIdentity source{}; uint32_t weaponKind{}; bool leftHanded{},twoHanded{},weaponControlActive{}; uint64_t serial{}; XrTime displayTime{}; XrPosef head{}; std::array<XrPosef,2> controllers{}; std::array<XrView,2> views{}; std::array<XrFovf,2> submitFov{}; bool exactProjectionCrop{}; std::array<bool,2> controllersValid{}; float worldScale{39.37f}; bool gameplay{}; bool cinematic{}; bool scripted{}; bool viewSpace{}; };
+struct FramePose { FrameSourceIdentity source{}; uint32_t weaponKind{}; bool leftHanded{},twoHanded{},weaponControlActive{}; uint64_t serial{}; XrTime displayTime{}; XrPosef head{}; XrPosef bodyTracking{}; std::array<XrPosef,2> controllers{}; std::array<XrView,2> views{}; std::array<XrFovf,2> submitFov{}; bool exactProjectionCrop{}; std::array<bool,2> controllersValid{}; float worldScale{39.37f}; bool gameplay{}; bool cinematic{}; bool scripted{}; bool viewSpace{}; };
 struct EyeImage { VkImage image{}; VkExtent2D extent{}; VkFormat format{}; VkImageLayout layout{VK_IMAGE_LAYOUT_UNDEFINED}; XrPosef pose{}; XrFovf fov{}; uint32_t eye{}; uint64_t frame{}; };
 // Borrowed until the next owner Present. Both images are GPU writes from the
 // same FrameRoot, except the explicit left-only diagnostic (right is null).

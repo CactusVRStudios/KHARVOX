@@ -82,9 +82,9 @@ AttachmentInfo attachmentInfo(const Attachment& attachment) {
 bool handSceneTrackingEnabled() {
     static const bool enabled = [] {
         char value[8]{};
-        return GetEnvironmentVariableA("KHARVOX_SHOW_HANDS", value,
-                                       sizeof(value)) > 0 &&
-               !strcmp(value, "1");
+        const bool hands=GetEnvironmentVariableA("KHARVOX_SHOW_HANDS", value,
+                                       sizeof(value)) > 0 && !strcmp(value, "1");
+        return hands||(GetEnvironmentVariableA("KHARVOX_LASER_SIGHT",value,sizeof(value))>0&&!strcmp(value,"1"));
     }();
     return enabled;
 }

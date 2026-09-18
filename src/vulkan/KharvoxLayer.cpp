@@ -1,4 +1,5 @@
 #include "../common/VulkanSfs.h"
+#include "../sfs/NativeSfs.h"
 #include "../sfs/ShaderCapture.h"
 #include "../common/RuntimeLog.h"
 #include "../common/StallDiagnostics.h"
@@ -860,6 +861,7 @@ static PFN_vkVoidFunction deviceProcBase(VkDevice d,const char* n){
 VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(VkDevice d,const char* n){
     auto next=deviceProcBase(d,n);
     if(!isDoomProcess()||!n||deviceState(key(d)).runtimeAuxiliary)return next;
+    next=kharvox::sfs::wrapProc(d,n,next);
     next=kharvox::native::wrapProc(n,next);
     if(next&&!std::strcmp(n,"vkDestroyImage"))return kharvox::GameImageRetirementEntry<VkImage>::wrap(next);
     if(next&&!std::strcmp(n,"vkDestroyImageView"))return kharvox::GameImageRetirementEntry<VkImageView>::wrap(next);
@@ -916,7 +918,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateInstance(const VkInstanceCreateInfo* ci,c
     }
     KharvoxXRInitialize(VK_NULL_HANDLE);auto required=KharvoxXRRequiredInstanceExtensions();std::vector<const char*> enabled;enabled.reserve(ci->enabledExtensionCount+required.size()+1);for(uint32_t i=0;i<ci->enabledExtensionCount;i++)enabled.push_back(ci->ppEnabledExtensionNames[i]);auto addExtension=[&](const char*name,const char*reason){for(auto*e:enabled)if(!std::strcmp(e,name))return;enabled.push_back(name);logLine(std::string("Enabling ")+reason+" instance extension "+name);};for(auto&name:required)addExtension(name.c_str(),"XR");
     // Runtime auxiliary instances returned above retain untouched WSI.
-    bool independent=!kharvox::vulkanSfsEnabled();
+    bool independent=!kharvox::vulkanSfsEnabled()&&!kharvox::sfs::nativeProbeEnabled();
     bool coreSurface=false;
     VkExtent2D sourceExtent{};
     if(independent){
@@ -1055,6 +1057,20 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateDevice(VkPhysicalDevice p,const VkDeviceC
     if(physicalDispatch.sourceExtent.width>startupProperties.limits.maxImageDimension2D ||
        physicalDispatch.sourceExtent.height>startupProperties.limits.maxImageDimension2D)
         stopVulkanStartup("Render Scale is too high for this GPU's maximum image size.");
+    VkPhysicalDeviceMultiviewFeatures sfsMultiview{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTIVIEW_FEATURES};
+    VkPhysicalDeviceMultiviewFeatures runtimeSfsMultiview{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTIVIEW_FEATURES};
+    if(kharvox::sfs::nativeProbeEnabled()){
+        auto query=physicalDispatch.getPhysicalDeviceFeatures2;
+        if(!query)query=reinterpret_cast<PFN_vkGetPhysicalDeviceFeatures2>(physicalDispatch.gipa(physicalDispatch.instance,"vkGetPhysicalDeviceFeatures2KHR"));
+        if(!query)return VK_ERROR_FEATURE_NOT_PRESENT;
+        VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};features.pNext=&sfsMultiview;query(p,&features);
+        if(!sfsMultiview.multiview)return VK_ERROR_FEATURE_NOT_PRESENT;
+        sfsMultiview.multiviewGeometryShader=sfsMultiview.multiviewTessellationShader=VK_FALSE;
+        runtimeSfsMultiview=sfsMultiview;sfsMultiview.pNext=const_cast<void*>(modified.pNext);runtimeSfsMultiview.pNext=const_cast<void*>(runtimeModified.pNext);
+        modified.pNext=&sfsMultiview;runtimeModified.pNext=&runtimeSfsMultiview;
+        addExtension(VK_KHR_MULTIVIEW_EXTENSION_NAME,"SFS");
+        modified.enabledExtensionCount=runtimeModified.enabledExtensionCount=uint32_t(enabled.size());modified.ppEnabledExtensionNames=runtimeModified.ppEnabledExtensionNames=enabled.data();
+    }
     KharvoxXRPreparePhysicalDeviceBinding(p);logLine("Preserving layered physical device for downstream vkCreateDevice; XR binding keeps runtime physical");
     VkResult r=VK_ERROR_INITIALIZATION_FAILED;VkResult mediatedVk=VK_ERROR_INITIALIZATION_FAILED;if(KharvoxXRCreateVulkanDevice(nextGipa,p,&runtimeModified,&modified,a,out,&mediatedVk))r=mediatedVk;else r=fn?fn(p,&modified,a,out):VK_ERROR_INITIALIZATION_FAILED;
     if(r==VK_SUCCESS){DeviceDispatch d{};d.gdpa=nextGdpa;d.physical=p;d.independentSurface=physicalDispatch.independentSurface;d.coreSurface=physicalDispatch.coreSurface;
@@ -1067,9 +1083,18 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateDevice(VkPhysicalDevice p,const VkDeviceC
       LOAD(xr.createImageView,vkCreateImageView);LOAD(xr.destroyImageView,vkDestroyImageView);LOAD(xr.createSampler,vkCreateSampler);LOAD(xr.destroySampler,vkDestroySampler);LOAD(xr.createShaderModule,vkCreateShaderModule);LOAD(xr.destroyShaderModule,vkDestroyShaderModule);LOAD(xr.createDescriptorSetLayout,vkCreateDescriptorSetLayout);LOAD(xr.destroyDescriptorSetLayout,vkDestroyDescriptorSetLayout);LOAD(xr.createDescriptorPool,vkCreateDescriptorPool);LOAD(xr.destroyDescriptorPool,vkDestroyDescriptorPool);LOAD(xr.allocateDescriptorSets,vkAllocateDescriptorSets);LOAD(xr.updateDescriptorSets,vkUpdateDescriptorSets);LOAD(xr.createPipelineLayout,vkCreatePipelineLayout);LOAD(xr.destroyPipelineLayout,vkDestroyPipelineLayout);LOAD(xr.createComputePipelines,vkCreateComputePipelines);LOAD(xr.createGraphicsPipelines,vkCreateGraphicsPipelines);LOAD(xr.destroyPipeline,vkDestroyPipeline);LOAD(xr.cmdBindPipeline,vkCmdBindPipeline);LOAD(xr.cmdBindDescriptorSets,vkCmdBindDescriptorSets);LOAD(xr.cmdPushConstants,vkCmdPushConstants);LOAD(xr.cmdDispatch,vkCmdDispatch);LOAD(xr.createRenderPass,vkCreateRenderPass);LOAD(xr.destroyRenderPass,vkDestroyRenderPass);LOAD(xr.createFramebuffer,vkCreateFramebuffer);LOAD(xr.destroyFramebuffer,vkDestroyFramebuffer);LOAD(xr.cmdBeginRenderPass,vkCmdBeginRenderPass);LOAD(xr.cmdEndRenderPass,vkCmdEndRenderPass);LOAD(xr.cmdBindVertexBuffers,vkCmdBindVertexBuffers);LOAD(xr.cmdBindIndexBuffer,vkCmdBindIndexBuffer);LOAD(xr.cmdDrawIndexed,vkCmdDrawIndexed);LOAD(xr.cmdSetViewport,vkCmdSetViewport);LOAD(xr.cmdSetScissor,vkCmdSetScissor);LOAD(xr.createSemaphore,vkCreateSemaphore);LOAD(xr.destroySemaphore,vkDestroySemaphore);LOAD(xr.createFence,vkCreateFence);LOAD(xr.destroyFence,vkDestroyFence);LOAD(xr.resetFences,vkResetFences);LOAD(xr.waitForFences,vkWaitForFences);LOAD(xr.queueSubmit,vkQueueSubmit);LOAD(xr.queueWaitIdle,vkQueueWaitIdle);
       {auto vulkan=GetModuleHandleW(L"vulkan-1.dll");d.xr.getPhysicalDeviceMemoryProperties=reinterpret_cast<PFN_vkGetPhysicalDeviceMemoryProperties>(vulkan?GetProcAddress(vulkan,"vkGetPhysicalDeviceMemoryProperties"):nullptr);d.xr.getPhysicalDeviceProperties=reinterpret_cast<PFN_vkGetPhysicalDeviceProperties>(vulkan?GetProcAddress(vulkan,"vkGetPhysicalDeviceProperties"):nullptr);d.xr.getPhysicalDeviceQueueFamilyProperties=reinterpret_cast<PFN_vkGetPhysicalDeviceQueueFamilyProperties>(vulkan?GetProcAddress(vulkan,"vkGetPhysicalDeviceQueueFamilyProperties"):nullptr);}
 #undef LOAD
-      {std::lock_guard<std::mutex>l(stateMutex);devices[key(*out)]=d;}logLine("Device created");KharvoxXRSetQueueAccessCallbacks(lockQueueAccess,unlockQueueAccess);KharvoxXRSetDevice(p,*out,d.xr);kharvox::native::setQueueAccessCallbacks(lockQueueAccess,unlockQueueAccess);kharvox::native::setDevice(physicalDispatch.instance,p,*out,nextGdpa,nextGipa);}else {logLine("[VK-STARTUP] device creation failed result="+std::to_string(r),true);stopVulkanStartup("Vulkan/OpenXR device initialization failed. Ensure DOOM and the VR runtime use the same GPU. See the KHARVOX log in %TEMP%.");}return r;
+      {std::lock_guard<std::mutex>l(stateMutex);devices[key(*out)]=d;}logLine("Device created");
+      if(kharvox::sfs::nativeProbeEnabled()){
+          logLine("[SFS] querying downstream memory properties");
+          VkPhysicalDeviceMemoryProperties memory{};
+          auto memoryProperties=reinterpret_cast<PFN_vkGetPhysicalDeviceMemoryProperties>(physicalDispatch.gipa(physicalDispatch.instance,"vkGetPhysicalDeviceMemoryProperties"));
+          if(!memoryProperties)stopVulkanStartup("Native SFS memory properties unavailable");
+          memoryProperties(p,&memory);logLine("[SFS] initializing native resource state");
+          if(!kharvox::sfs::initialize(*out,p,nextGdpa,memory))stopVulkanStartup("Native SFS probe initialization failed");
+      }
+      KharvoxXRSetQueueAccessCallbacks(lockQueueAccess,unlockQueueAccess);KharvoxXRSetDevice(p,*out,d.xr);kharvox::native::setQueueAccessCallbacks(lockQueueAccess,unlockQueueAccess);kharvox::native::setDevice(physicalDispatch.instance,p,*out,nextGdpa,nextGipa);}else {logLine("[VK-STARTUP] device creation failed result="+std::to_string(r),true);stopVulkanStartup("Vulkan/OpenXR device initialization failed. Ensure DOOM and the VR runtime use the same GPU. See the KHARVOX log in %TEMP%.");}return r;
 }
-VKAPI_ATTR void VKAPI_CALL vkDestroyDevice(VkDevice d,const VkAllocationCallbacks*a){kharvox::sfs::forgetDevice(d);auto k=key(d);auto s=deviceState(k);if(!s.runtimeAuxiliary){logLine("vkDestroyDevice");kharvox::native::beforeDeviceDestroy(d);KharvoxXRDeviceDestroyed();kharvox::hands::handSceneDeviceDestroyed();kharvox::hudgpu::deviceDestroyed();}if(s.destroy)s.destroy(d,a);std::lock_guard<std::mutex>l(stateMutex);devices.erase(k);}
+VKAPI_ATTR void VKAPI_CALL vkDestroyDevice(VkDevice d,const VkAllocationCallbacks*a){kharvox::sfs::forgetDevice(d);kharvox::sfs::shutdown(d);auto k=key(d);auto s=deviceState(k);if(!s.runtimeAuxiliary){logLine("vkDestroyDevice");kharvox::native::beforeDeviceDestroy(d);KharvoxXRDeviceDestroyed();kharvox::hands::handSceneDeviceDestroyed();kharvox::hudgpu::deviceDestroyed();}if(s.destroy)s.destroy(d,a);std::lock_guard<std::mutex>l(stateMutex);devices.erase(k);}
 VKAPI_ATTR void VKAPI_CALL vkGetDeviceQueue(VkDevice d,uint32_t f,uint32_t q,VkQueue*out){auto s=deviceState(key(d));if(out)*out=VK_NULL_HANDLE;if(s.getQueue&&out)s.getQueue(d,f,q,out);std::ostringstream x;x<<"Queue acquired family="<<f<<" index="<<q;logLine(x.str());if(out&&*out){KharvoxXRSetQueue(*out,f,q);kharvox::native::setQueue(*out,f,q);}}
 VKAPI_ATTR void VKAPI_CALL vkGetDeviceQueue2(VkDevice d,const VkDeviceQueueInfo2*i,VkQueue*out){auto s=deviceState(key(d));if(out)*out=VK_NULL_HANDLE;if(s.getQueue2&&out&&i)s.getQueue2(d,i,out);std::ostringstream x;x<<"Queue acquired family="<<(i?i->queueFamilyIndex:0)<<" index="<<(i?i->queueIndex:0);logLine(x.str());if(out&&*out&&i){KharvoxXRSetQueue(*out,i->queueFamilyIndex,i->queueIndex);kharvox::native::setQueue(*out,i->queueFamilyIndex,i->queueIndex);}}
 VKAPI_ATTR VkResult VKAPI_CALL vkCreateSwapchainKHR(VkDevice d,const VkSwapchainCreateInfoKHR*i,const VkAllocationCallbacks*a,VkSwapchainKHR*out){
@@ -1110,6 +1135,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateSwapchainKHR(VkDevice d,const VkSwapchain
         logLine("[WSI-STARTUP] core Win32 extent verified; no present scaling structure; source="+
             std::to_string(i->imageExtent.width)+"x"+std::to_string(i->imageExtent.height),true);
     }
+    if(kharvox::sfs::nativeProbeEnabled())effective.imageArrayLayers=2;
     effective.imageUsage|=VK_IMAGE_USAGE_TRANSFER_SRC_BIT|VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     const auto sequence=++swapchainCreateCount;
     HWND surfaceWindow{};
@@ -1164,17 +1190,17 @@ VKAPI_ATTR void VKAPI_CALL vkDestroySwapchainKHR(VkDevice d,VkSwapchainKHR sc,co
     auto s=deviceState(key(d));const auto sequence=++swapchainDestroyCount;logLine("Swapchain destroyed");
     LARGE_INTEGER begin{},afterKharvox{},end{};QueryPerformanceCounter(&begin);
     if(extendedLoggingEnabled()){std::ostringstream entry;entry<<"[WSI] vkDestroySwapchainKHR entry call="<<sequence<<" thread="<<GetCurrentThreadId()<<" device="<<reinterpret_cast<uint64_t>(d)<<" swapchain="<<reinterpret_cast<uint64_t>(sc);logExtended(entry.str());}
-    kharvox::hudgpu::swapchainDestroyed(sc);KharvoxXRSwapchainDestroyed(sc);QueryPerformanceCounter(&afterKharvox);
+    kharvox::sfs::swapchainDestroyed(d,sc);kharvox::hudgpu::swapchainDestroyed(sc);KharvoxXRSwapchainDestroyed(sc);QueryPerformanceCounter(&afterKharvox);
     if(s.destroySwapchain)s.destroySwapchain(d,sc,a);QueryPerformanceCounter(&end);
     if(extendedLoggingEnabled()){std::ostringstream returned;returned<<"[WSI] vkDestroySwapchainKHR return call="<<sequence<<" thread="<<GetCurrentThreadId()<<" kharvoxMs="<<elapsedMilliseconds(begin,afterKharvox)<<" downstreamMs="<<elapsedMilliseconds(afterKharvox,end)<<" totalMs="<<elapsedMilliseconds(begin,end);logExtended(returned.str());}
 }
-VKAPI_ATTR VkResult VKAPI_CALL vkGetSwapchainImagesKHR(VkDevice d,VkSwapchainKHR sc,uint32_t*c,VkImage*i){auto s=deviceState(key(d));auto r=s.getSwapchainImages?s.getSwapchainImages(d,sc,c,i):VK_ERROR_EXTENSION_NOT_PRESENT;if(r==VK_SUCCESS&&c&&i){std::ostringstream x;x<<"Swapchain images="<<*c;logLine(x.str());kharvox::hudgpu::swapchainImages(sc,*c,i);KharvoxXRSwapchainImages(sc,*c,i);}return r;}
+VKAPI_ATTR VkResult VKAPI_CALL vkGetSwapchainImagesKHR(VkDevice d,VkSwapchainKHR sc,uint32_t*c,VkImage*i){auto s=deviceState(key(d));auto r=s.getSwapchainImages?s.getSwapchainImages(d,sc,c,i):VK_ERROR_EXTENSION_NOT_PRESENT;if(r==VK_SUCCESS&&c&&i){std::ostringstream x;x<<"Swapchain images="<<*c;logLine(x.str());kharvox::sfs::swapchainImages(d,sc,*c,i);kharvox::hudgpu::swapchainImages(sc,*c,i);KharvoxXRSwapchainImages(sc,*c,i);}return r;}
 VKAPI_ATTR VkResult VKAPI_CALL vkAcquireNextImageKHR(VkDevice d,VkSwapchainKHR sc,uint64_t t,VkSemaphore sem,VkFence f,uint32_t*i){
     KharvoxCameraFinishNativeStereoBootstrap();auto s=deviceState(key(d));const auto n=++acquireCount;LARGE_INTEGER enter{},downstreamDone{},prepareDone{};QueryPerformanceCounter(&enter);
     if(extendedLoggingEnabled()&&traceDiagnosticCall(n)){std::ostringstream x;x<<"[ACQUIRE] entry call="<<n<<" thread="<<GetCurrentThreadId()<<" device="<<reinterpret_cast<uint64_t>(d)<<" swapchain="<<reinterpret_cast<uint64_t>(sc)<<" timeoutNs="<<t<<" semaphore="<<reinterpret_cast<uint64_t>(sem)<<" fence="<<reinterpret_cast<uint64_t>(f);logExtended(x.str());}
     auto r=s.acquire?s.acquire(d,sc,t,sem,f,i):VK_ERROR_EXTENSION_NOT_PRESENT;QueryPerformanceCounter(&downstreamDone);
     if(logFrame(n)){std::ostringstream x;x<<"[Frame "<<n<<"] Acquire image="<<(i?*i:~0u)<<" result="<<r;logLine(x.str());}
-    if(r==VK_SUCCESS||r==VK_SUBOPTIMAL_KHR)KharvoxXRPrepareFrame(sc);QueryPerformanceCounter(&prepareDone);
+    if(r==VK_SUCCESS||r==VK_SUBOPTIMAL_KHR){KharvoxXRPrepareFrame(sc);kharvox::sfs::beginFrame(d);}QueryPerformanceCounter(&prepareDone);
     const double downstreamMs=elapsedMilliseconds(enter,downstreamDone),prepareMs=elapsedMilliseconds(downstreamDone,prepareDone);
     if(extendedLoggingEnabled()&&(traceDiagnosticCall(n)||r!=VK_SUCCESS||downstreamMs>=10.0||prepareMs>=10.0)){std::ostringstream x;x<<"[ACQUIRE] return call="<<n<<" thread="<<GetCurrentThreadId()<<" result="<<r<<" image="<<(i?*i:~0u)<<" downstreamMs="<<downstreamMs<<" xrPrepareMs="<<prepareMs<<" totalMs="<<elapsedMilliseconds(enter,prepareDone);logExtended(x.str());}
     return kharvox::independentSurfaceResult(r,isIndependentSwapchain(sc));
@@ -1184,7 +1210,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkAcquireNextImage2KHR(VkDevice d,const VkAcquire
     if(extendedLoggingEnabled()&&traceDiagnosticCall(n)){std::ostringstream x;x<<"[ACQUIRE2] entry call="<<n<<" thread="<<GetCurrentThreadId()<<" device="<<reinterpret_cast<uint64_t>(d)<<" swapchain="<<(i?reinterpret_cast<uint64_t>(i->swapchain):0)<<" timeoutNs="<<(i?i->timeout:0)<<" semaphore="<<(i?reinterpret_cast<uint64_t>(i->semaphore):0)<<" fence="<<(i?reinterpret_cast<uint64_t>(i->fence):0)<<" deviceMask="<<(i?i->deviceMask:0);logExtended(x.str());}
     auto r=s.acquire2?s.acquire2(d,i,out):VK_ERROR_EXTENSION_NOT_PRESENT;QueryPerformanceCounter(&downstreamDone);
     if(logFrame(n)){std::ostringstream x;x<<"[Frame "<<n<<"] Acquire2 image="<<(out?*out:~0u)<<" result="<<r;logLine(x.str());}
-    if(i&&(r==VK_SUCCESS||r==VK_SUBOPTIMAL_KHR))KharvoxXRPrepareFrame(i->swapchain);QueryPerformanceCounter(&prepareDone);
+    if(i&&(r==VK_SUCCESS||r==VK_SUBOPTIMAL_KHR)){KharvoxXRPrepareFrame(i->swapchain);kharvox::sfs::beginFrame(d);}QueryPerformanceCounter(&prepareDone);
     const double downstreamMs=elapsedMilliseconds(enter,downstreamDone),prepareMs=elapsedMilliseconds(downstreamDone,prepareDone);
     if(extendedLoggingEnabled()&&(traceDiagnosticCall(n)||r!=VK_SUCCESS||downstreamMs>=10.0||prepareMs>=10.0)){std::ostringstream x;x<<"[ACQUIRE2] return call="<<n<<" thread="<<GetCurrentThreadId()<<" result="<<r<<" image="<<(out?*out:~0u)<<" downstreamMs="<<downstreamMs<<" xrPrepareMs="<<prepareMs<<" totalMs="<<elapsedMilliseconds(enter,prepareDone);logExtended(x.str());}
     return kharvox::independentSurfaceResult(r,i&&isIndependentSwapchain(i->swapchain));

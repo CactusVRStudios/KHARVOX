@@ -3,11 +3,37 @@
 Status: **native reconstruction in progress; no playable SFS/VR release**.
 
 The current implementation and evidence are in
-[SFS_REVERSE_ENGINEERING.md](SFS_REVERSE_ENGINEERING.md). The native resource
-core, shader/pipeline identities and local profile loader are implemented;
-69/69 profile variants match real DOOM captures and 101/101 CTests pass.
-The launcher no longer loads the external provider. Live shader/resource
-integration and OpenXR stereo submission remain unfinished.
+[SFS_REVERSE_ENGINEERING.md](SFS_REVERSE_ENGINEERING.md). The native Vulkan
+multiview producer, typed shader transformer, profile bindings and OpenXR eye
+transport are implemented. The external provider DLL is not loaded. A DOOM
+campaign test in OpenXR Simulator produced distinct left/right images. All
+105 CTests pass, including actual GPU sampling and IPD tests. This is not yet
+headset, hand-latency or full-game validation; the normal launcher remains gated.
+
+The optional compiler requires `KHARVOX_BUILD_SFS_COMPILER=ON`, explicit
+`KHARVOX_SPIRV_CROSS_SOURCE`, `KHARVOX_SPIRV_CROSS_LIB` and
+`KHARVOX_GLSLANG_ROOT` paths. The local developer test uses
+`KHARVOX_SFS_NATIVE_PROBE=1`, `KHARVOX_SFS_NATIVE_VR=1` and
+`KHARVOX_SFS_PROFILE` pointing to locally compiled profile SPIR-V. Set
+`KHARVOX_CAPTURE_EYES=1` and `KHARVOX_SFS_CAPTURE_ONCE=1` for an automatic
+gameplay eye capture. Supply the regular layer manifest, OpenXR loader, assets,
+`enable_xr_session`, both integration bridges and approved DLLs; run the package
+integration verifier before use. Compiler license texts must accompany the DLL.
+Do not enable these flags in a build without the optional compiler.
+
+Menus retain the existing quad presentation. To enter the saved campaign,
+confirm its menus with Enter and press Space after loading completes.
+Captured PNGs are pre-compositor eye surfaces, not a headset screenshot.
+
+The bounded native test script verifies bundled integrations before starting:
+
+```powershell
+tools/probe_native_sfs.ps1 -Runtime out/beta096/native-runtime -Game 'D:\Games\dampf\steamapps\common\DOOM\DOOMx64vk.exe' -Profile out/beta096/profile-compiled -OpenXrManifest out/beta095/simulator-absolute.json -CaptureEyes
+```
+
+Omit `-OpenXrManifest` only when intentionally testing the active installed
+OpenXR runtime. The script restores its environment and stops only its owned
+game process after the test deadline. It does not modify the system runtime.
 
 The provider integration below records the earlier experiment, not the current
 implementation plan.

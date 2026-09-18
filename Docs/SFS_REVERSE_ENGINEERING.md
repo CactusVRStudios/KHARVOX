@@ -45,13 +45,13 @@ first unwind entry's end is not necessarily the end of the function.
   This is not a full SPIR-V validator or the runtime injection stage.
 - `src/sfs/ShaderCapture.h` and layer hooks: opt-in original shader/pipeline
   capture, successful shader-module lifetime tracking and device cleanup.
-  No shader mutation occurs in the live game. Capture exceptions never escape
+  Capture alone does not mutate game shaders. Capture exceptions never escape
   into the Vulkan application. Captured module memory and new SPIR-V file data
   each have a 128 MiB per-process budget; pipeline records are limited to 100,000.
 - `KharvoxSfsProfileAudit`: compiled-profile resolution against captured pipeline
   identities. No external provider code executes.
 
-## Evidence
+## Historical resource-core evidence
 
 1. Twenty hash fixtures match direct calls to the reference's isolated pure hash
    routine, covering all tails and unaligned input. DLL initialization was not
@@ -89,16 +89,53 @@ python tools/compile_sfs_profile.py --profile 'D:\DoomVR\vk3\Profiles\DOOM\Shade
 out/beta096/native/Release/KharvoxSfsProfileAudit.exe out/sfs-capture out/sfs-profile-compiled
 ```
 
-## Work still required for the requested renderer
+## Native integration update (2026-09-18)
 
-The resource core is exercised by tests, not yet enabled in DOOM. Enabling it
-alone would mismatch existing shaders, image views and descriptor bindings.
-Complete the common shader transformation, mono/stereo descriptor-view handling,
-uniform binding and per-frame buffer lifetime together. Apply render-pass and
-compute exceptions, and expand image barriers/copies to both layers where needed.
-Then connect actual producer eye resources and synchronization to KHARVOX's
-OpenXR submission, using headset FOV/IPD and one shared predicted frame pose.
-Hand pose timing and menu transitions require real runtime validation afterward.
+The historical resource-only evidence above is superseded by a working native
+prototype in `NativeSfs.cpp`, `ShaderCompiler.cpp` and `FrameProjection.h`:
+
+- The game renders both eyes through Vulkan multiview and two-layer resources;
+  typed shader conversion preserves cube/3D textures and clamps mono-array
+  sampling. Compute outputs split by eye, with profile exceptions retained.
+- Descriptor bindings 30/31 carry profile parameters and predicted frame
+  transforms. Command state is replayed after multiview subpass boundaries.
+  Descriptor-pool reset/destruction clears bookkeeping. Shared frame uniforms
+  currently use device-idle retirement, which is conservative and unoptimized.
+- OpenXR receives both actual eye layers from one render. The source uses a
+  centered enclosing FOV; final copies crop separately to each asymmetric FOV.
+  Legacy profile expressions are converted to an affine depth/offset form, so
+  pure IPD works even with zero projection slope. The earlier direct asymmetric
+  shader projection disagreed with postprocessing and visibly distorted scenes.
+- The Simulator session and frame calls share the window-owning worker thread.
+  This fixes an observed cross-thread Win32 message deadlock. Runtime Vulkan
+  commands use the downstream dispatch rather than game shader hooks.
+- All 647 captured originals and 75 profile modules pass transformation and
+  compilation. All 105 CTests pass, including real GPU layer sampling, runtime
+  descriptor/state replay and zero-slope affine IPD output. These fixtures do
+  not establish correctness of every DOOM render pass.
+- A bounded campaign run reached 24,840 OpenXR frames with zero recorded
+  end-frame failures or lifecycle violations at that checkpoint. Pre-compositor
+  left/right PNGs from frame 1521 show coherent corridor/weapon geometry with
+  differing eye perspectives. Capture metadata explicitly reports no matched
+  raw source images. Its first capture exposed an omitted asymmetric crop and
+  a 640x540 subrect inside 640x700; SFS now enables the crop/full-surface path
+  independently of the legacy resolution marker.
+
+Evidence remains local: `out/beta096/shader-audit-current.json`, CTest output,
+`out/beta096/native-probe-current.log` and `%LOCALAPPDATA%/Temp/`
+`KHARVOX-EyeCaptures/19244-126290421/`. Captured game shaders are not committed.
+
+## Remaining validation
+
+Validate the final FOV crop in a new game capture, then real-headset tracking,
+controller/weapon timing, shadows, particles, UI depth and level transitions.
+The current analytic projection rejects canted eye orientations and longitudinal
+eye offsets; such devices require a fuller view-space reconstruction. No PSVR2
+headset compatibility is claimed. Toolkit bridges/protocol tests remain intact.
+RenderPass2, synchronization2 and indirect compute paths are not covered by this
+DOOM-specific prototype. The compiler SDK has not yet been rebuilt from fully
+pinned glslang/SPIRV-Tools sources. The normal launcher therefore stays gated;
+explicit developer flags select this path for local investigation.
 
 The original external provider's startup heap corruption is historical evidence;
 fixing or loading that DLL is no longer a prerequisite for this native path.

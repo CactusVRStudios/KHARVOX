@@ -79,6 +79,12 @@ bool recordEyeSource(int eye,VkImage source,VkImageLayout layout,VkExtent2D exte
 }
 void pollEyeCapture(){
     if(!eyeCaptureEnabled())return;
+    static const bool automatic=[] {char value[8]{};return GetEnvironmentVariableA("KHARVOX_SFS_CAPTURE_ONCE",value,sizeof(value))==1&&value[0]=='1';}();
+    if(automatic&&kharvox::sfs::vrEnabled()&&!s.quadMode&&KharvoxCameraGameplayActive()
+        &&!eyeCapture.count&&!eyeCapture.requested&&!eyeCapture.pending){
+        eyeCapture.requested=true;eyeCapture.due=GetTickCount64()+2000;
+        log("[EYE-CAPTURE] automatic SFS diagnostic armed");
+    }
     const bool down=(GetAsyncKeyState(VK_CONTROL)&0x8000)&&(GetAsyncKeyState(VK_SHIFT)&0x8000)&&(GetAsyncKeyState('P')&0x8000);
     DWORD pid{};GetWindowThreadProcessId(GetForegroundWindow(),&pid);
     if(down&&!eyeCapture.keyDown&&pid==GetCurrentProcessId()&&!eyeCapture.requested&&eyeCapture.count<8){
@@ -137,7 +143,7 @@ void finishEyeCapture(const std::array<XrCompositionLayerProjectionView,2>& view
         const auto dir=std::filesystem::path(temp)/L"KHARVOX-EyeCaptures"/(std::to_wstring(GetCurrentProcessId())+L"-"+std::to_wstring(GetTickCount64()));
         std::filesystem::create_directories(dir);
         std::ofstream meta(dir/L"capture.json");
-        meta<<"{\"schema\":2,\"renderer\":\""<<(native?"Native":"AER")<<"\",\"frame\":"<<s.frame<<",\"predictedDisplayTime\":"<<displayTime<<",\"beforeXrEndFrame\":true,\"gpuCompletionVerified\":true,\"compositorOutput\":false,\"alphaForcedOpaque\":true,\"separateHudLaserLayersIncluded\":false,\"eyes\":[";
+        meta<<"{\"schema\":2,\"renderer\":\""<<(kharvox::sfs::vrEnabled()?"Vulkan SFS":native?"Native":"AER")<<"\",\"frame\":"<<s.frame<<",\"predictedDisplayTime\":"<<displayTime<<",\"beforeXrEndFrame\":true,\"gpuCompletionVerified\":true,\"compositorOutput\":false,\"alphaForcedOpaque\":true,\"separateHudLaserLayersIncluded\":false,\"eyes\":[";
         bool success=true;
         for(int e=0;e<2;++e){
             const auto extent=c.extents[e];const size_t bytes=size_t(extent.width)*extent.height*4;

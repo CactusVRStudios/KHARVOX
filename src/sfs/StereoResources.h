@@ -32,6 +32,11 @@ class Images {
     std::mutex mutex_;
     std::unordered_map<VkImage,uint32_t> layers_;
 public:
+    void track(VkImage image,uint32_t count){std::lock_guard<std::mutex> lock(mutex_);layers_[image]=count;}
+    uint32_t layers(VkImage image) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto found=layers_.find(image);return found==layers_.end()?0:found->second;
+    }
     VkResult create(VkDevice device, const VkImageCreateInfo& input,
                     const VkAllocationCallbacks* allocator, VkImage* output,
                     PFN_vkCreateImage next) {
@@ -64,6 +69,15 @@ public:
             result.viewType=VK_IMAGE_VIEW_TYPE_2D_ARRAY;
             result.subresourceRange.layerCount=2;
         }
+        return result;
+    }
+    // Use only with a shader compiled by the typed SFS transformer. A mono
+    // sampled image has a one-layer array view; injected sampling clamps the
+    // requested eye to that layer. Existing arrays/cubes/3D views are unchanged.
+    VkImageViewCreateInfo shaderViewInfo(const VkImageViewCreateInfo& original) {
+        auto result=viewInfo(original);
+        if(result.viewType==VK_IMAGE_VIEW_TYPE_2D)
+            result.viewType=VK_IMAGE_VIEW_TYPE_2D_ARRAY;
         return result;
     }
 };

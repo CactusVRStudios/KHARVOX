@@ -8,7 +8,7 @@ internal static class VulkanSfs
 {
     internal const string Key = "VULKAN_SFS";
     internal const string Label = "Vulkan Single-Frame Stereo (Test)";
-    internal const string Blocker = "Vulkan Single-Frame Stereo 0.96 is under development. The native resource core and profile matching are implemented; stereo shader bindings and OpenXR eye transport are not integrated yet. See Docs/VULKAN_SFS_096.md. Use AER for gameplay.";
+    internal const string Blocker = "Vulkan Single-Frame Stereo 0.96 is a developer prototype. Native multiview shaders and OpenXR eye transport are implemented and simulator-tested. Headset tracking, hand timing and full game compatibility still require validation. Use the documented native test procedure in Docs/VULKAN_SFS_096.md, or select AER for normal gameplay.";
 
     internal static void EnsureAvailable()
     {

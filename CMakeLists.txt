@@ -2,6 +2,10 @@ cmake_minimum_required(VERSION 3.20)
 project(KHARVOX VERSION 0.9.6 LANGUAGES C CXX)
 
 include(CTest)
+option(KHARVOX_BUILD_SFS_COMPILER "Build the native SFS shader transformer" OFF)
+if(KHARVOX_BUILD_SFS_COMPILER)
+  add_subdirectory(src/sfs)
+endif()
 if(BUILD_TESTING)
   add_executable(KharvoxSfsResourceTests tests/sfs_resource_tests.cpp)
   target_compile_features(KharvoxSfsResourceTests PRIVATE cxx_std_17)
@@ -122,6 +126,16 @@ if(KHARVOX_BUILD_LAYER)
   target_include_directories(KharvoxNativeStereo PRIVATE src/native/upstream/include third-party/minhook/include third-party/vulkan-headers/include third-party/openxr-sdk/include)
   add_library(KharvoxLayer SHARED $<TARGET_OBJECTS:KharvoxNativeStereo> src/vulkan/KharvoxLayer.cpp src/openxr/OpenXRBootstrap.cpp src/bhaptics/BhapticsIpcClient.cpp src/psvr2/Psvr2IpcClient.cpp src/fsr/Fsr1Upscaler.cpp src/hands/HandRenderer.cpp src/hands/HandSceneDepthTracker.cpp src/camera/CameraHook.cpp src/hud/HudHook.cpp src/hud/HudGpuDiagnostic.cpp src/weapon/WeaponHook.cpp src/debug/CameraScanner.cpp src/vulkan/KharvoxLayer.def src/common/Version.rc)
   target_compile_features(KharvoxLayer PRIVATE cxx_std_17)
+  if(KHARVOX_BUILD_SFS_COMPILER)
+    target_sources(KharvoxLayer PRIVATE src/sfs/NativeSfs.cpp)
+    target_link_libraries(KharvoxLayer PRIVATE KharvoxSfsCompiler)
+    target_compile_definitions(KharvoxLayer PRIVATE KHARVOX_HAVE_SFS_COMPILER)
+    add_custom_command(TARGET KharvoxLayer POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${PROJECT_SOURCE_DIR}/third-party/sfs-compiler-licenses"
+        "$<TARGET_FILE_DIR:KharvoxLayer>/sfs-compiler-licenses"
+      VERBATIM)
+  endif()
   if(MSVC)
     target_compile_options(KharvoxNativeStereo PRIVATE "$<$<CONFIG:Release>:/Zi>")
     target_compile_options(KharvoxLayer PRIVATE "$<$<CONFIG:Release>:/Zi>")

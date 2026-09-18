@@ -148,3 +148,36 @@ licenses. This package check does not certify headset compatibility.
 
 The original external provider's startup heap corruption is historical evidence;
 fixing or loading that DLL is no longer a prerequisite for this native path.
+
+## Shared AER gameplay integration (2026-09-18)
+
+SFS now passes Vulkan resource, render-pass and command observations through the
+same KHARVOX HUD/depth/lifetime hooks as AER. Its multiview producer remains
+single-frame: the centered CPU camera publishes a source-bound weapon/body
+snapshot on every frame, using the existing AER attachment history without
+holding inputs for a second CPU eye. This removes the previous live-input versus
+rendered-camera mismatch; walking jitter still requires a tracked-controller test.
+
+Hands and the laser can render into each SFS eye with its own scene depth.
+Cached single-layer attachment views and private depth copies select array layer
+0 or 1 explicitly, preserving the game's depth/stencil data. Laser placement
+uses the completed frame's body transform and weapon source identity. Raw eye
+captures now select the corresponding source layer as well. Launcher options
+for weapon tracking, hand visibility, handedness, turning, laser, gunstock and
+render scaling continue through the shared configuration unchanged.
+
+Validation: the complete Release build, all **106 CTests**, and launcher
+self-tests pass. GPU fixtures check right-layer depth copying, source stencil
+preservation and cached eye attachment views. A bounded five-minute campaign
+run recorded successful scene-depth hand integration for both eyes. Capture
+`%TEMP%/KHARVOX-EyeCaptures/11404-131093640/`, frame 787, has matched raw sources
+for both eyes and full 640x700 submission rectangles. The test ended at its
+deadline. The updated local runtime passes the integration package verifier.
+
+This run does **not** validate weapon latency or removal of native animated
+arms: the Simulator session was not focused, so the shared AER input guard
+withheld the controller weapon pose (source resolution reason 6, invalid input).
+The user reported that focusing the Simulator instead opens DOOM's pause menu.
+The focus guard has not been bypassed. Real-headset weapon movement, walking,
+laser placement, HUD behavior and menu/level transitions remain to be checked;
+complete behavioral parity and hardware compatibility are not yet established.

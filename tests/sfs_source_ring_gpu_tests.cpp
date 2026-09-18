@@ -8,6 +8,8 @@
 #include <string>
 #include <stdexcept>
 #include <cmath>
+#include <thread>
+#include <atomic>
 static void check(bool value,const char* message){if(!value)throw std::runtime_error(message);}
 static void ok(VkResult result){if(result!=VK_SUCCESS)throw std::runtime_error("Vulkan result "+std::to_string(result));}
 int main(){try{
@@ -82,6 +84,22 @@ int main(){try{
  VkCommandPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};poolInfo.queueFamilyIndex=family;poolInfo.flags=VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
  VkCommandPool pool{};ok(vkCreateCommandPool(device,&poolInfo,nullptr,&pool));VkCommandBufferAllocateInfo allocate{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};allocate.commandPool=pool;allocate.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY;allocate.commandBufferCount=1;
  VkCommandBuffer command{};ok(vkAllocateCommandBuffers(device,&allocate,&command));
+#ifdef KHARVOX_SFS_RING_RUNTIME
+ // Distinct pools satisfy Vulkan's external synchronization rules. Record in
+ // parallel while another thread creates/destroys resource metadata.
+ std::array<VkCommandPool,4> parallelPools{};std::array<VkCommandBuffer,4> parallelCommands{};
+ for(unsigned n=0;n<4;++n){ok(vkCreateCommandPool(device,&poolInfo,nullptr,&parallelPools[n]));auto info=allocate;info.commandPool=parallelPools[n];ok(vkAllocateCommandBuffers(device,&info,&parallelCommands[n]));}
+ std::atomic<bool> start{false},failed{false};std::array<std::thread,4> workers;
+ for(unsigned n=0;n<4;++n)workers[n]=std::thread([&,n]{while(!start.load())std::this_thread::yield();try{
+   for(unsigned iteration=0;iteration<300;++iteration){auto cb=parallelCommands[n];ok(vkResetCommandBuffer(cb,0));VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};ok(vkBeginCommandBuffer(cb,&begin));
+    VkClearColorValue color{};VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,2};
+    vkCmdClearColorImage(cb,images[0],VK_IMAGE_LAYOUT_GENERAL,&color,1,&range);ok(vkEndCommandBuffer(cb));}
+ }catch(...){failed=true;}});
+ start=true;
+ for(unsigned n=0;n<60;++n){VkRenderPass temporary{};ok(vkCreateRenderPass(device,&passInfo,nullptr,&temporary));vkDestroyRenderPass(device,temporary,nullptr);}
+ for(auto& worker:workers)worker.join();check(!failed,"Parallel command recording failed");
+ for(auto pool:parallelPools)vkDestroyCommandPool(device,pool,nullptr);
+#endif
  VkBufferCreateInfo bufferInfo{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};bufferInfo.size=128;bufferInfo.usage=VK_BUFFER_USAGE_TRANSFER_DST_BIT;
  VkBuffer buffer{};ok(vkCreateBuffer(device,&bufferInfo,nullptr,&buffer));VkMemoryRequirements requirements{};vkGetBufferMemoryRequirements(device,buffer,&requirements);
  uint32_t memoryType=UINT32_MAX;for(uint32_t n=0;n<memory.memoryTypeCount;++n)if((requirements.memoryTypeBits&(1u<<n))&&(memory.memoryTypes[n].propertyFlags&(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))==(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)){memoryType=n;break;}check(memoryType!=UINT32_MAX,"No readback memory");

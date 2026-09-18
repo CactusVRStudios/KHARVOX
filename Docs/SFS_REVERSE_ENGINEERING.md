@@ -528,3 +528,45 @@ both-eye pixel checks and existing asymmetric projection tests. Packaged-runtime
 simulator menu smoke test produced timestamp samples and successful XR frames.
 This is not gameplay or VDXR hardware performance verification.
 Artifact: out/beta096/KHARVOX-0.96-SFS-Source-Ring-NVIDIA-test2.zip.
+## Source Ring test 3: CPU command-recording overhead
+
+Performance work targets the measured layer cost without changing image quality,
+source resolution or removing GPU lifetime protection. Changes:
+- Per-thread weak device-dispatch caches, invalidated by registry generation at
+  initialization/teardown, avoid the global device map lock on each command.
+- Resource metadata uses shared/exclusive locking. Parallel Vulkan command
+  recorders read metadata concurrently and modify only their own command state.
+  Command entries are allocated before recording, never inserted by readers.
+  Creation, destruction and metadata updates retain exclusive access.
+- Push constants use reusable per-stage word/layout storage. Partial writes,
+  differing layouts, stage masks and reset semantics are preserved. Contiguous
+  ranges replay in one driver command instead of one captured callback per word.
+- Pipeline and descriptor state use typed reusable storage, avoiding captured
+  function/map allocation on each bind. Descriptor dynamic offsets are retained.
+- Command-buffer reset retains push/descriptor storage capacity.
+
+Sampled instrumentation (one hook in 64 per recording thread) reports lookup/lock
+and hook-body time. Aggregate estimates sum durations across recording threads;
+these are not CPU frame wall time or GPU time. Resource creation is not included.
+The same local simulator/menu configuration showed roughly 3 ms aggregate hook
+cost before shared recording versus around 0.7 ms afterward. Sampled lookup/lock
+means fell from about 3 us to about 0.05 us. This is not a gameplay/VDXR benchmark
+and does not establish Vk3DVision parity.
+
+Validation: 117/117 CTests; 1000 deterministic mixed-layout/stage/partial push
+write comparisons against a per-word reference; 256-byte replay reduced from
+64 calls to one. An isolated 10,000-iteration CPU microbenchmark measured the old
+map/callback pattern at 33.6 ms and the new storage at 0.69 ms. This number must
+not be advertised as whole-game speedup. The real-GPU runtime test also records
+1200 command buffers on four threads with separate pools while resource metadata
+is created/destroyed. Existing before-renderpass pipeline/descriptor replay and
+both-eye GPU pixel tests passed. The final package was smoke-tested in the
+simulator and integration binaries verified.
+
+Artifact: out/beta096/KHARVOX-0.96-SFS-Source-Ring-NVIDIA-test3.zip.
+The frame-boundary GPU waits and shared parameter buffer remain. Deferring
+completion across Present is not safe without also retaining borrowed game
+images/views, hand framebuffers and readback ownership. No full multi-frame
+resource ring or equal-performance claim is made. The next VDXR comparison should
+use the same scene, render scale and settings as test 2 and inspect both Game
+Latency and the new command CPU timing lines.

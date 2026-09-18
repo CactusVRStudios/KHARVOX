@@ -143,15 +143,16 @@ CompiledShader compileStereoShader(const std::vector<uint32_t>& original,const S
     result.clusterCorrections=lighting.clusters;result.worldCorrections=lighting.worldPositions;
     result.refractionCorrections=lighting.refractions;
     result.temporalCorrections=lighting.temporal;
+    result.ssdoCorrections=lighting.ssdo;
     const auto versionEnd=source.find('\n');
     std::string prefix;
     if(model!=spv::ExecutionModelGLCompute)prefix="#extension GL_EXT_multiview : require\n";
     if(request.computeStereo)prefix+="uint khSfsEye;\nuvec3 khSfsGlobalInvocationID, khSfsWorkGroupID, khSfsNumWorkGroups;\n";
-    if(vertexProjection||lighting.clusters||lighting.worldPositions||lighting.refractions){
+    if(vertexProjection||lighting.clusters||lighting.worldPositions||lighting.refractions||lighting.ssdo){
         for(const auto& u:resources.uniform_buffers)if(compiler.get_decoration(u.id,spv::DecorationDescriptorSet)==0&&compiler.get_decoration(u.id,spv::DecorationBinding)==31)
             throw std::runtime_error("SFS: projection descriptor binding collision");
         prefix+="layout(set=0,binding=31,std140) uniform KharvoxStereoProjection { layout(offset=64) mat4 clipFromCenter[2]; vec4 eyeTranslation[2]; mat4 previousClipFromCenter[2]; vec4 previousEyeTranslation[2]; } khSfsProjection;\n";
-        if(lighting.clusters||lighting.worldPositions)prefix+=lightingProjectionHelper(model!=spv::ExecutionModelGLCompute?"gl_ViewIndex":request.computeStereo?"khSfsEye":"gl_WorkGroupID.z / (gl_NumWorkGroups.z / 2u)");
+        if(lighting.clusters||lighting.worldPositions||lighting.refractions||lighting.ssdo)prefix+=lightingProjectionHelper(model!=spv::ExecutionModelGLCompute?"gl_ViewIndex":request.computeStereo?"khSfsEye":"gl_WorkGroupID.z / (gl_NumWorkGroups.z / 2u)");
     }
     if(vertexProjection){
         if(model!=spv::ExecutionModelVertex)throw std::runtime_error("SFS: projection requires a vertex shader");
@@ -183,10 +184,12 @@ CompiledShader compileStereoShader(const std::vector<uint32_t>& original,const S
         }
         source+="khSfsOriginalMain();\n";
         if(vertexProjection){
-            // Keep the reference profile's screen/world UI split. Orthographic
-            // overlays have no world depth to divide the IPD displacement by.
+            // Screen UI has no metric depth for IPD, but still needs the HMD's
+            // asymmetric FOV transform. Equal clip coordinates in both eyes
+            // are different viewing rays and cause binocular double images.
+            source+="gl_Position = khSfsProjection.clipFromCenter[gl_ViewIndex] * gl_Position;\n";
             if(request.screenSpaceUi)source+="if (gl_Position.w > 8.0) ";
-            source+="gl_Position = khSfsProjection.clipFromCenter[gl_ViewIndex] * gl_Position + khSfsProjection.eyeTranslation[gl_ViewIndex];\n";
+            source+="gl_Position += khSfsProjection.eyeTranslation[gl_ViewIndex];\n";
         }
         source+="}\n";
     }

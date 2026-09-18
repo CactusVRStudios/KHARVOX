@@ -699,3 +699,37 @@ The prior unconditional world IPD shift could move flat overlays outside one
 view. Level-start notification visibility still needs headset confirmation.
 119/119 tests pass after this addition. Earlier broad audit compiled all 722
 captured/profile shader modules; final startup checks exercise the UI variants.
+## Test 8: asymmetric screen HUD and SSDO view-space projection (2026-09-18)
+
+User reported binocular LOW AMMO duplication in test7 and a strong shading
+artifact while moving the head over a grating. The live VDXR session was kept
+running; its logs were saved as out/beta096/test7-user-hud-shadow.log and
+out/beta096/test7-native-hud-shadow.log. Desktop capture was black as expected
+for the source ring. CaptureEyes was false, so no live eye-image evidence was
+available. The precise grating material and visual result remain unconfirmed.
+
+The test7 UI guard wrongly skipped the asymmetric HMD FOV transform together
+with world IPD for clip-W <= 8. Equal NDC coordinates do not describe equal rays
+in asymmetric eye frusta. Apply the FOV transform for all known UI draws and
+restrict only the IPD translation to the existing world-UI branch. Numerical
+projection tests cover both sides of the boundary; UI-aware CLI shader audits
+now exercise the same compiler option as the runtime.
+
+The live log also loaded generic SSDO variant 2bae4272f89ac0d2_5bdf1a64ae6c74fc.
+Its GetViewPos and GetWindowPos used centered packed projection coefficients on
+per-eye depth buffers. The reference profile disables SSDO for a DIFFERENT exact
+variant, d05ae7382167326c; that replacement does not cover this active generic
+variant. The correction recognizes both complete helper bodies plus SSDO/depth
+semantics, maps eye UV to centered ray UV for reconstruction, and maps hemisphere
+sample UV back to the eye. Calculations remain eye-local, so no world IPD offset
+is added to relative occlusion samples. Unknown/partial functions stay intact.
+The runtime reports ssdo=1 when this correction is installed.
+
+Validation: 119/119 CTests pass. The lighting GPU fixture checks independently
+known reconstructed positions and projected samples in asymmetric frusta, not
+only a round trip. Existing shadow-map and camera-depth tests remain green.
+The new DLL does not change frame submission or duplicate geometry work. No
+headset visual fix or performance gain is claimed from these automated tests.
+A new simulator run is deliberately omitted while the user's DOOM is running.The final audit compiled 722 modules (647 captured originals and 75 profile
+replacements) without errors, including runtime-equivalent UI options. Six
+original SSDO modules matched the complete reconstruction/projection pair.

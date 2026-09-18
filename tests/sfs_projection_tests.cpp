@@ -32,6 +32,24 @@ int main(){try{
         check(std::abs(refrX-(expectedX/depth+1)*.5f)<1e-5f);
         check(std::abs(refrY-(expectedY/depth+1)*.5f)<1e-5f);
     }
+    // A screen overlay must describe the same ray in asymmetric eye frusta.
+    // Leaving center-camera NDC unchanged (test7) fails this round trip. The
+    // screen/world split affects IPD only, never the FOV conversion.
+    for(float w:{1.f,6.f,8.f,8.01f,40.f})for(float nx:{-.7f,0.f,.6f}){
+        const float ny=.3f;
+        const float sl=std::tan(source.angleLeft),sr=std::tan(source.angleRight);
+        const float sb=std::tan(source.angleDown),st=std::tan(source.angleUp);
+        for(unsigned e=0;e<2;++e){
+            const float x=data.clip[e][0]*nx+data.clip[e][12]+(w>8?data.translation[e][0]/w:0);
+            const float y=data.clip[e][5]*ny+data.clip[e][13]+(w>8?data.translation[e][1]/w:0);
+            const float l=std::tan(eyes[e].fov.angleLeft),r=std::tan(eyes[e].fov.angleRight);
+            const float b=std::tan(eyes[e].fov.angleDown),t=std::tan(eyes[e].fov.angleUp);
+            const float rayX=(x*(r-l)+r+l)*.5f;
+            const float rayY=(-y*(t-b)+t+b)*.5f;
+            check(std::abs(rayX-((nx*(sr-sl)+sr+sl)*.5f-(w>8?eyes[e].pose.position.x*39.37f/w:0)))<1e-5f);
+            check(std::abs(rayY-((-ny*(st-sb)+st+sb)*.5f))<1e-5f);
+        }
+    }
     SourcePoseHistory history;
     kharvox::native::FramePose producer{};producer.gameplay=true;producer.serial=10;
     producer.source={91,2,kharvox::native::SceneDomain::Gameplay};producer.head=center;producer.views=eyes;

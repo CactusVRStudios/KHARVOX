@@ -255,7 +255,9 @@ int main(int argc,char** argv){try{
 #endif
 #ifdef KHARVOX_SFS_TEST_LIGHTING
         expected=pixel<64?.3788f:.8862f;
-        if(argc==4)expected=pixel<64?.3378f:.9272f;
+        // SSDO reconstructs x=-.4/+.4 at UV .5 and projects an eye-local
+        // central point to UV .6/.4 for these asymmetric frusta.
+        if(argc==4)expected=pixel<64?.3178f:.9472f;
 #endif
 #ifdef KHARVOX_SFS_TEST_SHADOW
         expected=.625f;

@@ -17,7 +17,11 @@ int main(int argc,char** argv){try{
         options.screenSpaceUi=true;
         const auto ui=compileStereoShader(words,options);
         check(ui.screenSpaceUiApplied==(i==2));
-        if(i==2)check(ui.glsl.find("if (gl_Position.w > 8.0) gl_Position = khSfsProjection")!=std::string::npos);
+        if(i==2){
+            const auto fov=ui.glsl.find("gl_Position = khSfsProjection.clipFromCenter[gl_ViewIndex] * gl_Position;");
+            const auto ipd=ui.glsl.find("if (gl_Position.w > 8.0) gl_Position += khSfsProjection.eyeTranslation[gl_ViewIndex];");
+            check(fov!=std::string::npos&&ipd!=std::string::npos&&fov<ipd);
+        }
     }
     std::string unrelated="void main() { /* shared light data */ }";
     check(doomUiShader(0xd7790e0979cc584full)&&doomUiShader(0xc757868ee21edb47ull));
@@ -54,6 +58,21 @@ int main(int argc,char** argv){try{
     }
     std::string unknown="vec4 refr_tc = MatrixMul(p, m);";
     const auto unknownBefore=unknown;check(correctDoomLighting(unknown).refractions==0&&unknown==unknownBefore);
+    const std::string ao=R"(
+        // low.ssdoparms samp_viewdepthmap
+        vec3 GetViewPos(vec3 winPos, vec4 inverseProjection0, vec4 inverseProjection1) {
+            return vec3((inverseProjection0.xy * winPos.xy) + inverseProjection0.zw, inverseProjection1.z) / vec3((inverseProjection1.x * winPos.z) + inverseProjection1.y);
+        }
+        vec2 GetWindowPos(vec3 viewPos, vec4 projection) {
+            return vec2(0.5) + (projection.xy * (viewPos.xy / vec2(viewPos.z)));
+        }
+    )";
+    auto correctedAo=ao;check(correctDoomLighting(correctedAo).ssdo==1);
+    check(correctedAo.find("winPos.xy = khSfsCenterRayUv(winPos.xy)")!=std::string::npos);
+    check(correctedAo.find("return khSfsEyeRayUv(")!=std::string::npos);
+    // Never change a partial or unrelated packed-projection shader.
+    auto partialAo=ao.substr(0,ao.find("vec2 GetWindowPos"));const auto partialAoBefore=partialAo;
+    check(correctDoomLighting(partialAo).ssdo==0&&partialAo==partialAoBefore);
     std::cout<<"Generic/profile lighting anchors and replacement without double correction passed\n";
     return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

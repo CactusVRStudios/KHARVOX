@@ -1,9 +1,18 @@
 #version 450
-layout(set=0,binding=0) uniform sampler2D stereoImage;
+layout(set=0,binding=0) uniform sampler2D samp_viewdepthmap;
 layout(set=0,binding=1) uniform sampler2D monoImage;
 struct Low {vec4 projectionmatrixz;vec4 globalvieworigin;vec4 resolutionscale;vec4 frustumvectl;vec4 frustumvectr;vec4 frustumvecbl;};
 struct Inputs {vec4 fragCoord;};
-struct High {vec4 prevviewprojectionmatrixx;vec4 prevviewprojectionmatrixy;};
+struct High {vec4 prevviewprojectionmatrixx;vec4 prevviewprojectionmatrixy;vec4 ssdoparms;};
+// Actual SSDO packed-projection signatures; both directions must be corrected.
+vec3 GetViewPos(vec3 winPos, vec4 inverseProjection0, vec4 inverseProjection1)
+{
+    return vec3((inverseProjection0.xy * winPos.xy) + inverseProjection0.zw, inverseProjection1.z) / vec3((inverseProjection1.x * winPos.z) + inverseProjection1.y);
+}
+vec2 GetWindowPos(vec3 viewPos, vec4 projection)
+{
+    return vec2(0.5) + (projection.xy * (viewPos.xy / vec2(viewPos.z)));
+}
 void main() {
     Low freqLow_fragmentUniforms=Low(vec4(0,0,0,2),vec4(0),vec4(1),vec4(-1,-1,1,0),vec4(1,-1,1,0),vec4(-1,1,1,0));
     Inputs inputs=Inputs(vec4(0,0,1,1));
@@ -15,10 +24,13 @@ void main() {
     vec3 frustumVec = mix(frustumVecX1, frustumVecX0, vec3(1.0 - (tc.y * freqLow_fragmentUniforms.resolutionscale.w)));
     float zLinear=freqLow_fragmentUniforms.projectionmatrixz.w/(inputs.fragCoord.z+freqLow_fragmentUniforms.projectionmatrixz.z);
     vec3 world_pos = freqLow_fragmentUniforms.globalvieworigin.xyz + (frustumVec * zLinear);
-    High high=High(vec4(.5,0,.5,0),vec4(0,.5,.5,0));
+    High high=High(vec4(.5,0,.5,0),vec4(0,.5,.5,0),vec4(.1));
     float rcpHW=1.0/zLinear;
     vec2 winPosPrev = vec2(dot(world_pos, high.prevviewprojectionmatrixx.xyz),dot(world_pos, high.prevviewprojectionmatrixy.xyz)) * rcpHW;
     // Static geometry must produce zero motion after per-eye reprojection.
     vec2 velocity=tc-winPosPrev;
-    gl_FragDepth=texelFetch(stereoImage,ivec2(2),0).r+texture(monoImage,vec2(.5)).r+clusterCoordinate.x*.001+world_pos.x*.1+dot(velocity,vec2(.1));
+    vec3 aoPosition=GetViewPos(vec3(tc,1),vec4(2,2,-1,-1),vec4(0,.5,1,0));
+    vec2 aoWindow=GetWindowPos(vec3(0,0,2),vec4(.5));
+    gl_FragDepth=texelFetch(samp_viewdepthmap,ivec2(2),0).r+texture(monoImage,vec2(.5)).r+clusterCoordinate.x*.001+world_pos.x*.1+dot(velocity,vec2(.1))
+        +aoPosition.x*high.ssdoparms.x+(aoWindow.x-.5)*.2;
 }

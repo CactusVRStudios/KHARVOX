@@ -3,13 +3,29 @@
 #include <string>
 
 namespace kharvox::sfs {
-struct LightingCorrections { unsigned clusters{}, worldPositions{}, refractions{}, temporal{}; };
+struct LightingCorrections { unsigned clusters{}, worldPositions{}, refractions{}, temporal{}, ssdo{}; };
 
 // These are DOOM semantic anchors, also retained by its AMD modules, rather
 // than GPU-specific shader hashes. Unknown shader layouts remain untouched.
 // Buffers containing clustered light lists are built for the centered camera.
 inline LightingCorrections correctDoomLighting(std::string& source) {
     LightingCorrections result;
+    // SSDO traces a hemisphere in eye-local view space. Its packed projection
+    // is still the centered camera's: reconstructing from eye UVs and sampling
+    // with centered UVs makes occlusion slide across thin geometry. Convert
+    // both directions; no IPD translation is needed for eye-local differences.
+    const std::string viewReturn="return vec3((inverseProjection0.xy * winPos.xy) + inverseProjection0.zw, inverseProjection1.z) / vec3((inverseProjection1.x * winPos.z) + inverseProjection1.y);";
+    const std::string windowReturn="return vec2(0.5) + (projection.xy * (viewPos.xy / vec2(viewPos.z)));";
+    if(source.find(".ssdoparms")!=std::string::npos&&source.find("samp_viewdepthmap")!=std::string::npos
+       &&source.find("vec3 GetViewPos(vec3 winPos, vec4 inverseProjection0, vec4 inverseProjection1)")!=std::string::npos
+       &&source.find("vec2 GetWindowPos(vec3 viewPos, vec4 projection)")!=std::string::npos
+       &&source.find(viewReturn)!=std::string::npos&&source.find(windowReturn)!=std::string::npos){
+        source.replace(source.find(viewReturn),viewReturn.size(),
+            "winPos.xy = khSfsCenterRayUv(winPos.xy);\n    "+viewReturn);
+        source.replace(source.find(windowReturn),windowReturn.size(),
+            "return khSfsEyeRayUv(vec2(0.5) + (projection.xy * (viewPos.xy / vec2(viewPos.z))));");
+        ++result.ssdo;
+    }
     // Window-space refraction must sample the same eye projection that produced
     // scenemip. A horizontal TV separation alone misses the HMD's FOV scale/y.
     const std::regex refract(R"(vec4 refr_tc = MatrixMul\([^;\n]+\);)");
@@ -66,7 +82,13 @@ inline LightingCorrections correctDoomLighting(std::string& source) {
     return result;
 }
 inline std::string lightingProjectionHelper(const std::string& eye){
-    return "vec2 khSfsPreviousUv(vec2 uv, float inverseW) {\n"
+    return "vec2 khSfsCenterRayUv(vec2 uv) {\n"
+        "    mat4 m = khSfsProjection.clipFromCenter[int("+eye+")];\n"
+        "    return ((uv * 2.0 - 1.0 - m[3].xy) / vec2(m[0][0], m[1][1]) + 1.0) * 0.5;\n}\n"
+        "vec2 khSfsEyeRayUv(vec2 uv) {\n"
+        "    mat4 m = khSfsProjection.clipFromCenter[int("+eye+")];\n"
+        "    return ((uv * 2.0 - 1.0) * vec2(m[0][0], m[1][1]) + m[3].xy + 1.0) * 0.5;\n}\n"
+        "vec2 khSfsPreviousUv(vec2 uv, float inverseW) {\n"
         "    int eye = int("+eye+");\n"
         "    mat4 m = khSfsProjection.previousClipFromCenter[eye];\n"
         "    return ((uv * 2.0 - 1.0) * vec2(m[0][0], m[1][1]) + m[3].xy + khSfsProjection.previousEyeTranslation[eye].xy * inverseW + 1.0) * 0.5;\n}\n"

@@ -159,6 +159,23 @@ inline bool rebaseAerDrawPlacement(const AerWeaponFrame& from,const AerWeaponFra
     return true;
 }
 
+// The root may have been positioned with last update's animated grip joint.
+// Anchor the completed child using this update's joint and the actual held root.
+// Preserve child animation/rotation; correct only the inherited grip translation.
+inline bool correctAerPropGrip(const AerWeaponFrame& frame,const float* rootOrigin,
+    const float* rootAxis,const float* joint,const float* adjustment,float* propOrigin,float* delta){
+    float grip[3]{},axis[9]{},shift[3]{};
+    if(!aerControllerWorldFrame(frame,grip,axis))return false;
+    for(int i=0;i<3;++i){
+        float observed=rootOrigin[i];
+        for(int j=0;j<3;++j)observed+=rootAxis[j*3+i]*(joint[j]+adjustment[j]);
+        shift[i]=grip[i]-observed;
+        if(!std::isfinite(shift[i])||std::abs(shift[i])>64.f||!std::isfinite(propOrigin[i]))return false;
+    }
+    for(int i=0;i<3;++i){propOrigin[i]+=shift[i];if(delta)delta[i]=shift[i];}
+    return true;
+}
+
 // Final root and prop transforms share the camera's identity. Multiple pairs
 // can be in flight; a newer schedule must not evict a still-running older pair.
 class AerWeaponSourceTransforms {

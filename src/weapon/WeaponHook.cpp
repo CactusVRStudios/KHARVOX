@@ -127,6 +127,8 @@ uintptr_t calibratedEntity{};
 std::array<float, 3> modelOriginLocal{};
 std::array<float, 9> modelAxisLocal{};
 thread_local bool controllerRootProbeValid{};
+thread_local std::array<float,3> sourceRootOrigin{};
+thread_local std::array<float,9> sourceRootAxis{};
 thread_local void* activeHands{};
 std::atomic<bool> collectibleClassifierSupported{};
 std::atomic<unsigned long long> collectibleSeenPresent{};
@@ -202,7 +204,7 @@ void setWeaponKickSuppressed(bool suppress);
 void invalidateAerWeaponPairCache();
 bool synchronizeAerAnimatedWeaponProp(
     uintptr_t entity, const float* nativeOrigin, const float* nativeAxis,
-    float synchronizedOrigin[3], float synchronizedAxis[9]);
+    float synchronizedOrigin[3], float synchronizedAxis[9],bool finalEntity=false);
 
 bool installMuzzleFireAxisOverride(unsigned char* image) {
     // idHands::FireWeapon normally redirects the muzzle toward the 2D
@@ -548,18 +550,24 @@ void pollWeaponRotationCalibration() {
     f7WasDown = f7Down;
 }
 
-void captureAnimatedGripPivot(void* hands) {
-    if (!controllerPlacementActive()) return;
-    if (!hands || !getHandsModel || !getJointTransform || !readableRange(static_cast<unsigned char*>(hands) + 0x5B1A, sizeof(uint16_t))) return;
+bool readAnimatedGripPivot(void* hands,float origin[3]) {
+    if (!hands || !getHandsModel || !getJointTransform || !readableRange(static_cast<unsigned char*>(hands) + 0x5B1A, sizeof(uint16_t))) return false;
     uint16_t joint{};
     std::memcpy(&joint, static_cast<unsigned char*>(hands) + 0x5B1A, sizeof(joint));
-    if (joint == 0xFFFF) return;
+    if (joint == 0xFFFF) return false;
     void* model = getHandsModel(hands);
-    if (!model) return;
-    float origin[3]{}, axis[9]{};
-    if (!getJointTransform(model, 1, joint, origin, axis)) return;
-    for (float component : origin)
-        if (!std::isfinite(component) || std::fabs(component) > 500.0f) return;
+    if (!model) return false;
+    float axis[9]{};
+    if (!getJointTransform(model, 1, joint, origin, axis)) return false;
+    for (int i=0;i<3;++i)
+        if (!std::isfinite(origin[i]) || std::fabs(origin[i]) > 500.0f) return false;
+    return true;
+}
+
+void captureAnimatedGripPivot(void* hands) {
+    if (!controllerPlacementActive()) return;
+    float origin[3]{};
+    if(!readAnimatedGripPivot(hands,origin))return;
 
     const unsigned generation = pose.resetGeneration.load(std::memory_order_acquire);
     if (neutralGripPivotGeneration.load(std::memory_order_acquire) != generation) {
@@ -1804,6 +1812,7 @@ bool readCollectibleAnimation(void* hands) {
 
 extern "C" void __fastcall updateHandsTransformHook(void* hands) {
     activeHands = hands;
+    if(kharvox::sfs::vrEnabled())weaponRootSourceValid=false;
     if (originalUpdateHandsTransform) originalUpdateHandsTransform(hands);
 
     // Observe the live native animation even in Quad/cinematics, before the
@@ -2292,6 +2301,8 @@ bool buildControllerTransform(uintptr_t entity, const float* nativeOrigin, const
             ||sourceFrame.input.generation!=pose.resetGeneration.load(std::memory_order_acquire))return false;
         const bool reused=weaponSourceTransforms.hold(sourceFrame,entity,0,desiredOrigin,desiredAxis,&sourceFrame);
         weaponRootSource=sourceFrame;weaponRootSourceValid=true;
+        std::memcpy(sourceRootOrigin.data(),desiredOrigin,sizeof(float)*3);
+        std::memcpy(sourceRootAxis.data(),desiredAxis,sizeof(float)*9);
         weaponRootSourcePresent=KharvoxCameraCurrentPresentSerial();
         traceWeaponSource(kharvox::pose_trace::WeaponSourceRoot,entity,sourceFrame,desiredOrigin,desiredAxis,reused?2:1);
     }
@@ -2300,7 +2311,7 @@ bool buildControllerTransform(uintptr_t entity, const float* nativeOrigin, const
 
 bool synchronizeAerAnimatedWeaponProp(
     uintptr_t entity, const float* nativeOrigin, const float* nativeAxis,
-    float synchronizedOrigin[3], float synchronizedAxis[9]) {
+    float synchronizedOrigin[3], float synchronizedAxis[9],bool finalEntity) {
     if (!entity || !nativeOrigin || !nativeAxis) return false;
     if(KharvoxCameraUsesAerGameplaySource()){
         // Carry the source selected by this worker's actual root calculation
@@ -2315,6 +2326,24 @@ bool synchronizeAerAnimatedWeaponProp(
         }
         std::memcpy(synchronizedOrigin,nativeOrigin,3*sizeof(float));
         std::memcpy(synchronizedAxis,nativeAxis,9*sizeof(float));
+        bool gripCorrected=false;
+        if(finalEntity&&kharvox::sfs::vrEnabled()&&activeHands
+            &&KharvoxCameraGameplayActive()&&!KharvoxCameraCutsceneActive()
+            &&!readCollectibleAnimation(activeHands)){
+            float joint[3]{},delta[3]{};
+            const auto adjustment=configuredWeaponPivotAdjustment();
+            if(readAnimatedGripPivot(activeHands,joint))
+                gripCorrected=kharvox::correctAerPropGrip(weaponRootSource,sourceRootOrigin.data(),
+                    sourceRootAxis.data(),joint,adjustment.data(),synchronizedOrigin,delta);
+            static std::atomic<uint64_t> corrections{};
+            if(gripCorrected&&(std::abs(delta[0])>.05f||std::abs(delta[1])>.05f||std::abs(delta[2])>.05f)){
+                const auto n=++corrections;
+                if(kharvox::extendedDiagnosticsEnabled()&&(n<=8||n%1024==0))
+                    log("[SFS-WEAPON-GRIP] current-joint correction="+std::to_string(delta[0])+","
+                        +std::to_string(delta[1])+","+std::to_string(delta[2])+" pose="
+                        +std::to_string(weaponRootSource.camera.key.poseId)+" count="+std::to_string(n));
+            }
+        }
         kharvox::AerWeaponFrame propSource;
         const bool reused=weaponSourceTransforms.hold(weaponRootSource,entity,1,synchronizedOrigin,synchronizedAxis,&propSource);
         traceWeaponSource(kharvox::pose_trace::WeaponSourceProp,entity,propSource,synchronizedOrigin,synchronizedAxis,reused?2:1);
@@ -2329,7 +2358,7 @@ bool synchronizeAerAnimatedWeaponProp(
                 +" inputToPropMs="+std::to_string(ageMs)+" sourcePresent="+std::to_string(weaponRootSource.camera.present)
                 +" currentPresent="+std::to_string(KharvoxCameraCurrentPresentSerial()));
         }
-        return reused;
+        return reused||gripCorrected;
     }
     const auto pairState = kharvox::unpackAerWeaponPairState(
         aerRenderPairState.load(std::memory_order_acquire));
@@ -2437,7 +2466,7 @@ extern "C" void __fastcall setRenderEntityAxisHook(void* rawEntity, const float*
         auto propOrigin = reinterpret_cast<float*>(entity + 0x78);
         if (synchronizeAerAnimatedWeaponProp(
                 reinterpret_cast<uintptr_t>(rawEntity), propOrigin, nativeAxis,
-                desiredOrigin, desiredAxis)) {
+                desiredOrigin, desiredAxis,true)) {
             const unsigned char lockMask = entity[0x71];
             if ((entity[0x70] & lockMask) == 0)
                 std::memcpy(entity + 0xC8, desiredOrigin, sizeof(desiredOrigin));

@@ -59,6 +59,27 @@ int main(){
     check(!h.resolve(41,2,8,1,frame)); // actual reset still rejects it
     check(!h.resolve(41,3,7,1,frame)); // level transition still rejects it
 
+    {
+        // Uneven ground changes the animated grip after the root used the
+        // preceding update's joint. Completed prop must stay on the controller.
+        AerWeaponFrame f{};f.input.valid=true;f.input.grip={10,20,30};
+        f.camera.bodyAxis={0,1,0,-1,0,0,0,0,1};f.camera.bodyOrigin={100,200,300};
+        float grip[3]{},controllerAxis[9]{};check(aerControllerWorldFrame(f,grip,controllerAxis));
+        float rootAxis[9]{0,2,0,-2,0,0,0,0,2}; // rotated and scaled mount
+        float adjustment[3]{1,2,3},oldJoint[3]{5,6,7},root[3]{};
+        for(int i=0;i<3;++i){root[i]=grip[i];for(int j=0;j<3;++j)root[i]-=rootAxis[j*3+i]*(oldJoint[j]+adjustment[j]);}
+        for(float step:{0.f,5.f,-3.f,8.f,0.f}){
+            float joint[3]{5+step,6,7+step},prop[3]{},delta[3]{};
+            for(int i=0;i<3;++i){prop[i]=root[i];for(int j=0;j<3;++j)prop[i]+=rootAxis[j*3+i]*joint[j];}
+            check(correctAerPropGrip(f,root,rootAxis,joint,adjustment,prop,delta));
+            for(int i=0;i<3;++i){float expected=grip[i];for(int j=0;j<3;++j)expected-=rootAxis[j*3+i]*adjustment[j];check(near(prop[i],expected));}
+        }
+        float invalidJoint[3]{1000,0,0},unchanged[3]{1,2,3};
+        check(!correctAerPropGrip(f,root,rootAxis,invalidJoint,adjustment,unchanged,nullptr));
+        check(unchanged[0]==1&&unchanged[1]==2&&unchanged[2]==3);
+        f.input.valid=false;
+        check(!correctAerPropGrip(f,root,rootAxis,oldJoint,adjustment,unchanged,nullptr));
+    }
     // Two workers, delayed eyes, different root/prop objects and future pairs.
     AerWeaponSourceTransforms transforms;
     frame.camera.key={771,2,1};frame.input=input;

@@ -5,6 +5,29 @@ void check(bool ok){if(!ok)std::abort();}
 bool near(float a,float b){return std::abs(a-b)<.0001f;}
 int main(){
     using namespace kharvox;
+    {
+        AerWeaponDrawFrames draws;
+        AerWeaponFrame f{};f.camera.key={2000,9,0};f.input.valid=true;
+        f.camera.renderOrigin={20,30,40};f.camera.bodyOrigin={20,30,35};
+        f.input.sampleQpc=100;check(draws.latch(f));
+        auto republished=f;republished.camera.bodyOrigin[2]=38;republished.input.sampleQpc=200;
+        check(!draws.latch(republished));
+        check(republished.camera.bodyOrigin[2]==35&&republished.input.sampleQpc==100);
+        // Fresh tracking at 120 Hz is never held for a two-eye/60 Hz pair,
+        // even when engine animation/body data only changes every other frame.
+        for(unsigned i=1;i<=120;++i){
+            auto next=f;next.camera.key.poseId+=i;next.input.sampleQpc+=i;
+            next.camera.bodyOrigin[0]+=float(i/2);
+            check(draws.latch(next));check(next.input.sampleQpc==100+i);
+        }
+        auto reset=f;reset.input.epoch=1;check(draws.latch(reset));
+        reset.input.generation=1;check(draws.latch(reset));
+        reset.camera.renderOrigin[0]+=1;check(draws.latch(reset));
+        float viewAxis[9]{1,0,0,0,1,0,0,0,1};
+        check(draws.latch(reset,viewAxis));check(!draws.latch(reset,viewAxis));
+        viewAxis[0]=0;viewAxis[1]=1;viewAxis[3]=-1;viewAxis[4]=0;
+        check(draws.latch(reset,viewAxis)); // same position, different real view
+    }
     AerWeaponSourceHistory h;AerWeaponInput input;
     input.valid=true;input.generation=1;input.epoch=7;input.grip={10,20,30};
     input.sampleQpc=1234;

@@ -41,6 +41,26 @@ inline bool alignAerWeaponDrawCamera(AerWeaponFrame& frame,const float* origin){
     for(int i=0;i<3;++i){frame.camera.bodyOrigin[i]+=origin[i]-frame.camera.renderOrigin[i];frame.camera.renderOrigin[i]=origin[i];}
     return true;
 }
+// Camera history can be republished while asynchronous depth/material jobs
+// consume the same view. Freeze its body/controller mapping for that draw view,
+// not for two XR frames. A different pose, view origin or reset gets a new entry.
+class AerWeaponDrawFrames {
+    struct Entry {AerWeaponFrame frame{};std::array<float,9> viewAxis{};};
+    std::mutex mutex_;std::array<Entry,64> frames_{};size_t next_{};
+public:
+    bool latch(AerWeaponFrame& frame,const float* viewAxis=nullptr){
+        auto axis=frame.camera.headAxis;
+        if(viewAxis)std::memcpy(axis.data(),viewAxis,sizeof(axis));
+        std::lock_guard lock(mutex_);
+        for(const auto& entry:frames_){const auto& saved=entry.frame;
+            if(saved.camera.key.valid()&&saved.camera.key==frame.camera.key
+                &&saved.input.epoch==frame.input.epoch&&saved.input.generation==frame.input.generation
+                &&saved.camera.renderOrigin==frame.camera.renderOrigin&&entry.viewAxis==axis){frame=saved;return false;}
+        }
+        frames_[next_]={frame,axis};next_=(next_+1)%frames_.size();return true;
+    }
+};
+
 enum class AerWeaponResolveFailure { None, NoCamera, Level, Future, Stale, MissingInput, InvalidInput, Epoch, Generation };
 struct AerWeaponResolveDiagnostic {
     AerWeaponResolveFailure failure{};

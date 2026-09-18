@@ -28,4 +28,21 @@ inline bool laserWorldToLocal(const float* world,const float* worldAxis,
     }
     return true;
 }
+// Carry the observed animated muzzle through the exact model correction used
+// by the draw. Includes translation, rotation and model scale; no new tracking.
+inline bool laserFollowDraw(const float* sourceOrigin,const float* sourceAxis,
+    const float* targetOrigin,const float* targetAxis,float* origin,float* direction){
+    float rayAxes[9]{},local[3]{},localAxes[9]{},out[3]{},forward[3]{};
+    for(int i=0;i<3;++i)rayAxes[i]=direction[i];
+    if(!laserWorldToLocal(origin,rayAxes,sourceOrigin,sourceAxis,local,localAxes))return false;
+    float length2=0;
+    for(int i=0;i<3;++i){out[i]=targetOrigin[i];
+        for(int j=0;j<3;++j){out[i]+=local[j]*targetAxis[j*3+i];forward[i]+=localAxes[j]*targetAxis[j*3+i];}
+        if(!std::isfinite(out[i])||!std::isfinite(forward[i]))return false;
+        length2+=forward[i]*forward[i];
+    }
+    if(!std::isfinite(length2)||length2<1e-12f)return false;
+    for(int i=0;i<3;++i){origin[i]=out[i];direction[i]=forward[i]/std::sqrt(length2);}
+    return true;
+}
 }

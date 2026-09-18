@@ -36,4 +36,14 @@ int main(){
     }
     float zero[9]{},result[9]{};
     check(!laserWorldToLocal(zero,zero,zero,zero,result,result));
+    {
+        float source[3]{10,20,30},scaled[9]{2,0,0,0,2,0,0,0,2};
+        float target[3]{100,200,300},turned[9]{0,2,0,-2,0,0,0,0,2};
+        float muzzle[3]{14,20,30},direction[3]{1,0,0};
+        check(laserFollowDraw(source,scaled,target,turned,muzzle,direction));
+        check(std::abs(muzzle[0]-100)<.001f&&std::abs(muzzle[1]-204)<.001f&&std::abs(muzzle[2]-300)<.001f);
+        check(std::abs(direction[0])<.001f&&std::abs(direction[1]-1)<.001f&&std::abs(direction[2])<.001f);
+        check(!laserFollowDraw(source,zero,target,turned,muzzle,direction));
+        check(muzzle[1]==204&&direction[1]==1); // rejection must not modify output
+    }
 }

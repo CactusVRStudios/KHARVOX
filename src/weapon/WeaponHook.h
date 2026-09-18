@@ -1,8 +1,9 @@
 #pragma once
 #include "AerWeaponSource.h"
+// drawCameraPose points to the validated 12-float origin + 3x3 view basis.
 int KharvoxWeaponResolveAerDraw(kharvox::AerSourceKey source,const float* origin,const float* axis,
     float* targetOrigin,float* targetAxis,uint64_t& matchedPoseId,
-    uintptr_t model=0,uintptr_t asset=0,bool* recovered=nullptr,const float* drawCameraOrigin=nullptr);
+    uintptr_t model=0,uintptr_t asset=0,bool* recovered=nullptr,const float* drawCameraPose=nullptr);
 
 enum class KharvoxWeaponKind {
     Unknown = 0,

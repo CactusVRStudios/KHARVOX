@@ -173,11 +173,15 @@ std::atomic<float> lastWeaponPresentDepthHack{};
 struct LaserSourceSnapshot {
     std::array<float,3> origin{}, direction{}, bodyOrigin{};
     std::array<float,9> bodyAxis{};
+    std::array<float,3> propOrigin{};
+    std::array<float,9> propAxis{};
     KharvoxWeaponKind kind{KharvoxWeaponKind::Unknown};
     uint64_t tick{}, epoch{};
 };
 std::mutex laserSourceMutex;
 kharvox::AerInputHistory<LaserSourceSnapshot> laserSources;
+kharvox::AerInputHistory<LaserSourceSnapshot> laserDrawSources;
+kharvox::AerWeaponDrawFrames weaponDrawFrames;
 LaserSourceSnapshot latestLaserSource;
 std::atomic<unsigned> laserMuzzleKindsLogged{};
 std::atomic<unsigned> laserMuzzleFailureKindsLogged{};
@@ -1371,6 +1375,8 @@ void publishPropLaserMuzzlePose(void* propEntity, const float* propOrigin,
 
     LaserSourceSnapshot snapshot{};
     snapshot.origin=worldOrigin;snapshot.direction=worldDirection;snapshot.kind=kind;
+    std::copy_n(propOrigin,3,snapshot.propOrigin.begin());
+    std::copy_n(propAxis,9,snapshot.propAxis.begin());
     snapshot.tick=GetTickCount64();snapshot.epoch=weaponSourceEpoch.load(std::memory_order_acquire);
     kharvox::AerSourceKey key{};
     if(KharvoxCameraUsesAerGameplaySource()) {
@@ -2562,11 +2568,40 @@ bool KharvoxWeaponCollectibleAnimationActive() {
 
 void KharvoxWeaponObserveAerCamera(const kharvox::AerWeaponCamera& camera){weaponSourceHistory.camera(camera);}
 int KharvoxWeaponResolveAerDraw(kharvox::AerSourceKey source,const float* origin,const float* axis,
-    float* targetOrigin,float* targetAxis,uint64_t& matchedPoseId,uintptr_t model,uintptr_t asset,bool* recovered,const float* drawCameraOrigin){
+    float* targetOrigin,float* targetAxis,uint64_t& matchedPoseId,uintptr_t model,uintptr_t asset,bool* recovered,const float* drawCameraPose){
     kharvox::AerWeaponFrame frame;
     const bool found=weaponSourceHistory.frame(source,KharvoxCameraCurrentPresentSerial(),frame);
-    const bool followBody=found&&kharvox::sfs::vrEnabled()&&alignAerWeaponDrawCamera(frame,drawCameraOrigin);
-    return weaponSourceTransforms.forDraw(source,origin,axis,targetOrigin,targetAxis,matchedPoseId,found?&frame:nullptr,model,asset,recovered,followBody);
+    const bool followBody=found&&kharvox::sfs::vrEnabled()&&alignAerWeaponDrawCamera(frame,drawCameraPose);
+    if(followBody&&weaponDrawFrames.latch(frame,drawCameraPose+3)){
+        // Count unique draw views and controller samples, not draw calls or
+        // compositor refreshes. Bounded logging makes cadence testable.
+        static std::mutex cadenceMutex;std::lock_guard lock(cadenceMutex);
+        static uint64_t start{},frames{},changed{},poseChanges{},previousSample{};
+        static kharvox::AerWeaponInput previousInput{};
+        const auto now=GetTickCount64();if(!start)start=now;
+        ++frames;if(frame.input.sampleQpc!=previousSample){++changed;previousSample=frame.input.sampleQpc;}
+        if(frame.input.grip!=previousInput.grip||frame.input.orientation!=previousInput.orientation)++poseChanges;
+        previousInput=frame.input;
+        if(now-start>=2000){
+            if(kharvox::extendedDiagnosticsEnabled())log("[SFS-WEAPON-CADENCE] drawViews="+std::to_string(frames)
+                +" controllerSamples="+std::to_string(changed)+" poseChanges="+std::to_string(poseChanges)
+                +" intervalMs="+std::to_string(now-start));
+            start=now;frames=changed=poseChanges=0;
+        }
+    }
+    const int status=weaponSourceTransforms.forDraw(source,origin,axis,targetOrigin,targetAxis,matchedPoseId,found?&frame:nullptr,model,asset,recovered,followBody);
+    if(followBody&&(status==1||status==2||status==6)){
+        std::lock_guard lock(laserSourceMutex);
+        LaserSourceSnapshot sample{};
+        if(laserSources.find({matchedPoseId,source.level,source.eye,source.domain},sample)
+            &&sample.epoch==frame.input.epoch&&sample.kind==KharvoxWeaponCurrentKind()
+            &&kharvox::aerWeaponPoseNear(sample.propOrigin.data(),sample.propAxis.data(),origin,axis)
+            &&kharvox::laserFollowDraw(origin,axis,targetOrigin,targetAxis,sample.origin.data(),sample.direction.data())){
+            sample.bodyOrigin=frame.camera.bodyOrigin;sample.bodyAxis=frame.camera.bodyAxis;
+            laserDrawSources.remember(source,sample);
+        }
+    }
+    return status;
 }
 
 void KharvoxWeaponRememberAerInput(unsigned long long poseId) {
@@ -2705,7 +2740,17 @@ bool KharvoxWeaponGetLaserMuzzlePose(float origin[3], float direction[3],
     {
         std::lock_guard lock(laserSourceMutex);
         if(sourcePose) {
-            if(!laserSources.find({sourcePose,KharvoxCameraLevelTransitionGeneration(),sourceEye},sample))return false;
+            const kharvox::AerSourceKey key{sourcePose,KharvoxCameraLevelTransitionGeneration(),sourceEye};
+            const bool draw=kharvox::sfs::vrEnabled()&&laserDrawSources.find(key,sample);
+            const bool available=draw||laserSources.find(key,sample);
+            if(kharvox::sfs::vrEnabled()){
+                static uint64_t calls{},draws{},raw{},missing{};
+                ++calls;if(draw)++draws;else if(available)++raw;else ++missing;
+                if(calls%240==0&&kharvox::extendedDiagnosticsEnabled())
+                    log("[SFS-LASER-SOURCE] calls="+std::to_string(calls)+" draw="+std::to_string(draws)
+                        +" animationFallback="+std::to_string(raw)+" missing="+std::to_string(missing));
+            }
+            if(!available)return false;
         }else sample=latestLaserSource;
     }
     if(!kharvox::laserSourceUsable(sample.tick,GetTickCount64(),sample.epoch,

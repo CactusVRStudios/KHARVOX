@@ -934,3 +934,29 @@ no new hardware gameplay validation of particle collisions was possible locally.
 Test 20 keeps Test 18 weapon placement and Test 19 camera-profile fixes. The actual
 climbing/weapon jump and specific UAC light/HUD/seams require tester confirmation;
 shader correction is not claimed proof that every reported visual defect is fixed.
+## Test 21: SFS lens flares forced off; weapon captures (2026-09-18)
+
+User identified the blue one-eye streak as lens flare and requested it disabled
+for this renderer. Verified DOOM registrations: r_skipFlares object 0x66D9380
+at 0x226436 (name), r_lensFlaresRatio object 0x6727E70 at 0x2301C6.
+SFS now sets/protects r_skipFlares=1 and r_lensFlaresRatio=0 through the existing
+identity-checked engine setter before game queues. Launcher arguments mirror it.
+AER and Native profiles do not gain these overrides. No raw process writes.
+
+A bounded 30-second simulator start verified before=0 actual=1 for r_skipFlares
+and before=1.0 actual=0 for r_lensFlaresRatio, both verified=true. This confirms
+engine configuration, not visual headset gameplay compatibility. All 123 CTests
+and launcher self-test pass, including SFS-only scope and preset protection.
+
+Four new user captures from PID16444: 25944687, 25951265, 25958109, 25964593;
+frames 91111,91697,92316,92886. Both eyes have sourceMatched=true and matching
+source frame/revision in each capture. Raw and final images show no obvious
+one-frame displaced duplicate weapon. This cannot rule out the reported flicker:
+there are 570-619 rendered frames between snapshots and a two-second capture delay.
+Capture-induced cadence stalls cannot diagnose normal gameplay timing.
+Evidence copied to out/beta096/test21-weapon-captures with contact overview/logs.
+User confirms short forward/backward movement at this exact metal walkway/doorway
+reliably produces the flicker. Keep as reproduction, not proof of a floor or
+reflection cause. Test21 changes only flare controls; weapon binding is unchanged.
+Recommended next diagnostic: Ctrl+Shift+T, eight-second CPU pose trace while
+repeating that movement. Ctrl+Shift+P produces isolated GPU image snapshots.

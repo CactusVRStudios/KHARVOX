@@ -8,6 +8,17 @@ int main(){
   const auto profile=rendererStartupControls(native,false,false,false,false,disableAa,sfs);
   const auto* temporal=nativePresetControl(profile,0x672bc30);
   check(bool(temporal)==(sfs&&!native));
+  for(auto rva:{uintptr_t(0x66d9380),uintptr_t(0x6727e70)}){
+   const auto* flare=nativePresetControl(profile,rva);
+   check(bool(flare)==(sfs&&!native));
+   if(flare){
+    const std::string expected=rva==0x66d9380?"1":"0";
+    check(std::string(flare->name)==(rva==0x66d9380?"r_skipFlares":"r_lensFlaresRatio"));
+    for(bool force:{false,true})check(setProtectedRenderControl(flare,"99",force,[&](const char* value,bool forwarded){
+     return std::string(value)==expected&&force==forwarded;
+    }));
+   }
+  }
   if(temporal){
    check(std::string(temporal->name)=="r_SSDOTemporalAA"&&std::string(temporal->value)=="0");
    for(bool force:{false,true})check(setProtectedRenderControl(temporal,"1",force,[&](const char* value,bool forwarded){

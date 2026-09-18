@@ -865,6 +865,11 @@ internal static class SelfTest
             var ssdo=Array.IndexOf(args,"+r_SSDOTemporalAA");
             Require(index==2 ? ssdo>=0&&args[ssdo+1]=="0" : ssdo<0,
                 "only SFS disables independent SSDO temporal history");
+            foreach(var flare in new[]{("r_skipFlares","1"),("r_lensFlaresRatio","0")}) {
+                var offset=Array.IndexOf(args,"+"+flare.Item1);
+                Require(index==2 ? offset>=0&&args[offset+1]==flare.Item2 : offset<0,
+                    "only SFS forces lens flares off");
+            }
         }
         renderer.SelectedIndex=1;
         foreach(var native in new[]{false,true}) {

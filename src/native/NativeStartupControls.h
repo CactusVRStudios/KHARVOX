@@ -33,7 +33,13 @@ inline std::vector<StartupControl> rendererStartupControls(bool native,bool fres
  // The history pass at 0x1874673 is skipped when this is zero. Late-bound
  // controller models cannot use camera-only occlusion history reliably.
  // Keep current-frame SSDO, direct shadows and ordinary AER unchanged.
- if(sfs)controls.push_back({0x672bc30,"r_SSDOTemporalAA","0"});
+ if(sfs){
+  controls.push_back({0x672bc30,"r_SSDOTemporalAA","0"});
+  // Verified registrations at 0x226436 / 0x2301C6. Disable both flare
+  // model submission and lens-flare composition only in the SFS renderer.
+  controls.push_back({0x66d9380,"r_skipFlares","1"});
+  controls.push_back({0x6727e70,"r_lensFlaresRatio","0"});
+ }
  return controls;
 }
 template<class Set>

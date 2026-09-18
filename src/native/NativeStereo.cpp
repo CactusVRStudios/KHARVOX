@@ -4,6 +4,7 @@
 #include "../weapon/AerDrawModel.h"
 #include "../weapon/AerWeaponAttachments.h"
 #include "NativeStereo.h"
+#include "../sfs/NativeSfs.h"
 #include "../hands/HandSceneDepthTracker.h"
 #include "NativeHandSceneTarget.h"
 #include <filesystem>
@@ -226,7 +227,7 @@ void setDevice(VkInstance instance,VkPhysicalDevice physical,VkDevice device,PFN
   // matrix-producer hook. Native stereo replay/quality hooks stay disabled.
   static const bool visualReady=[](){
    if(!installEngine(true)){kharvoxnative::log::error("[RENDER-CVAR] AER setter profile/installation failed; visual settings preservation unavailable");return false;}
-   const auto controls=rendererStartupControls(false,false,false,false,false,debugDisableAa());
+   const auto controls=rendererStartupControls(false,false,false,false,false,debugDisableAa(),kharvox::sfs::vrEnabled());
    const bool ok=initializeStartupControls(true,controls,[](const StartupControl& c,std::string& value){
     value=shadowAuditValue(c.rva,c.name);return value!="unavailable";
    },[](const StartupControl& c){return nativeCvarSet(reinterpret_cast<void*>(nativeCvarModule+c.rva),c.value,false);

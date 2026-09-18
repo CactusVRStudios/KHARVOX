@@ -10,7 +10,7 @@ static std::string shadowAuditValue(uintptr_t rva,const char* expected);
 static bool hookFreshShadowSet(void* object,const char* value,bool force){
  const auto rva=reinterpret_cast<uintptr_t>(object)-freshShadowModule;
  static const auto controls=rendererStartupControls(requested(),kharvox::rendererDefaults::freshShadows,
-  kharvox::rendererDefaults::uncachedShadows,kharvox::runtimeFileExists(L"native_test_cached_shadows"),kharvox::runtimeFileExists(L"native_test_disable_async_compute"),debugDisableAa());
+  kharvox::rendererDefaults::uncachedShadows,kharvox::runtimeFileExists(L"native_test_cached_shadows"),kharvox::runtimeFileExists(L"native_test_disable_async_compute"),debugDisableAa(),kharvox::sfs::vrEnabled());
  const auto* selected=nativePresetControl(controls,rva);
  if(selected){
   const auto& control=*selected;

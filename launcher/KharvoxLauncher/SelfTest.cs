@@ -859,6 +859,14 @@ internal static class SelfTest
         RendererSelection.ClearObsoleteMarkers(migrationDirectory);
         Require(!RendererSelection.ObsoleteMarkers.Any(marker=>File.Exists(Path.Combine(migrationDirectory,marker))),"obsolete markers removed");
         var argumentBuilder=typeof(KharvoxRunner).GetMethod("BuildGameArguments",BindingFlags.Static|BindingFlags.NonPublic)!;
+        foreach(var index in new[]{0,1,2}) {
+            renderer.SelectedIndex=index;
+            var args=((IEnumerable<string>)argumentBuilder.Invoke(null,new object[]{form.CreateLaunchOptions(),false,100m,index==1})!).ToArray();
+            var ssdo=Array.IndexOf(args,"+r_SSDOTemporalAA");
+            Require(index==2 ? ssdo>=0&&args[ssdo+1]=="0" : ssdo<0,
+                "only SFS disables independent SSDO temporal history");
+        }
+        renderer.SelectedIndex=1;
         foreach(var native in new[]{false,true}) {
             var args=((IEnumerable<string>)argumentBuilder.Invoke(null,new object[]{form.CreateLaunchOptions(),false,100m,native})!).ToArray();
             foreach(var name in new[]{"r_TAAResolveFilter","r_taaNegativeLodBiasVT","vt_lodBias","g_weaponkick"})

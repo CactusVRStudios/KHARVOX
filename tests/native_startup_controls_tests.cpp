@@ -4,6 +4,17 @@
 using namespace kharvox::native;
 int main(){
  int failures=0,writes=0,reports=0;auto check=[&](bool b){if(!b)++failures;};
+ for(bool sfs:{false,true})for(bool native:{false,true})for(bool disableAa:{false,true}){
+  const auto profile=rendererStartupControls(native,false,false,false,false,disableAa,sfs);
+  const auto* temporal=nativePresetControl(profile,0x672bc30);
+  check(bool(temporal)==(sfs&&!native));
+  if(temporal){
+   check(std::string(temporal->name)=="r_SSDOTemporalAA"&&std::string(temporal->value)=="0");
+   for(bool force:{false,true})check(setProtectedRenderControl(temporal,"1",force,[&](const char* value,bool forwarded){
+    return std::string(value)=="0"&&force==forwarded;
+   }));
+  }
+ }
  const uintptr_t debugRvas[]={0x6727ac0,0x66dd2a0,0x66e0760,0x5b5ec50};
  for(bool native:{false,true}) {
   const auto profile=rendererStartupControls(native,false,false,false);

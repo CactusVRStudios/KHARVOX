@@ -141,7 +141,7 @@ internal sealed class KharvoxLaunchOptions
 
 internal static class KharvoxRunner
 {
-    internal const string BuildId = "2026.09.18-launcher-v0.96-test.16";
+    internal const string BuildId = "2026.09.18-launcher-v0.96-test.17";
     private const string LayerName = "VK_LAYER_KHARVOX_OPENXR";
     private const string RegistryPath = @"SOFTWARE\Khronos\Vulkan\ImplicitLayers";
     private static readonly CultureInfo Invariant = CultureInfo.InvariantCulture;
@@ -1687,6 +1687,9 @@ internal static class KharvoxRunner
             "+r_windowWidth", renderWidth.ToString(Invariant),
             "+r_windowHeight", renderHeight.ToString(Invariant)
         ]);
+        // SSDO has separate temporal history even with spatial SMAA selected.
+        if (RendererSelection.IsSfs(options.RendererMode))
+            args.AddRange(["+r_SSDOTemporalAA", "0"]);
         return args;
     }
 

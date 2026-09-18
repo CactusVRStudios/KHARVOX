@@ -26,9 +26,15 @@ inline std::vector<StartupControl> nativeStartupControls(bool fresh,bool uncache
  return controls;
 }
 // Shared visual settings, never Native shadow/queue controls in AER.
-inline std::vector<StartupControl> rendererStartupControls(bool native,bool fresh,bool uncached,bool cached,bool disableAsync=false,bool disableAa=false){
+inline std::vector<StartupControl> rendererStartupControls(bool native,bool fresh,bool uncached,bool cached,bool disableAsync=false,bool disableAa=false,bool sfs=false){
  if(native)return nativeStartupControls(fresh,uncached,cached,disableAsync,disableAa);
- return visualStartupControls(disableAa);
+ auto controls=visualStartupControls(disableAa);
+ // Independent of r_antialiasing: registration 0x2327DD, default 1.
+ // The history pass at 0x1874673 is skipped when this is zero. Late-bound
+ // controller models cannot use camera-only occlusion history reliably.
+ // Keep current-frame SSDO, direct shadows and ordinary AER unchanged.
+ if(sfs)controls.push_back({0x672bc30,"r_SSDOTemporalAA","0"});
+ return controls;
 }
 template<class Set>
 bool setProtectedRenderControl(const StartupControl* control,const char* requested,bool force,const Set& setter){

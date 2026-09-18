@@ -817,3 +817,28 @@ Test 16: use the rendered source camera as the SFS weapon body origin
 - Regression simulates walking with intermittent one-tick physics lead, pipe-height discontinuities, camera copies and room-scale offset. The grip must remain fixed relative to the rendered camera; the AER branch retains the physics origin.
 - [SFS-WEAPON-ANCHOR] excludedPhysicsDelta logs the discrepancy being excluded from the SFS mount. User test15 hand_models.cfg and hand_models_calibration_default.cfg match test14 hashes; their packaged calibration was not changed.
 - This fixes the identified coordinate-source mismatch; confirmation of the reported transient flicker and hand alignment still requires a headset run.
+## Test 17: independent SSDO temporal history
+
+Test16 user logs still report intermittent weapon ghosting after the native
+camera anchor correction. These logs do not establish whether geometry or
+lighting causes the remaining artifact. No new claim of a proven pose fix.
+
+Local DOOMx64vk.exe analysis: registration at RVA 0x2327DD passes CVar object
+0x672BC30 and name r_SSDOTemporalAA to constructor 0x293870, with default 1.
+At 0x1874631 the SSDO renderer reads its integer at object+0x30; test ecx at
+0x1874673 branches past temporal work to 0x18748F3 when zero. History-valid
+state is also conditioned on this value at 0x187490C and 0x1874992. This is
+independent of spatial SMAA (r_antialiasing=2) and motion blur controls.
+
+Test17 requests and protects r_SSDOTemporalAA=0 only in SFS VR, through the
+existing identity-checked engine setter and startup readback. Current-frame
+SSDO and direct lighting/shadow maps remain enabled. This avoids reusing
+occlusion from an earlier camera/model image for independently moving VR
+weapons. Possible tradeoff: more visible fine occlusion noise. No weapon,
+hand calibration, render scale, shader projection or frame timing change.
+Headset comparison is required to determine whether this removes the reported
+one-frame ghost. The startup log must show actual=0 verified=true for this
+CVar; compilation and unit tests alone do not prove runtime application.
+Validation: 119/119 CTests and launcher self-test pass. Bounded 30-second
+OpenXR simulator menu probe confirms r_SSDOTemporalAA before=1 actual=0
+verified=true beforeGameQueue=true. No headset/gameplay validation.

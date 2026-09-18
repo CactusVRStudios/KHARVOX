@@ -128,6 +128,7 @@ if(KHARVOX_BUILD_LAYER)
   target_compile_features(KharvoxLayer PRIVATE cxx_std_17)
   if(KHARVOX_BUILD_SFS_COMPILER)
     target_sources(KharvoxLayer PRIVATE src/sfs/NativeSfs.cpp)
+    target_compile_definitions(KharvoxNativeStereo PRIVATE KHARVOX_HAVE_SFS_COMPILER)
     target_link_libraries(KharvoxLayer PRIVATE KharvoxSfsCompiler)
     target_compile_definitions(KharvoxLayer PRIVATE KHARVOX_HAVE_SFS_COMPILER)
     add_custom_command(TARGET KharvoxLayer POST_BUILD

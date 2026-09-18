@@ -379,3 +379,70 @@ out/beta096/psvr2-steamxr-fix3/ and
 out/beta096/KHARVOX-0.96-SFS-PSVR2-SteamXR-fix3.zip. Compare the same rock and walk
 at the previous 80% scale first; separately test 100% startup for the allocation
 change. Fresh logs now expose sharedShadow=1 for unmatched shadow variants.
+
+
+## Execution and presentation audit, 2026-09-18
+
+Scope correction: the requested target is the provider's complete efficient
+stereo workflow, including work sharing and presentation synchronization, adapted
+to full VR. The user explicitly permits NVIDIA-only support for this renderer.
+Do not trade that target for AMD compatibility or assume that generic multiview
+alone establishes equivalent performance. Existing AER behavior remains a separate
+compatibility requirement.
+
+Static evidence below applies only to provider SHA-256
+`b2ec1ac73a4bdb679c5b7a32286c5acdf3bd84d52e416d98ba2965fcd8646aba`.
+The extended `tools/inspect_sfs_provider.py` reproduces the bounded disassembly
+without loading the DLL. RVAs are relative to image base, not file offsets.
+
+| Path | Evidence | Consequence |
+| --- | --- | --- |
+| Device dispatch | CreateDevice at 0x1a4380 stores resolved function pointers | Resolve downstream functions once per device, not on each command |
+| QueueSubmit | 0x1ade80..0x1adee5 forwards arguments and tail-jumps through dispatch+0x20 | This wrapper itself does not repeat game submissions or insert waits |
+| Descriptor binding | 0x1a3690..0x1a36e0 tail-jumps through dispatch+0x2c0 | It does not do KHARVOX's command-state replay bookkeeping in this wrapper |
+| Normal acquire | 0x1a2811..0x1a2836 cycles a synthetic index over the vector at object+0x12d0; unchanged-size path returns success | The provider owns its source-image acquisition; it is not just our real desktop WSI acquire followed by XR |
+| Present helper | 0x18eef0 computes frame counter modulo 5 and selects slot-specific objects at +0x11d0 and +0x1258 | A five-slot presentation work ring is observable; do not infer five-frame headset latency |
+| Stereo copy | 0x18bdd0 constructs image-copy regions and calls the copy dispatch at 0x18bf55 | Output still involves a GPU image copy; zero-copy is not established |
+| GPU interop | 0x18c03e writes sType 0x3b9beef8 (1000075000), fills acquire/release arrays, links it to submit at 0x18c094, submits at 0x18c0d0 | This is VkWin32KeyedMutexAcquireReleaseInfoKHR, with acquire key 1 and release key 2. The structure itself is KHR, not proof of a proprietary NVIDIA stereo primitive |
+| Queue bridging | 0x18f160 compares queues; alternate branch submits a signal and appends a semaphore to the consumer waits | Queue dependency propagation is part of the implementation, not merely copying pixels |
+
+The status/wait calls at 0x18ef86 and 0x18efb2 are also observable. Their
+private-table mapping must be completed before asserting exact wait semantics;
+this audit does not establish an entirely wait-free provider. The acquire
+semaphore/fence signaling contract, external allocation and D3D/VR consumer
+ownership still need to be traced. Copying only the synthetic acquire index would
+break synchronization and is not an implementation of this transport.
+
+Earlier speculative explanations are not supported by the current evidence:
+- Both implementations broadly expand eligible 2D render targets/storage images.
+- The supplied DOOM ComputeDispatch exception list is empty. A broad reduction
+  of compute work in the reference has not been demonstrated.
+- The additional KHARVOX device-idle wait is not a measured major bottleneck in
+  the menu test below. Gameplay may differ.
+
+Implemented in this audit:
+- A typed, immutable per-device table resolves 59 downstream entry points during
+  SFS initialization. Command recording and binding replay no longer repeatedly
+  call vkGetDeviceProcAddr. Tables are not shared between game/runtime devices.
+- Real GPU integration tests count resolutions and require zero additional
+  lookups after initialization, including rendering and resource destruction.
+- Optional KHARVOX_SFS_PROFILE_TIMING=1 reports device-idle and uniform-upload
+  timings every 120 installed frames. It does not remove any retirement barrier.
+
+Validation: Release build and 114/114 CTests passed. Approved bundled bridge/DLL
+verification passed for out/beta096/native-runtime. Simulator PID 26776 ran for
+45 seconds at 50% render scale on the local NVIDIA GPU and was stopped at its
+owned deadline. This was a menu/quad run, not campaign or physical-headset
+validation. At cycle 1800 there were zero lifecycle violations, discarded frames
+or end-frame failures. Sampled idle means were about 0.022-0.026 ms, uniform upload
+about 0.0011-0.0015 ms. At frame 1800 the existing copy-fence diagnostic was
+1.5212 ms, and XR handling 3.4265 ms; those scopes include preceding GPU work and
+CPU handling, not just GPU copy execution. They are not an A/B speedup claim.
+
+Evidence: out/beta096/perf-reference/{manifest.json,*.asm,build.log,ctest.log,
+probe.log,simulator.log}. Native test runtime is updated; fix3 tester archive is
+unchanged. The complete virtual-source/interop-ring transport has NOT yet been
+implemented. Next work must close its semaphore/fence and external-image ownership
+contract, then replace the desktop-WSI coupling and measure the same gameplay
+scene with matching per-eye resolution and quality. The original provider-only
+heap-corruption reproduction still prevents a valid local provider A/B baseline.

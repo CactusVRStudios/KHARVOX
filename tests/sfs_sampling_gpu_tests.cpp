@@ -14,6 +14,14 @@
 #include <iostream>
 #include <cmath>
 
+#ifdef KHARVOX_SFS_TEST_RUNTIME
+static PFN_vkGetDeviceProcAddr downstreamResolver{};
+static uint64_t runtimeResolutions{};
+static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL countingResolver(VkDevice device,const char* name){
+    ++runtimeResolutions;
+    return downstreamResolver(device,name);
+}
+#endif
 static void check(bool value,const char* reason){if(!value)throw std::runtime_error(reason);}
 static void ok(VkResult value){check(value==VK_SUCCESS,"Vulkan operation failed");}
 int main(int argc,char** argv){try{
@@ -57,7 +65,10 @@ int main(int argc,char** argv){try{
     VkDevice device{};ok(vkCreateDevice(physical,&dci,nullptr,&device));
 #ifdef KHARVOX_SFS_TEST_RUNTIME
     VkPhysicalDeviceMemoryProperties sfsMemory{};vkGetPhysicalDeviceMemoryProperties(physical,&sfsMemory);
-    check(kharvox::sfs::initialize(device,physical,vkGetDeviceProcAddr,sfsMemory),"SFS runtime initialization failed");
+    downstreamResolver=vkGetDeviceProcAddr;
+    check(kharvox::sfs::initialize(device,physical,countingResolver,sfsMemory),"SFS runtime initialization failed");
+    const auto startupResolutions=runtimeResolutions;
+    check(startupResolutions>0,"SFS did not resolve device dispatch");
 #ifdef KHARVOX_SFS_TEST_AFFINE
     kharvox::native::FramePose pose{};pose.head.orientation.w=1;pose.worldScale=1;pose.gameplay=true;
     XrFovf projection{-.7853981634f,.7853981634f,.7853981634f,-.7853981634f};
@@ -297,6 +308,7 @@ int main(int argc,char** argv){try{
     registry.destroy(device,image,nullptr,vkDestroyImage);vkFreeMemory(device,imageMemory,nullptr);
 #ifdef KHARVOX_SFS_TEST_RUNTIME
     kharvox::sfs::shutdown(device);
+    check(runtimeResolutions==startupResolutions,"SFS resolved Vulkan functions after initialization");
 #endif
     vkDestroyDevice(device,nullptr);vkDestroyInstance(instance,nullptr);FreeLibrary(loader);
     std::cout<<"Typed SFS shader/resource integration: distinct eye pixels and shared mono texture passed\n";return 0;

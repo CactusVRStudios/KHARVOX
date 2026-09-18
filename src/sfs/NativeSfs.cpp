@@ -1,4 +1,5 @@
 #include "NativeSfs.h"
+#include "NativeDispatch.h"
 #include "ShaderCompiler.h"
 #include "ShaderProfile.h"
 #include "PipelineIdentity.h"
@@ -10,6 +11,7 @@
 #include <windows.h>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstring>
 #include <functional>
 #include <map>
@@ -29,7 +31,7 @@ struct CommandState {
     std::map<uint64_t,std::function<void()>> bindings;
 };
 struct State {
-    VkDevice device{};PFN_vkGetDeviceProcAddr gdpa{};
+    VkDevice device{};NativeDispatch dispatch;
     std::recursive_mutex mutex;
     Images images;
     std::unordered_map<VkSwapchainKHR,std::vector<VkImage>> swapchains;
@@ -38,6 +40,8 @@ struct State {
     native::FramePose pendingPose{},renderPose{};
     std::unordered_map<VkImage,native::FramePose> imagePoses;
     bool pending{},completed{true},frameValid{};
+    bool profileTiming{};
+    uint64_t profiledFrames{},retireNs{},uploadNs{},maxRetireNs{};
     std::unordered_map<VkShaderModule,std::vector<uint32_t>> shaders;
     std::unordered_map<std::string,VkShaderModule> compiled;
     std::unordered_map<VkRenderPass,VkRenderPass> passes;
@@ -53,7 +57,6 @@ struct State {
     std::unordered_map<VkCommandBuffer,CommandState> commands;
     std::unordered_map<VkCommandBuffer,VkCommandPool> commandPools;
     std::filesystem::path profile;
-    template<class T>T fn(const char* name){auto p=reinterpret_cast<T>(gdpa(device,name));if(!p)throw std::runtime_error(std::string("Missing Vulkan entry ")+name);return p;}
 };
 std::mutex devicesMutex;
 std::unordered_map<void*,std::shared_ptr<State>> devices;
@@ -70,7 +73,7 @@ template<class T>std::shared_ptr<State> state(T handle){
     }
     auto it=devices.find(dispatchKey(handle));if(it==devices.end())throw std::runtime_error("SFS device not initialized handle="+std::to_string(reinterpret_cast<uintptr_t>(handle))+" dispatch="+std::to_string(reinterpret_cast<uintptr_t>(dispatchKey(handle))));return it->second;
 }
-#define FN(name) s->fn<PFN_##name>(#name)
+#define FN(name) NativeDispatch::require(s->dispatch.name,#name)
 #define RESULT_BEGIN try {auto s=state(d);std::lock_guard<std::recursive_mutex> lock(s->mutex);
 #define RESULT_END }catch(const std::exception& e){note(std::string(__FUNCTION__)+": "+e.what());return VK_ERROR_INITIALIZATION_FAILED;}
 // Command hooks cannot return VkResult. Fail the owned diagnostic process on an
@@ -184,28 +187,28 @@ VKAPI_ATTR void VKAPI_CALL freeCommands(VkDevice d,VkCommandPool pool,uint32_t c
 VKAPI_ATTR void VKAPI_CALL destroyCommandPool(VkDevice d,VkCommandPool pool,const VkAllocationCallbacks* a){auto s=state(d);std::lock_guard<std::recursive_mutex> lock(s->mutex);for(auto it=s->commandPools.begin();it!=s->commandPools.end();)if(it->second==pool){s->commands.erase(it->first);it=s->commandPools.erase(it);}else ++it;FN(vkDestroyCommandPool)(d,pool,a);}
 VKAPI_ATTR void VKAPI_CALL bindPipeline(VkCommandBuffer cb,VkPipelineBindPoint point,VkPipeline pipeline){COMMAND_BEGIN
     auto& command=s->commands[cb];if(point==VK_PIPELINE_BIND_POINT_COMPUTE){command.compute=pipeline;FN(vkCmdBindPipeline)(cb,point,pipeline);return;}
-    auto bind=[s,cb,pipeline]{auto& c=s->commands[cb];auto found=s->stereoPipelines.find(pipeline);if(found==s->stereoPipelines.end())throw std::runtime_error("Untracked SFS graphics pipeline");s->fn<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(cb,VK_PIPELINE_BIND_POINT_GRAPHICS,c.stereo?found->second:pipeline);};command.bindings[0]=bind;bind();
+    auto bind=[s,cb,pipeline]{auto& c=s->commands[cb];auto found=s->stereoPipelines.find(pipeline);if(found==s->stereoPipelines.end())throw std::runtime_error("Untracked SFS graphics pipeline");FN(vkCmdBindPipeline)(cb,VK_PIPELINE_BIND_POINT_GRAPHICS,c.stereo?found->second:pipeline);};command.bindings[0]=bind;bind();
 COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL bindSets(VkCommandBuffer cb,VkPipelineBindPoint point,VkPipelineLayout layout,uint32_t first,uint32_t count,const VkDescriptorSet* sets,uint32_t dynamicCount,const uint32_t* dynamic){COMMAND_BEGIN
     uint32_t offset=0;for(uint32_t j=0;j<count;++j){auto set=sets[j];const auto n=s->setDynamicCounts.at(set);if(n>dynamicCount-offset)throw std::runtime_error("SFS dynamic descriptor offset mismatch");std::vector<uint32_t> values;if(n)values.assign(dynamic+offset,dynamic+offset+n);offset+=n;
-        if(point==VK_PIPELINE_BIND_POINT_GRAPHICS)s->commands[cb].bindings[0x10000ull+first+j]=[s,cb,point,layout,index=first+j,set,values]{s->fn<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets")(cb,point,layout,index,1,&set,uint32_t(values.size()),values.data());};}
+        if(point==VK_PIPELINE_BIND_POINT_GRAPHICS)s->commands[cb].bindings[0x10000ull+first+j]=[s,cb,point,layout,index=first+j,set,values]{FN(vkCmdBindDescriptorSets)(cb,point,layout,index,1,&set,uint32_t(values.size()),values.data());};}
     if(offset!=dynamicCount)throw std::runtime_error("SFS unexpected dynamic descriptor offsets");FN(vkCmdBindDescriptorSets)(cb,point,layout,first,count,sets,dynamicCount,dynamic);
 COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL bindVertices(VkCommandBuffer cb,uint32_t first,uint32_t count,const VkBuffer* buffers,const VkDeviceSize* offsets){COMMAND_BEGIN
-    for(uint32_t j=0;j<count;++j)s->commands[cb].bindings[0x20000ull+first+j]=[s,cb,index=first+j,b= buffers[j],o=offsets[j]]{s->fn<PFN_vkCmdBindVertexBuffers>("vkCmdBindVertexBuffers")(cb,index,1,&b,&o);};FN(vkCmdBindVertexBuffers)(cb,first,count,buffers,offsets);
+    for(uint32_t j=0;j<count;++j)s->commands[cb].bindings[0x20000ull+first+j]=[s,cb,index=first+j,b= buffers[j],o=offsets[j]]{FN(vkCmdBindVertexBuffers)(cb,index,1,&b,&o);};FN(vkCmdBindVertexBuffers)(cb,first,count,buffers,offsets);
 COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL bindIndex(VkCommandBuffer cb,VkBuffer buffer,VkDeviceSize offset,VkIndexType type){COMMAND_BEGIN
-    auto f=[s,cb,buffer,offset,type]{s->fn<PFN_vkCmdBindIndexBuffer>("vkCmdBindIndexBuffer")(cb,buffer,offset,type);};s->commands[cb].bindings[0x30000]=f;f();
+    auto f=[s,cb,buffer,offset,type]{FN(vkCmdBindIndexBuffer)(cb,buffer,offset,type);};s->commands[cb].bindings[0x30000]=f;f();
 COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL viewport(VkCommandBuffer cb,uint32_t first,uint32_t count,const VkViewport* values){COMMAND_BEGIN
-    for(uint32_t j=0;j<count;++j)s->commands[cb].bindings[0x40000ull+first+j]=[s,cb,index=first+j,v=values[j]]{s->fn<PFN_vkCmdSetViewport>("vkCmdSetViewport")(cb,index,1,&v);};FN(vkCmdSetViewport)(cb,first,count,values);
+    for(uint32_t j=0;j<count;++j)s->commands[cb].bindings[0x40000ull+first+j]=[s,cb,index=first+j,v=values[j]]{FN(vkCmdSetViewport)(cb,index,1,&v);};FN(vkCmdSetViewport)(cb,first,count,values);
 COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL scissor(VkCommandBuffer cb,uint32_t first,uint32_t count,const VkRect2D* values){COMMAND_BEGIN
-    for(uint32_t j=0;j<count;++j)s->commands[cb].bindings[0x50000ull+first+j]=[s,cb,index=first+j,v=values[j]]{s->fn<PFN_vkCmdSetScissor>("vkCmdSetScissor")(cb,index,1,&v);};FN(vkCmdSetScissor)(cb,first,count,values);
+    for(uint32_t j=0;j<count;++j)s->commands[cb].bindings[0x50000ull+first+j]=[s,cb,index=first+j,v=values[j]]{FN(vkCmdSetScissor)(cb,index,1,&v);};FN(vkCmdSetScissor)(cb,first,count,values);
 COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL push(VkCommandBuffer cb,VkPipelineLayout layout,VkShaderStageFlags flags,uint32_t offset,uint32_t size,const void* values){COMMAND_BEGIN
     for(uint32_t stage=1;stage<=VK_SHADER_STAGE_COMPUTE_BIT;stage<<=1)if(flags&stage)for(uint32_t pos=0;pos<size;pos+=4){uint32_t value{};std::memcpy(&value,static_cast<const char*>(values)+pos,4);auto key=0x100000ull+uint64_t(stage)*0x10000+offset+pos;
-        s->commands[cb].bindings[key]=[s,cb,layout,stage,at=offset+pos,value]{s->fn<PFN_vkCmdPushConstants>("vkCmdPushConstants")(cb,layout,stage,at,4,&value);};}FN(vkCmdPushConstants)(cb,layout,flags,offset,size,values);
+        s->commands[cb].bindings[key]=[s,cb,layout,stage,at=offset+pos,value]{FN(vkCmdPushConstants)(cb,layout,stage,at,4,&value);};}FN(vkCmdPushConstants)(cb,layout,flags,offset,size,values);
 COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL beginPass(VkCommandBuffer cb,const VkRenderPassBeginInfo* i,VkSubpassContents contents){COMMAND_BEGIN
     auto info=*i;auto& command=s->commands[cb];command.stereo=s->framebufferStereo.at(i->framebuffer);if(command.stereo)info.renderPass=s->passes.at(i->renderPass);FN(vkCmdBeginRenderPass)(cb,&info,contents);for(const auto& binding:command.bindings)binding.second();
@@ -213,20 +216,20 @@ COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL endPass(VkCommandBuffer cb){COMMAND_BEGIN FN(vkCmdEndRenderPass)(cb);s->commands[cb].stereo=false;COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL nextPass(VkCommandBuffer cb,VkSubpassContents contents){COMMAND_BEGIN FN(vkCmdNextSubpass)(cb,contents);for(const auto& binding:s->commands[cb].bindings)binding.second();COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL lineWidth(VkCommandBuffer cb,float width){COMMAND_BEGIN
-    auto f=[s,cb,width]{s->fn<PFN_vkCmdSetLineWidth>("vkCmdSetLineWidth")(cb,width);};s->commands[cb].bindings[0x60000]=f;f();
+    auto f=[s,cb,width]{FN(vkCmdSetLineWidth)(cb,width);};s->commands[cb].bindings[0x60000]=f;f();
 COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL depthBias(VkCommandBuffer cb,float constant,float clamp,float slope){COMMAND_BEGIN
-    auto f=[s,cb,constant,clamp,slope]{s->fn<PFN_vkCmdSetDepthBias>("vkCmdSetDepthBias")(cb,constant,clamp,slope);};s->commands[cb].bindings[0x60001]=f;f();
+    auto f=[s,cb,constant,clamp,slope]{FN(vkCmdSetDepthBias)(cb,constant,clamp,slope);};s->commands[cb].bindings[0x60001]=f;f();
 COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL blendConstants(VkCommandBuffer cb,const float* values){COMMAND_BEGIN
-    const std::array<float,4> constants{values[0],values[1],values[2],values[3]};auto f=[s,cb,constants]{s->fn<PFN_vkCmdSetBlendConstants>("vkCmdSetBlendConstants")(cb,constants.data());};s->commands[cb].bindings[0x60002]=f;f();
+    const std::array<float,4> constants{values[0],values[1],values[2],values[3]};auto f=[s,cb,constants]{FN(vkCmdSetBlendConstants)(cb,constants.data());};s->commands[cb].bindings[0x60002]=f;f();
 COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL depthBounds(VkCommandBuffer cb,float min,float max){COMMAND_BEGIN
-    auto f=[s,cb,min,max]{s->fn<PFN_vkCmdSetDepthBounds>("vkCmdSetDepthBounds")(cb,min,max);};s->commands[cb].bindings[0x60003]=f;f();
+    auto f=[s,cb,min,max]{FN(vkCmdSetDepthBounds)(cb,min,max);};s->commands[cb].bindings[0x60003]=f;f();
 COMMAND_END}
 #define STENCIL_WRAPPER(handler,api,slot) \
 VKAPI_ATTR void VKAPI_CALL handler(VkCommandBuffer cb,VkStencilFaceFlags faces,uint32_t value){COMMAND_BEGIN \
-    for(uint32_t face=VK_STENCIL_FACE_FRONT_BIT;face<=VK_STENCIL_FACE_BACK_BIT;face<<=1)if(faces&face){auto f=[s,cb,face,value]{s->fn<PFN_##api>(#api)(cb,face,value);};s->commands[cb].bindings[slot+face]=f;f();} \
+    for(uint32_t face=VK_STENCIL_FACE_FRONT_BIT;face<=VK_STENCIL_FACE_BACK_BIT;face<<=1)if(faces&face){auto f=[s,cb,face,value]{FN(api)(cb,face,value);};s->commands[cb].bindings[slot+face]=f;f();} \
 COMMAND_END}
 STENCIL_WRAPPER(stencilCompare,vkCmdSetStencilCompareMask,0x61000)
 STENCIL_WRAPPER(stencilWrite,vkCmdSetStencilWriteMask,0x62000)
@@ -259,7 +262,8 @@ bool nativeProbeEnabled(){static const bool enabled=[] {char value[8]{};return G
 bool initialize(VkDevice d,VkPhysicalDevice,PFN_vkGetDeviceProcAddr gdpa,const VkPhysicalDeviceMemoryProperties& memory){
     if(!nativeProbeEnabled())return true;
     auto s=std::make_shared<State>();
-    try{s->device=d;s->gdpa=gdpa;wchar_t path[32768]{};auto n=GetEnvironmentVariableW(L"KHARVOX_SFS_PROFILE",path,32768);if(n&&n<32768)s->profile=path;
+    try{s->device=d;s->dispatch.load(d,gdpa);
+        char timing[8]{};s->profileTiming=GetEnvironmentVariableA("KHARVOX_SFS_PROFILE_TIMING",timing,8)==1&&timing[0]=='1';wchar_t path[32768]{};auto n=GetEnvironmentVariableW(L"KHARVOX_SFS_PROFILE",path,32768);if(n&&n<32768)s->profile=path;
         VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};bi.size=sizeof(FrameUniforms);bi.usage=VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;if(FN(vkCreateBuffer)(d,&bi,nullptr,&s->params)!=VK_SUCCESS)return false;
         VkMemoryRequirements r{};FN(vkGetBufferMemoryRequirements)(d,s->params,&r);uint32_t index=UINT32_MAX;for(uint32_t j=0;j<memory.memoryTypeCount;++j)if((r.memoryTypeBits&(1u<<j))&&(memory.memoryTypes[j].propertyFlags&(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))==(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)){index=j;break;}
         if(index==UINT32_MAX)throw std::runtime_error("No coherent SFS parameter memory");VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};ai.allocationSize=r.size;ai.memoryTypeIndex=index;if(FN(vkAllocateMemory)(d,&ai,nullptr,&s->paramsMemory)!=VK_SUCCESS)throw std::runtime_error("SFS parameter allocation failed");if(FN(vkBindBufferMemory)(d,s->params,s->paramsMemory,0)!=VK_SUCCESS)throw std::runtime_error("SFS parameter bind failed");
@@ -293,9 +297,23 @@ void beginFrame(VkDevice d,VkSwapchainKHR chain,uint32_t imageIndex){
     // The prototype shares a uniform buffer across recorded command buffers.
     // Retire all previous readers before writing; a frame ring can replace this
     // conservative wait once multiple queued game frames have explicit ownership.
+    const auto clockNow=[] {return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());};
+    const auto retireStart=s->profileTiming?clockNow():0;
     if(FN(vkDeviceWaitIdle)(d)!=VK_SUCCESS)commandFailure("SFS frame parameter retirement failed");
+    const auto uploadStart=s->profileTiming?clockNow():0;
     void* mapped{};if(FN(vkMapMemory)(d,s->paramsMemory,0,sizeof(FrameUniforms),0,&mapped)!=VK_SUCCESS)commandFailure("SFS frame parameter map failed");
     std::memcpy(mapped,&s->pendingUniforms,sizeof(FrameUniforms));FN(vkUnmapMemory)(d,s->paramsMemory);
+    if(s->profileTiming){
+        const auto retire=uploadStart-retireStart;
+        s->retireNs+=retire;s->uploadNs+=clockNow()-uploadStart;
+        if(retire>s->maxRetireNs)s->maxRetireNs=retire;
+        if(++s->profiledFrames==120){
+            note("parameter timing frames=120 deviceIdleMeanMs="+std::to_string(double(s->retireNs)/120000000.0)
+                +" deviceIdleMaxMs="+std::to_string(double(s->maxRetireNs)/1000000.0)
+                +" uploadMeanMs="+std::to_string(double(s->uploadNs)/120000000.0));
+            s->profiledFrames=s->retireNs=s->uploadNs=s->maxRetireNs=0;
+        }
+    }
     s->renderPose=s->pendingPose;s->frameValid=true;s->pending=false;s->completed=false;
     }
     // An acquired image uses the uniforms actually installed above, not the

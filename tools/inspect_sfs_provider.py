@@ -14,6 +14,15 @@ EXPECTED = "b2ec1ac73a4bdb679c5b7a32286c5acdf3bd84d52e416d98ba2965fcd8646aba"
 # Explicit bounds include chained x64 unwind regions, unlike an initial
 # RUNTIME_FUNCTION EndAddress which can describe only a function's prologue.
 REGIONS = {
+    "create_device_dispatch": (0x1a4380, 0x1550),
+    "queue_submit": (0x1ade80, 0x65),
+    "bind_descriptor_sets": (0x1a3690, 0x50),
+    "acquire_next_image": (0x1a26c0, 0x330),
+    "queue_present": (0x1ad640, 0x840),
+    "stereo_keyed_mutex_copy": (0x18bdd0, 0x32d),
+    "present_fence_helper": (0x18eef0, 0x442),
+    "begin_render_pass": (0x1a31a0, 0x4e5),
+    "render_pass_selection": (0x1cc940, 0x33d),
     "create_image": (0x1a62a0, 0x380),
     "create_image_view": (0x1a6620, 0x1100),
     "create_render_pass": (0x1a8540, 0x4b0),

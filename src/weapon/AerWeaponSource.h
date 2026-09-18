@@ -274,6 +274,9 @@ public:
                     duplicate=true;break;}}
             if(duplicate)continue;
             identities[identityCount++]=&e;
+            // SFS transports the queued model's own animation into its draw
+            // camera. Collect all source identities before doing that below.
+            if(followDrawBody&&drawFrame)continue;
             const Entry* target{};
             for(const auto& t:draws_){
                 if(t.key.poseId==wanted.poseId&&t.key.level==wanted.level&&t.key.domain==wanted.domain
@@ -314,6 +317,29 @@ public:
             std::memcpy(slot->origin.data(),origin,sizeof(slot->origin));std::memcpy(slot->axis.data(),axis,sizeof(slot->axis));
             for(size_t i=0;i<identityCount;++i)slot->identities[i]=*identities[i];
         };
+        if(followDrawBody&&drawFrame){
+            // The native render copy (including its animation/skin data) is
+            // already queued. Never substitute a newer entity transform just
+            // because an animation worker published it before this draw. That
+            // makes placement depend on worker timing and combines two native
+            // animation samples. Rebase only the observed source's controller
+            // frame, preserving this copy's animation-local pose and roundoff.
+            if(!identityCount)return 0;
+            float coherent[12]{};uint64_t coherentSource{};
+            for(size_t i=0;i<identityCount;++i){
+                const auto& source=*identities[i];float candidate[12]{};
+                if(source.key.poseId>wanted.poseId)return 3;
+                if(!rebaseAerDrawPlacement(source.frame,*drawFrame,origin,axis,candidate,candidate+3))return 3;
+                if(i&&!aerWeaponPoseNear(coherent,coherent+3,candidate,candidate+3))return 4;
+                if(!i){std::memcpy(coherent,candidate,sizeof(coherent));coherentSource=source.key.poseId;}
+            }
+            std::memcpy(targetOrigin,coherent,3*sizeof(float));
+            std::memcpy(targetAxis,coherent+3,9*sizeof(float));
+            sourceId=coherentSource;rememberBinding();
+            if(sourceId!=wanted.poseId)return 6;
+            return std::memcmp(targetOrigin,origin,3*sizeof(float))
+                ||std::memcmp(targetAxis,axis,9*sizeof(float))?2:1;
+        }
         std::array<Entry,8> derived{};size_t derivedCount{};
         if(!selected&&drawFrame&&drawFrame->camera.key==wanted){
             // Root and prop can share an exact pose. Hold every recognized

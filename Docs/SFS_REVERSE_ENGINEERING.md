@@ -842,3 +842,33 @@ CVar; compilation and unit tests alone do not prove runtime application.
 Validation: 119/119 CTests and launcher self-test pass. Bounded 30-second
 OpenXR simulator menu probe confirms r_SSDOTemporalAA before=1 actual=0
 verified=true beforeGameQueue=true. No headset/gameplay validation.
+
+## Test 18: preserve the queued weapon animation sample
+
+User confirms Test17 still has the one-frame weapon jump. No fresh local
+headset trace is available; local logs contain the old Test16 launcher header
+and the Test17 simulator menu probe. Do not treat those as a new gameplay run.
+
+A deterministic source-resolver regression reproduces an update-order bug:
+queued model origin=10 at pose 5000, next camera/body translation=4 and grip
+translation=3. With no newer animation, SFS resolves 17. If a native worker
+publishes pose 5001 with animation-local offset=30 (model origin=37) first,
+the old resolver instead selects 37 for the same queued model. The call-local
+MVP hook does not replace that render copy's animation/skin payload. The
+result therefore depended on worker completion order and combined source data.
+
+SFS now resolves all observed source identities, then rebases the actual queued
+origin/axis from that source's controller frame to the latched draw frame.
+It does not replace the queued animation with a same-entity newer snapshot,
+nor with the latest prior snapshot when the target update is missing. Native
+animation history remains immutable. A genuinely newer render copy keeps its
+own animation; ambiguous mounts, resets and future-only sources fail closed.
+AER retains its pair-snapshot behavior. Test17 SSDO setting is kept to isolate
+this change, but is not presented as a confirmed fix for the reported jump.
+
+Regression failed before the source change and passes afterward. Additional
+cases cover missing target updates, newer render copies, epoch resets and
+conflicting source mounts. Headset reproduction is still required: a passing
+CPU test proves this source-selection defect, not the cause of every artifact.
+Validation: 119/119 CTests pass; launcher self-test passes. No new headset
+or gameplay run performed for Test18.

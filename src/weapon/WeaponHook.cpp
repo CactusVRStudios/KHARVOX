@@ -2585,7 +2585,7 @@ int KharvoxWeaponResolveAerDraw(kharvox::AerSourceKey source,const float* origin
         if(now-start>=2000){
             if(kharvox::extendedDiagnosticsEnabled())log("[SFS-WEAPON-CADENCE] drawViews="+std::to_string(frames)
                 +" controllerSamples="+std::to_string(changed)+" poseChanges="+std::to_string(poseChanges)
-                +" intervalMs="+std::to_string(now-start));
+                  +" intervalMs="+std::to_string(now-start)+" placement=queued-animation-controller-rebase");
             start=now;frames=changed=poseChanges=0;
         }
     }

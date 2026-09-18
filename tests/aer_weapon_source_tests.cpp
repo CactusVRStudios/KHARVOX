@@ -1,10 +1,58 @@
 #include "../src/weapon/AerWeaponSource.h"
 #include <cstdlib>
 #include <thread>
-void check(bool ok){if(!ok)std::abort();}
+#include <cstdio>
+void checked(bool ok,int line){if(!ok){std::fprintf(stderr,"weapon source assertion failed at line %d\n",line);std::abort();}}
+#define check(ok) checked((ok),__LINE__)
 bool near(float a,float b){return std::abs(a-b)<.0001f;}
 int main(){
     using namespace kharvox;
+    {
+        // The same queued render model must keep its animation-local placement,
+        // regardless of whether the next native animation update finished first.
+        for(bool publishNewAnimation:{false,true}){
+            AerWeaponSourceTransforms queued;
+            AerWeaponFrame source{};source.input.valid=true;source.camera.key={5000,7,0};
+            source.camera.bodyAxis={1,0,0,0,1,0,0,0,1};
+            float axis[9]{1,0,0,0,1,0,0,0,1},raw[3]{10,0,0},out[12]{};
+            check(!queued.hold(source,99,1,raw,axis));
+            auto current=source;current.camera.key.poseId=5001;
+            current.camera.bodyOrigin[0]=4;current.input.grip[0]=3;
+            if(publishNewAnimation){
+                float laterModel[3]{37,0,0};
+                check(!queued.hold(current,99,1,laterModel,axis));
+            }
+            uint64_t matched{};
+            const auto status=queued.forDraw(current.camera.key,raw,axis,out,out+3,matched,&current,123,456,nullptr,true);
+            check(status==2||status==6);
+            check(near(out[0],17)&&matched==5000);
+            // Missing native update for the following view must also use the
+            // queued sample, not the newest unrelated animation-local offset.
+            current.camera.key.poseId=5002;current.camera.bodyOrigin[0]=8;
+            check(queued.forDraw(current.camera.key,raw,axis,out,out+3,matched,&current,123,456,nullptr,true)==6);
+            check(near(out[0],21)&&matched==5000);
+            // A later render copy really belonging to the new animation keeps
+            // that animation, rather than inheriting a previous draw's cache.
+            if(publishNewAnimation){
+                float laterModel[3]{37,0,0};
+                check(queued.forDraw(current.camera.key,laterModel,axis,out,out+3,matched,&current,123,456,nullptr,true)==6);
+                check(near(out[0],41)&&matched==5001);
+            }
+            auto reset=current;++reset.input.epoch;
+            check(queued.forDraw(reset.camera.key,raw,axis,out,out+3,matched,&reset,123,456,nullptr,true)==0);
+        }
+    }
+    {
+        // Identical copied positions from genuinely different source frames
+        // remain ambiguous. Never guess which controller-relative mount it is.
+        AerWeaponSourceTransforms ambiguous;
+        AerWeaponFrame a{};a.input.valid=true;a.camera.key={6000,7,0};
+        a.camera.bodyAxis={1,0,0,0,1,0,0,0,1};auto b=a;b.camera.bodyOrigin[0]=4;
+        float axis[9]{1,0,0,0,1,0,0,0,1},raw[3]{10,0,0},out[12]{};uint64_t matched{};
+        check(!ambiguous.hold(a,99,0,raw,axis));check(!ambiguous.hold(b,99,1,raw,axis));
+        auto view=a;view.camera.key.poseId=6001;
+        check(ambiguous.forDraw(view.camera.key,raw,axis,out,out+3,matched,&view,123,456,nullptr,true)==4);
+    }
     {
         // A physics tick can lead the view by one walking step or jump over
         // a pipe while the camera eases vertically. The VR grip relative to
@@ -187,8 +235,8 @@ int main(){
             check(moving.forDraw(root.camera.key,native,axis,out,out+3,source,&prop)==4);
             for(int repeat=0;repeat<3;++repeat){
                 const auto status=moving.forDraw(root.camera.key,native,axis,out,out+3,source,&prop,0,0,nullptr,true);
-                if(animationDifference>0)check(status==4); // genuine ambiguity still rejected
-                else {check(status==2);check(near(out[0],22)&&near(out[1],2));}
+                // Later animation is irrelevant to the already queued copy.
+                check(status==2||status==6);check(near(out[0],22)&&near(out[1],2));
             }
         };
         movementCase(0);

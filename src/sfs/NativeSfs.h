@@ -13,7 +13,7 @@ void swapchainDestroyed(VkDevice,VkSwapchainKHR);
 bool vrEnabled();
 void prepare(VkDevice,const kharvox::native::FramePose&,const XrFovf&);
 void copyCompleted(VkDevice);
-void beginFrame(VkDevice);
+void beginFrame(VkDevice,VkSwapchainKHR=VK_NULL_HANDLE,uint32_t imageIndex=0);
 bool pair(VkDevice,VkImage,VkExtent2D,VkFormat,kharvox::native::StereoFrame&);
 bool eyeAttachmentView(VkDevice,VkImageView,uint32_t,VkImageView&);
 #else
@@ -26,7 +26,7 @@ inline void swapchainDestroyed(VkDevice,VkSwapchainKHR){}
 inline bool vrEnabled(){return false;}
 inline void prepare(VkDevice,const kharvox::native::FramePose&,const XrFovf&){}
 inline void copyCompleted(VkDevice){}
-inline void beginFrame(VkDevice){}
+inline void beginFrame(VkDevice,VkSwapchainKHR=VK_NULL_HANDLE,uint32_t=0){}
 inline bool pair(VkDevice,VkImage,VkExtent2D,VkFormat,kharvox::native::StereoFrame&){return false;}
 inline bool eyeAttachmentView(VkDevice,VkImageView,uint32_t,VkImageView&){return false;}
 #endif

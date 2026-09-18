@@ -51,9 +51,13 @@ int main(){
     check(aerEyeFromDoomOffset(0)==-1&&aerDoomEyeOffset(-1,half)==0);
     // Action processing advances pending turn after head publication, in either
     // direction and across reversal. A later body catch-up must not change it.
+    check(usePublishedControllerYaw(false,false)); // AER
+    check(usePublishedControllerYaw(true,true)); // SFS
+    check(!usePublishedControllerYaw(true,false)); // native replay unchanged
+    for(bool sfs:{false,true})
     for(float accepted:{-60.f,0.f,75.f})for(float published:{-12.f,0.f,12.f})
     for(float advance:{-20.f,-3.f,3.f,20.f}){
-        ControllerFrameYaw frame{accepted,published,true};
+        ControllerFrameYaw frame{accepted,published,usePublishedControllerYaw(sfs,sfs)};
         const float pending=published+advance,liveAccepted=accepted+8.f;
         for(Vec v:{Vec{.2f,-.3f,-.6f},Vec{0,0,-1}}){
             const Vec headSpace=yaw(yaw(v,-accepted),published);

@@ -3987,7 +3987,8 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
     const bool nativePackedStereoAtFrame=nativeBackend||((nativeStereoEnabled||nativeTwoViewEnabled)
         &&KharvoxCameraNativeStereoActive());
     updateHeadPose(vs,frame.predictedDisplayTime,nativePackedStereoAtFrame);
-    s.controllerFrameYaw={s.acceptedPhysicalYaw,s.artificialTurnPublishedDegrees,!nativePackedStereoAtFrame};
+    s.controllerFrameYaw={s.acceptedPhysicalYaw,s.artificialTurnPublishedDegrees,
+        kharvox::usePublishedControllerYaw(nativePackedStereoAtFrame,sfsBackend)};
     for(int eye=0;eye<2;++eye)traceEye(kharvox::pose_trace::Located,eye,s.views[eye].pose,s.views[eye].fov,frame.predictedDisplayTime,0,frame.predictedDisplayPeriod,unsigned(vs.viewStateFlags)<<16);
     if((vs.viewStateFlags&XR_VIEW_STATE_ORIENTATION_VALID_BIT)!=0){s.programmedMonoPose=locatedMonoPose;s.programmedMonoFov=locatedImmersiveRenderFov;s.programmedMonoPoseValid=true;s.programmedMonoEyePose={s.views[0].pose,s.views[1].pose};s.programmedMonoEyeFov={s.views[0].fov,s.views[1].fov};s.programmedMonoEyeViewsValid=true;}
     else{s.programmedMonoPoseValid=false;s.programmedMonoEyeViewsValid=false;}
@@ -4230,7 +4231,9 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
             s.alternatingStereoWarmupEye=kharvox::aerFirstRenderEye;
             s.alternatingStereoWarmupFramesRemaining=0;
             s.stereoStartupControllerMissing=false;
-            KharvoxCameraSetStereoEye(0,0,0,0,0,false);
+            // Native/SFS already prepared the next centered camera above.
+            // Only AER needs to disarm its alternating camera while settling.
+            if(!nativeBackend)KharvoxCameraSetStereoEye(0,0,0,0,0,false);
         }
         log("[HUD22-AER] level/checkpoint transition discarded both eye histories and armed central-mono settle guard generation="
             +std::to_string(currentLevelGeneration));
@@ -4281,11 +4284,11 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
         s.alternatingStereoWarmupEye=kharvox::aerFirstRenderEye;
         s.alternatingStereoWarmupFramesRemaining=0;
         s.stereoStartupControllerMissing=false;
-        KharvoxCameraSetStereoEye(0,0,0,0,0,false);
+        if(!nativeBackend)KharvoxCameraSetStereoEye(0,0,0,0,0,false);
         log("Stereo capture INACTIVE");
     }
     stereoNow=stereoNow&&s.alternatingStereo;
-    if(stereoNow&&s.steamMetaCompatibilityMode&&steamLinkProjectionGameplay
+    if(stereoNow&&!nativeBackend&&s.steamMetaCompatibilityMode&&steamLinkProjectionGameplay
         &&!nvidiaAfwMarker&&!steamLinkAerStereoLogged){
         log("[STEAMLINK-AER] stereoscopic alternating-eye PROJECTION ACTIVE; independent left/right camera offsets enabled");
         steamLinkAerStereoLogged=true;

@@ -35,6 +35,7 @@ struct State {
     VkBuffer params{};VkDeviceMemory paramsMemory{};
     FrameUniforms pendingUniforms{};
     native::FramePose pendingPose{},renderPose{};
+    std::unordered_map<VkImage,native::FramePose> imagePoses;
     bool pending{},completed{true},frameValid{};
     std::unordered_map<VkShaderModule,std::vector<uint32_t>> shaders;
     std::unordered_map<std::string,VkShaderModule> compiled;
@@ -280,9 +281,9 @@ void prepare(VkDevice d,const native::FramePose& pose,const XrFovf& source){
     s->pendingUniforms=uniforms;s->pendingPose=pose;s->pending=true;
 }
 void copyCompleted(VkDevice d){if(!vrEnabled())return;auto s=state(d);std::lock_guard<std::recursive_mutex> lock(s->mutex);s->completed=true;}
-void beginFrame(VkDevice d){
+void beginFrame(VkDevice d,VkSwapchainKHR chain,uint32_t imageIndex){
     if(!vrEnabled())return;auto s=state(d);std::lock_guard<std::recursive_mutex> lock(s->mutex);
-    if(!s->pending||!s->completed)return;
+    if(s->pending&&s->completed){
     // The prototype shares a uniform buffer across recorded command buffers.
     // Retire all previous readers before writing; a frame ring can replace this
     // conservative wait once multiple queued game frames have explicit ownership.
@@ -290,19 +291,32 @@ void beginFrame(VkDevice d){
     void* mapped{};if(FN(vkMapMemory)(d,s->paramsMemory,0,sizeof(FrameUniforms),0,&mapped)!=VK_SUCCESS)commandFailure("SFS frame parameter map failed");
     std::memcpy(mapped,&s->pendingUniforms,sizeof(FrameUniforms));FN(vkUnmapMemory)(d,s->paramsMemory);
     s->renderPose=s->pendingPose;s->frameValid=true;s->pending=false;s->completed=false;
+    }
+    // An acquired image uses the uniforms actually installed above, not the
+    // newest pending XR prediction. Other swapchain images retain their pose.
+    const auto found=s->swapchains.find(chain);
+    if(found!=s->swapchains.end()&&imageIndex<found->second.size()){
+        const auto image=found->second[imageIndex];
+        if(s->frameValid)s->imagePoses[image]=s->renderPose;
+        else s->imagePoses.erase(image);
+    }
 }
 bool pair(VkDevice d,VkImage image,VkExtent2D extent,VkFormat format,native::StereoFrame& result){
     if(!vrEnabled())return false;auto s=state(d);std::lock_guard<std::recursive_mutex> lock(s->mutex);
-    if(!s->frameValid||s->images.layers(image)!=2)return false;
-    result={};result.pose=s->renderPose;result.generation=s->renderPose.serial;
-    for(uint32_t e=0;e<2;++e)result.eyes[e]={image,extent,format,VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,s->renderPose.views[e].pose,s->renderPose.views[e].fov,e,s->renderPose.serial};
+    const auto found=s->imagePoses.find(image);
+    if(found==s->imagePoses.end()||s->images.layers(image)!=2)return false;
+    const auto& pose=found->second;
+    result={};result.pose=pose;result.generation=pose.serial;
+    for(uint32_t e=0;e<2;++e)result.eyes[e]={image,extent,format,VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,pose.views[e].pose,pose.views[e].fov,e,pose.serial};
     return true;
 }
 void swapchainImages(VkDevice d,VkSwapchainKHR chain,uint32_t count,const VkImage* images){
     if(!nativeProbeEnabled())return;
     auto s=state(d);std::lock_guard<std::recursive_mutex> lock(s->mutex);
     auto& tracked=s->swapchains[chain];
-    for(auto image:tracked)s->images.destroy(d,image,nullptr,nullptr);
+    // Re-enumerating the same swapchain must not discard a valid acquisition.
+    if(tracked==std::vector<VkImage>(images,images+count))return;
+    for(auto image:tracked){s->imagePoses.erase(image);s->images.destroy(d,image,nullptr,nullptr);}
     tracked.assign(images,images+count);
     for(auto image:tracked)s->images.track(image,2);
 }
@@ -310,7 +324,7 @@ void swapchainDestroyed(VkDevice d,VkSwapchainKHR chain){
     if(!nativeProbeEnabled())return;
     auto s=state(d);std::lock_guard<std::recursive_mutex> lock(s->mutex);
     auto found=s->swapchains.find(chain);if(found==s->swapchains.end())return;
-    for(auto image:found->second)s->images.destroy(d,image,nullptr,nullptr);
+    for(auto image:found->second){s->imagePoses.erase(image);s->images.destroy(d,image,nullptr,nullptr);}
     s->swapchains.erase(found);
 }
 PFN_vkVoidFunction wrapProc(VkDevice d,const char* name,PFN_vkVoidFunction next){if(!nativeProbeEnabled()||!next)return next;

@@ -1202,7 +1202,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkAcquireNextImageKHR(VkDevice d,VkSwapchainKHR s
     if(extendedLoggingEnabled()&&traceDiagnosticCall(n)){std::ostringstream x;x<<"[ACQUIRE] entry call="<<n<<" thread="<<GetCurrentThreadId()<<" device="<<reinterpret_cast<uint64_t>(d)<<" swapchain="<<reinterpret_cast<uint64_t>(sc)<<" timeoutNs="<<t<<" semaphore="<<reinterpret_cast<uint64_t>(sem)<<" fence="<<reinterpret_cast<uint64_t>(f);logExtended(x.str());}
     auto r=s.acquire?s.acquire(d,sc,t,sem,f,i):VK_ERROR_EXTENSION_NOT_PRESENT;QueryPerformanceCounter(&downstreamDone);
     if(logFrame(n)){std::ostringstream x;x<<"[Frame "<<n<<"] Acquire image="<<(i?*i:~0u)<<" result="<<r;logLine(x.str());}
-    if(r==VK_SUCCESS||r==VK_SUBOPTIMAL_KHR){KharvoxXRPrepareFrame(sc);kharvox::sfs::beginFrame(d);}QueryPerformanceCounter(&prepareDone);
+    if(r==VK_SUCCESS||r==VK_SUBOPTIMAL_KHR){KharvoxXRPrepareFrame(sc);kharvox::sfs::beginFrame(d,sc,i?*i:UINT32_MAX);}QueryPerformanceCounter(&prepareDone);
     const double downstreamMs=elapsedMilliseconds(enter,downstreamDone),prepareMs=elapsedMilliseconds(downstreamDone,prepareDone);
     if(extendedLoggingEnabled()&&(traceDiagnosticCall(n)||r!=VK_SUCCESS||downstreamMs>=10.0||prepareMs>=10.0)){std::ostringstream x;x<<"[ACQUIRE] return call="<<n<<" thread="<<GetCurrentThreadId()<<" result="<<r<<" image="<<(i?*i:~0u)<<" downstreamMs="<<downstreamMs<<" xrPrepareMs="<<prepareMs<<" totalMs="<<elapsedMilliseconds(enter,prepareDone);logExtended(x.str());}
     return kharvox::independentSurfaceResult(r,isIndependentSwapchain(sc));
@@ -1212,7 +1212,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkAcquireNextImage2KHR(VkDevice d,const VkAcquire
     if(extendedLoggingEnabled()&&traceDiagnosticCall(n)){std::ostringstream x;x<<"[ACQUIRE2] entry call="<<n<<" thread="<<GetCurrentThreadId()<<" device="<<reinterpret_cast<uint64_t>(d)<<" swapchain="<<(i?reinterpret_cast<uint64_t>(i->swapchain):0)<<" timeoutNs="<<(i?i->timeout:0)<<" semaphore="<<(i?reinterpret_cast<uint64_t>(i->semaphore):0)<<" fence="<<(i?reinterpret_cast<uint64_t>(i->fence):0)<<" deviceMask="<<(i?i->deviceMask:0);logExtended(x.str());}
     auto r=s.acquire2?s.acquire2(d,i,out):VK_ERROR_EXTENSION_NOT_PRESENT;QueryPerformanceCounter(&downstreamDone);
     if(logFrame(n)){std::ostringstream x;x<<"[Frame "<<n<<"] Acquire2 image="<<(out?*out:~0u)<<" result="<<r;logLine(x.str());}
-    if(i&&(r==VK_SUCCESS||r==VK_SUBOPTIMAL_KHR)){KharvoxXRPrepareFrame(i->swapchain);kharvox::sfs::beginFrame(d);}QueryPerformanceCounter(&prepareDone);
+    if(i&&(r==VK_SUCCESS||r==VK_SUBOPTIMAL_KHR)){KharvoxXRPrepareFrame(i->swapchain);kharvox::sfs::beginFrame(d,i->swapchain,out?*out:UINT32_MAX);}QueryPerformanceCounter(&prepareDone);
     const double downstreamMs=elapsedMilliseconds(enter,downstreamDone),prepareMs=elapsedMilliseconds(downstreamDone,prepareDone);
     if(extendedLoggingEnabled()&&(traceDiagnosticCall(n)||r!=VK_SUCCESS||downstreamMs>=10.0||prepareMs>=10.0)){std::ostringstream x;x<<"[ACQUIRE2] return call="<<n<<" thread="<<GetCurrentThreadId()<<" result="<<r<<" image="<<(out?*out:~0u)<<" downstreamMs="<<downstreamMs<<" xrPrepareMs="<<prepareMs<<" totalMs="<<elapsedMilliseconds(enter,prepareDone);logExtended(x.str());}
     return kharvox::independentSurfaceResult(r,i&&isIndependentSwapchain(i->swapchain));

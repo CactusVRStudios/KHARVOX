@@ -213,6 +213,36 @@ int main(int argc,char** argv){try{
 #endif
         check(std::abs(static_cast<float*>(mapped)[pixel]-expected)<1e-6f,"Stereo sampling, mono clamping or affine eye correction produced incorrect pixels");}
     vkUnmapMemory(device,bufferMemory);vkDestroyFence(device,fence,nullptr);
+#ifdef KHARVOX_SFS_TEST_AFFINE
+    // Use real image handles with a bookkeeping-only swapchain. No WSI calls:
+    // exercise acquisition, pending predictions, resize and handle reuse.
+    const auto chain=reinterpret_cast<VkSwapchainKHR>(uintptr_t(1));
+    VkImage trackedImages[]{image,stereoTexture.image};
+    kharvox::native::StereoFrame captured{};
+    kharvox::sfs::swapchainImages(device,chain,2,trackedImages);
+    check(!kharvox::sfs::pair(device,image,{8,8},VK_FORMAT_D32_SFLOAT,captured),"Unacquired image accepted");
+    kharvox::sfs::beginFrame(device,chain,0);
+    check(kharvox::sfs::pair(device,image,{8,8},VK_FORMAT_D32_SFLOAT,captured)&&captured.pose.serial==pose.serial,"Acquired pose missing");
+    pose.serial=2;pose.source={22,3,kharvox::native::SceneDomain::Gameplay};
+    pose.controllersValid={true,true};pose.controllers[1].position={.2f,1.2f,-.4f};
+    kharvox::sfs::prepare(device,pose,projection);
+    kharvox::sfs::beginFrame(device,chain,1); // copy not retired: old uniforms
+    check(kharvox::sfs::pair(device,trackedImages[1],{8,8},VK_FORMAT_D32_SFLOAT,captured)&&captured.pose.serial!=2,"Pending pose labeled as rendered");
+    kharvox::sfs::copyCompleted(device);kharvox::sfs::beginFrame(device,chain,1);
+    check(kharvox::sfs::pair(device,trackedImages[1],{8,8},VK_FORMAT_D32_SFLOAT,captured)&&captured.pose.serial==2&&captured.pose.controllersValid[1]&&captured.pose.controllers[1].position.x==.2f,"Frame controller snapshot lost");
+    check(kharvox::sfs::pair(device,image,{8,8},VK_FORMAT_D32_SFLOAT,captured)&&captured.pose.serial!=2,"Other acquired image relabeled by newer prediction");
+    kharvox::sfs::swapchainImages(device,chain,2,trackedImages);
+    check(kharvox::sfs::pair(device,trackedImages[1],{8,8},VK_FORMAT_D32_SFLOAT,captured)&&captured.pose.serial==2,"Repeated enumeration discarded source");
+    kharvox::sfs::swapchainDestroyed(device,chain);
+    kharvox::sfs::swapchainImages(device,chain,2,trackedImages);
+    check(!kharvox::sfs::pair(device,trackedImages[1],{8,8},VK_FORMAT_D32_SFLOAT,captured),"Recreated swapchain reused old pose");
+    kharvox::sfs::beginFrame(device,chain,2);
+    check(!kharvox::sfs::pair(device,trackedImages[1],{8,8},VK_FORMAT_D32_SFLOAT,captured),"Invalid index published a source");
+    kharvox::sfs::beginFrame(device,chain,1);
+    check(kharvox::sfs::pair(device,trackedImages[1],{8,8},VK_FORMAT_D32_SFLOAT,captured),"Recreated swapchain did not recover");
+    kharvox::sfs::swapchainDestroyed(device,chain);
+#endif
+
     vkDestroyPipeline(device,pipeline,nullptr);vkDestroyShaderModule(device,vertex,nullptr);vkDestroyShaderModule(device,fragment,nullptr);
     vkDestroyPipelineLayout(device,pipelineLayout,nullptr);vkDestroyDescriptorPool(device,descriptorPool,nullptr);vkDestroyDescriptorSetLayout(device,layout,nullptr);vkDestroySampler(device,sampler,nullptr);
     for(auto t:{stereoTexture,monoTexture}){vkDestroyImageView(device,t.view,nullptr);registry.destroy(device,t.image,nullptr,vkDestroyImage);vkFreeMemory(device,t.memory,nullptr);}

@@ -181,3 +181,39 @@ The user reported that focusing the Simulator instead opens DOOM's pause menu.
 The focus guard has not been bypassed. Real-headset weapon movement, walking,
 laser placement, HUD behavior and menu/level transitions remain to be checked;
 complete behavioral parity and hardware compatibility are not yet established.
+
+
+## Headset-independent gameplay hardening (2026-09-18)
+
+- SFS now uses the same published controller yaw as AER. Action processing can
+  advance smooth-turn input after the camera is published; using that newer
+  angle for the weapon/laser mixed two coordinate frames. Both now use the
+  camera's captured angle. Native replay retains its existing policy.
+- AER cache teardown at checkpoint and inactive-pair transitions no longer
+  disables a centered camera already prepared by the native/SFS producer.
+  This includes the warm-up frame on return from menus/scripted scenes.
+- SFS records the installed render pose per acquired swapchain image. A new
+  pending prediction cannot relabel another image, and an unacquired or recreated
+  image cannot inherit an old source identity. Repeated image enumeration
+  preserves existing acquisitions. Both Vulkan acquire entry points provide
+  the actual swapchain/image index. The conservative GPU retirement remains.
+- SteamVR compatibility logging no longer describes SFS as alternating eyes.
+
+The full Release build and **107/107 CTests** pass. A new 600-frame synthetic
+contract test exercises centered camera refresh, walking/body-yaw catch-up,
+future controller publications, tracking loss/recovery, calibration/epoch
+changes and rejection of previous level/menu/cinematic sources. The GPU fixture
+also checks acquisition ownership, pending versus installed poses, repeated
+swapchain enumeration and destroyed/recreated handles. These are automated
+contract checks, not measurements of real controller latency or headset comfort.
+
+A bounded Simulator run (PID 42924) reached over 3,000 OpenXR frames with zero
+recorded end-frame failures or lifecycle violations at frame 3000, then exited
+normally with code 0. Its controller input remained unfocused; no new claim is
+made about native-arm hiding or real weapon tracking. The last two transition
+condition corrections were subsequently compiled and checked by the full suite;
+they have not had a further live campaign test. Evidence is in local
+`out/beta096/build-gameplay-parity.log`, `ctest-gameplay-parity.log`, and
+`probe-gameplay-parity.log`. The refreshed native-runtime package passed the
+mandatory integration verifier. AER-compatible controls and settings are still
+shared; the remaining headset/visual validation listed above is outstanding.

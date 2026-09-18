@@ -8,6 +8,7 @@ struct ShaderCompileOptions {
     bool computeStereo{};
     bool vertexProjection{};
     bool profileReplacement{};
+    bool screenSpaceUi{};
     // Indirect group counts stay GPU-owned. A fixed-eye variant executes the
     // original dispatch grid once for its own layer, without rewriting counts.
     int indirectEye{-1};
@@ -17,6 +18,7 @@ struct CompiledShader {
     std::string glsl;
     unsigned clusterCorrections{}, worldCorrections{}, refractionCorrections{}, temporalCorrections{};
     bool vertexProjectionApplied{};
+    bool screenSpaceUiApplied{};
     // Descriptor bindings whose original 2D view must become an array view.
     struct Binding {uint32_t set{},binding{};bool storage{},depth{};};
     std::vector<Binding> arrayBindings;

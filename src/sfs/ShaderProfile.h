@@ -7,6 +7,16 @@
 #include <stdexcept>
 
 namespace kharvox::sfs {
+inline bool doomUiShader(uint64_t primary){
+    // Profile-identified UI families, including HUD masks and weapon displays.
+    // The same module is also used for world UI; clip-W separates those draws.
+    switch(primary){
+    case 0x2047418e3f6ad5aull:case 0x5d8a0b69a38eb2a0ull:
+    case 0xbfe07c0adb6207d7ull:case 0xc757868ee21edb47ull:
+    case 0xd7790e0979cc584full:return true;
+    default:return false;
+    }
+}
 struct ProfileShader {
     std::filesystem::path path;
     std::vector<uint32_t> words;

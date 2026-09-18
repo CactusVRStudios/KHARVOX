@@ -665,3 +665,37 @@ Additional shader audit (test 6 final):
 - All recognized world_pos/frustumVec, refr_tc and winPosPrev candidates in the
   captured audit have the corresponding correction. This is pattern coverage,
   not proof that every game material and temporal effect is visually correct.
+## Source Ring test 7: GPU particles and moving weapon body anchors
+
+User test 6 reports stick-movement weapon flicker in both eyes and monocular
+sparks. Runtime path counters remain zero for indirect stereo and mixed mono
+passes; duplicating those paths again is not supported by these logs.
+
+The captured GPU particle VS 6fb890e92d8bf507 uses separate viewmatrix and
+projectionmatrix rows rather than mvpmatrixw. Its active runtime variants were
+projection=0. Generic projection recognition now includes active viewmatrixw +
+projectionmatrixw and direct viewprojectionmatrixw. Declared but inactive rows
+do not opt in; existing atlas/shared-shadow exclusions remain. A real-GPU
+regression uses separate view/projection members and verifies per-eye pixel
+coverage. Simulator confirms the original particle module now uses projection=1.
+
+Weapon source transforms intentionally froze AER pairs by tracking ID. In SFS,
+that ID can outlive a body simulation update during locomotion. The draw path
+now receives the actual observed camera origin. Valid bounded origin changes
+shift the historical body anchor, and the cached model/animation is rebased from
+its recorded controller frame into the matching draw frame. Draw-only cached
+snapshots now retain the metadata of their actual target transform. No new
+controller prediction is introduced and AER retains its pair policy. Tests
+cover repeated-ID translation, non-accumulating repeated draws and rejected large
+origin discontinuities. The precise headset symptom still needs user validation.
+
+119/119 tests pass, including source/weapon, GPU stereo and PSVR2/bHaptics suites.
+Additional HUD fix:
+Known DOOM UI shader families now preserve the reference screen/world split:
+clip-W <= 8 keeps screen overlay geometry, while world UI keeps full eye
+projection. This applies consistently to generic/profile variants, including
+HUD mask shaders. Legacy TV shifts are removed before the single VR transform.
+The prior unconditional world IPD shift could move flat overlays outside one
+view. Level-start notification visibility still needs headset confirmation.
+119/119 tests pass after this addition. Earlier broad audit compiled all 722
+captured/profile shader modules; final startup checks exercise the UI variants.

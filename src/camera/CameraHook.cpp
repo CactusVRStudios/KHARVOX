@@ -1938,6 +1938,8 @@ extern "C" void __fastcall patchCamera(void* rawContext, void* rawReturnAddress)
             std::memcpy(weaponCamera.bodyAxis.data(),bodyBasis,sizeof(bodyBasis));
             std::memcpy(weaponCamera.headAxis.data(),hudAnchorAxis,sizeof(hudAnchorAxis));
             weaponCamera.bodyYawDelta=bodyRebaseDelta;
+            std::memcpy(weaponCamera.renderOrigin.data(),observed.pose.data(),3*sizeof(float));
+            weaponCamera.renderOriginValid=true;
             KharvoxWeaponObserveAerCamera(weaponCamera);
         }
     }

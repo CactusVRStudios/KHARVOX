@@ -131,11 +131,12 @@ VkShaderModule compiledModule(const std::shared_ptr<State>& s,VkShaderModule ori
     auto cached=s->compiled.find(key);if(cached!=s->compiled.end())return cached->second;
     ShaderCompileOptions options;options.computeStereo=stereoCompute&&!replacement;
     options.profileReplacement=bool(replacement);
+    options.screenSpaceUi=doomUiShader(primary);
     options.indirectEye=indirectEye;
     options.vertexProjection=!sharedShadow&&needsStereoProjection(input,bool(replacement));
     auto shader=compileStereoShader(input,options);
     note("shader="+key+" stage="+std::to_string(stage)+" profile="+(replacement?"matched":"generic")+
-         " projection="+std::to_string(shader.vertexProjectionApplied)+" sharedShadow="+std::to_string(sharedShadow)+" stereoCompute="+std::to_string(stereoCompute)+
+         " projection="+std::to_string(shader.vertexProjectionApplied)+" screenUi="+std::to_string(shader.screenSpaceUiApplied)+" sharedShadow="+std::to_string(sharedShadow)+" stereoCompute="+std::to_string(stereoCompute)+
          " clusters="+std::to_string(shader.clusterCorrections)+" world="+std::to_string(shader.worldCorrections)+" refraction="+std::to_string(shader.refractionCorrections)+" temporal="+std::to_string(shader.temporalCorrections));
     VkShaderModuleCreateInfo info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};info.codeSize=shader.words.size()*4;info.pCode=shader.words.data();
     VkShaderModule result{};auto r=FN(vkCreateShaderModule)(s->device,&info,nullptr,&result);

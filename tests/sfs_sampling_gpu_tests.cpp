@@ -182,13 +182,13 @@ int main(int argc,char** argv){try{
     VkWriteDescriptorSet writes[2]{};for(uint32_t i=0;i<2;++i){writes[i].sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;writes[i].dstSet=descriptor;writes[i].dstBinding=i;writes[i].descriptorCount=1;writes[i].descriptorType=VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;writes[i].pImageInfo=&images[i];}vkUpdateDescriptorSets(device,2,writes,0,nullptr);
 #ifdef KHARVOX_SFS_TEST_SHADOW_PROJECTION
     VkBuffer cameraBuffer{};VkDeviceMemory cameraMemory{};
-    VkBufferCreateInfo cameraInfo{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};cameraInfo.size=16;cameraInfo.usage=VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+    VkBufferCreateInfo cameraInfo{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};cameraInfo.size=32;cameraInfo.usage=VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
     ok(vkCreateBuffer(device,&cameraInfo,nullptr,&cameraBuffer));vkGetBufferMemoryRequirements(device,cameraBuffer,&req);
     alloc.allocationSize=req.size;alloc.memoryTypeIndex=memoryType(req.memoryTypeBits,VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     ok(vkAllocateMemory(device,&alloc,nullptr,&cameraMemory));ok(vkBindBufferMemory(device,cameraBuffer,cameraMemory,0));
-    void* cameraData{};ok(vkMapMemory(device,cameraMemory,0,16,0,&cameraData));
-    const float cameraValues[4]{0,0,0,.032f};std::memcpy(cameraData,cameraValues,16);vkUnmapMemory(device,cameraMemory);
-    VkDescriptorBufferInfo cameraBinding{cameraBuffer,0,16};VkWriteDescriptorSet cameraWrite{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};cameraWrite.dstSet=descriptor;cameraWrite.dstBinding=2;cameraWrite.descriptorCount=1;cameraWrite.descriptorType=VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;cameraWrite.pBufferInfo=&cameraBinding;vkUpdateDescriptorSets(device,1,&cameraWrite,0,nullptr);
+    void* cameraData{};ok(vkMapMemory(device,cameraMemory,0,32,0,&cameraData));
+    const float cameraValues[8]{0,0,0,.032f,0,0,0,1};std::memcpy(cameraData,cameraValues,32);vkUnmapMemory(device,cameraMemory);
+    VkDescriptorBufferInfo cameraBinding{cameraBuffer,0,32};VkWriteDescriptorSet cameraWrite{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};cameraWrite.dstSet=descriptor;cameraWrite.dstBinding=2;cameraWrite.descriptorCount=1;cameraWrite.descriptorType=VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;cameraWrite.pBufferInfo=&cameraBinding;vkUpdateDescriptorSets(device,1,&cameraWrite,0,nullptr);
 #endif
     VkPipelineLayoutCreateInfo pl{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};pl.setLayoutCount=1;pl.pSetLayouts=&layout;
     VkPipelineLayout pipelineLayout{};ok(vkCreatePipelineLayout(device,&pl,nullptr,&pipelineLayout));

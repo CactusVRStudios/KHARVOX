@@ -27,10 +27,20 @@ struct AerWeaponCamera {
     std::array<float,3> bodyOrigin{};
     std::array<float,9> bodyAxis{},headAxis{};
     float bodyYawDelta{};
+    std::array<float,3> renderOrigin{};
+    bool renderOriginValid{};
 };
 // Match the existing queued draw-source lifetime across root, prop and draw.
 inline constexpr uint64_t aerWeaponSourcePresentAge=3;
 struct AerWeaponFrame {AerWeaponCamera camera{};AerWeaponInput input{};};
+inline bool alignAerWeaponDrawCamera(AerWeaponFrame& frame,const float* origin){
+    if(!origin||!frame.camera.renderOriginValid)return false;
+    for(int i=0;i<3;++i)if(!std::isfinite(origin[i])
+        ||!std::isfinite(frame.camera.renderOrigin[i])
+        ||std::abs(origin[i]-frame.camera.renderOrigin[i])>64.f)return false;
+    for(int i=0;i<3;++i){frame.camera.bodyOrigin[i]+=origin[i]-frame.camera.renderOrigin[i];frame.camera.renderOrigin[i]=origin[i];}
+    return true;
+}
 enum class AerWeaponResolveFailure { None, NoCamera, Level, Future, Stale, MissingInput, InvalidInput, Epoch, Generation };
 struct AerWeaponResolveDiagnostic {
     AerWeaponResolveFailure failure{};
@@ -172,7 +182,7 @@ public:
     // then resolve the actual draw camera. Conflicting identities never write.
     int forDraw(AerSourceKey wanted,const float* origin,const float* axis,
         float* targetOrigin,float* targetAxis,uint64_t& sourceId,const AerWeaponFrame* drawFrame=nullptr,
-        uintptr_t model=0,uintptr_t asset=0,bool* recovered=nullptr){
+        uintptr_t model=0,uintptr_t asset=0,bool* recovered=nullptr,bool followDrawBody=false){
         if(recovered)*recovered=false;
         if(!wanted.valid()||wanted.domain)return 0;
         std::lock_guard lock(mutex_);const Entry* selected{};bool recognized=false;
@@ -270,11 +280,20 @@ public:
                 for(size_t i=0;i<derivedCount;++i){draws_[nextDraw_]=derived[i];nextDraw_=(nextDraw_+1)%draws_.size();}rememberBinding();return 6;}
         }
         if(!selected)return recognized?3:0;
-        const auto result=*selected;
+        auto result=*selected;
+        // SFS has no second CPU eye. A repeated tracking ID can span another
+        // simulation step; retain the animation relative to the controller,
+        // but follow the body anchor of the actual draw camera.
+        if(followDrawBody&&drawFrame){
+            if(!rebaseAerDrawPlacement(result.frame,*drawFrame,result.origin.data(),result.axis.data(),
+                targetOrigin,targetAxis))return 3;
+            std::memcpy(result.origin.data(),targetOrigin,sizeof(result.origin));
+            std::memcpy(result.axis.data(),targetAxis,sizeof(result.axis));result.frame=*drawFrame;
+        }
         std::memcpy(targetOrigin,result.origin.data(),sizeof(result.origin));
         std::memcpy(targetAxis,result.axis.data(),sizeof(result.axis));
         for(size_t i=0;i<identityCount;++i){
-            auto snapshot=*identities[i];snapshot.key=wanted;snapshot.origin=result.origin;snapshot.axis=result.axis;
+            auto snapshot=*identities[i];snapshot.key=wanted;snapshot.origin=result.origin;snapshot.axis=result.axis;snapshot.frame=result.frame;
             bool held=false;
             for(const auto& d:draws_)if(d.key.poseId==wanted.poseId&&d.key.level==wanted.level
                 &&d.key.domain==wanted.domain&&d.entity==snapshot.entity&&d.role==snapshot.role

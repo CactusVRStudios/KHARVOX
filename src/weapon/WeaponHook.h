@@ -2,7 +2,7 @@
 #include "AerWeaponSource.h"
 int KharvoxWeaponResolveAerDraw(kharvox::AerSourceKey source,const float* origin,const float* axis,
     float* targetOrigin,float* targetAxis,uint64_t& matchedPoseId,
-    uintptr_t model=0,uintptr_t asset=0,bool* recovered=nullptr);
+    uintptr_t model=0,uintptr_t asset=0,bool* recovered=nullptr,const float* drawCameraOrigin=nullptr);
 
 enum class KharvoxWeaponKind {
     Unknown = 0,

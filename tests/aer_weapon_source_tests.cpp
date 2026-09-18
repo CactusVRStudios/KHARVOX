@@ -81,6 +81,27 @@ int main(){
     float draw[12]{};uint64_t matched{};
     check(transforms.forDraw(frame.camera.key,origin,axis,draw,draw+3,matched,&frame)==1);
     check(draw[0]==1&&matched==771);
+    {
+        AerWeaponSourceTransforms walking;
+        AerWeaponFrame first{};first.camera.key={900,4,0};first.input.valid=true;
+        first.camera.bodyAxis={1,0,0,0,1,0,0,0,1};first.camera.headAxis=first.camera.bodyAxis;
+        first.camera.renderOriginValid=true;
+        float root[3]{12,2,3},out[12]{};uint64_t source{};
+        check(!walking.hold(first,99,0,root,axis));
+        check(walking.forDraw(first.camera.key,root,axis,out,out+3,source,&first)==1);
+        auto moved=first;float cameraOrigin[3]{10,0,0};
+        check(alignAerWeaponDrawCamera(moved,cameraOrigin));
+        check(walking.forDraw(first.camera.key,root,axis,out,out+3,source,&moved,0,0,nullptr,true)==2);
+        check(near(out[0],22)&&near(out[1],2));
+        // Repeated draw must not accumulate translation through the cache.
+        check(walking.forDraw(first.camera.key,root,axis,out,out+3,source,&moved,0,0,nullptr,true)==2);
+        check(near(out[0],22));
+        cameraOrigin[0]=20;check(alignAerWeaponDrawCamera(moved,cameraOrigin));
+        check(walking.forDraw(first.camera.key,root,axis,out,out+3,source,&moved,0,0,nullptr,true)==2);
+        check(near(out[0],32));
+        cameraOrigin[0]=200;check(!alignAerWeaponDrawCamera(moved,cameraOrigin));
+        check(near(moved.camera.bodyOrigin[0],20));
+    }
     origin[0]=50;check(!transforms.hold(frame,42,1,origin,axis)); // prop role distinct
     check(!transforms.hold(frame,43,0,origin,axis)); // object identity
     frame.camera.key.level=3;check(!transforms.hold(frame,42,0,origin,axis));

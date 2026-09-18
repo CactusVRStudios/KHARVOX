@@ -36,7 +36,7 @@ static void __fastcall hookAerModelMatrix(void* output,const void* rawModel,void
     const kharvox::AerSourceKey key{camera.poseId,camera.level,camera.eye,camera.domain};
     const auto present=KharvoxCameraCurrentPresentSerial();
     if(flags&0x20){
-        status=KharvoxWeaponResolveAerDraw(key,pose,pose+3,target,target+3,matched,model,asset,&bindingRecovered);
+        status=KharvoxWeaponResolveAerDraw(key,pose,pose+3,target,target+3,matched,model,asset,&bindingRecovered,viewPose);
         if(status==1||status==2||status==6)aerWeaponAttachments.parent(model,asset,key,present,pose,target,viewPose);
     }else if((flags&~8u)==0&&(billboard==0||billboard==8)){
         float distance2=0;for(int i=0;i<3;++i)distance2+=(pose[i]-viewPose[i])*(pose[i]-viewPose[i]);

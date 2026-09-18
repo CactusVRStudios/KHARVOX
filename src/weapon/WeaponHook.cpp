@@ -7,6 +7,7 @@
 #include "AerWeaponPairPolicy.h"
 #include "AerWeaponPoseCache.h"
 #include "CollectiblePresentation.h"
+#include "../sfs/NativeSfs.h"
 
 #include "../camera/CameraHook.h"
 #include "../hud/HudHook.h"
@@ -2531,10 +2532,11 @@ bool KharvoxWeaponCollectibleAnimationActive() {
 
 void KharvoxWeaponObserveAerCamera(const kharvox::AerWeaponCamera& camera){weaponSourceHistory.camera(camera);}
 int KharvoxWeaponResolveAerDraw(kharvox::AerSourceKey source,const float* origin,const float* axis,
-    float* targetOrigin,float* targetAxis,uint64_t& matchedPoseId,uintptr_t model,uintptr_t asset,bool* recovered){
+    float* targetOrigin,float* targetAxis,uint64_t& matchedPoseId,uintptr_t model,uintptr_t asset,bool* recovered,const float* drawCameraOrigin){
     kharvox::AerWeaponFrame frame;
     const bool found=weaponSourceHistory.frame(source,KharvoxCameraCurrentPresentSerial(),frame);
-    return weaponSourceTransforms.forDraw(source,origin,axis,targetOrigin,targetAxis,matchedPoseId,found?&frame:nullptr,model,asset,recovered);
+    const bool followBody=found&&kharvox::sfs::vrEnabled()&&alignAerWeaponDrawCamera(frame,drawCameraOrigin);
+    return weaponSourceTransforms.forDraw(source,origin,axis,targetOrigin,targetAxis,matchedPoseId,found?&frame:nullptr,model,asset,recovered,followBody);
 }
 
 void KharvoxWeaponRememberAerInput(unsigned long long poseId) {

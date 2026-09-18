@@ -130,6 +130,7 @@ CompiledShader compileStereoShader(const std::vector<uint32_t>& original,const S
         source.find("gl_Position = vec4((atlasTilePos * 2.0) - vec2(1.0), 0.0, 1.0);")!=std::string::npos;
     const bool vertexProjection=request.vertexProjection&&!atlasPosition;
     result.vertexProjectionApplied=vertexProjection;
+    result.screenSpaceUiApplied=vertexProjection&&request.screenSpaceUi;
     // Reconstruct the profile's horizontal clip correction in affine form.
     // stereo.z is KHARVOX's intercept. Also correct the two supplied fog variants
     // which subtract stereo.x rather than the convergence field in that term.
@@ -161,7 +162,8 @@ CompiledShader compileStereoShader(const std::vector<uint32_t>& original,const S
         while(line<source.size()){
             auto end=source.find('\n',line);if(end==std::string::npos)end=source.size();
             const auto text=source.substr(line,end-line);
-            if(text.find("gl_Position.x +=")!=std::string::npos&&text.find(".stereo.")!=std::string::npos)source.erase(line,end-line);
+            if((text.find("gl_Position.x +=")!=std::string::npos||text.find("gl_Position.x -=")!=std::string::npos)
+                &&text.find(".stereo.")!=std::string::npos)source.erase(line,end-line);
             else line=end;
             if(line<source.size())++line;
         }
@@ -180,7 +182,12 @@ CompiledShader compileStereoShader(const std::vector<uint32_t>& original,const S
             else source+="khSfsNumWorkGroups = gl_NumWorkGroups; khSfsNumWorkGroups.z /= 2u;\nkhSfsEye = gl_WorkGroupID.z / khSfsNumWorkGroups.z;\nkhSfsWorkGroupID = gl_WorkGroupID; khSfsWorkGroupID.z %= khSfsNumWorkGroups.z;\nkhSfsGlobalInvocationID = gl_GlobalInvocationID; khSfsGlobalInvocationID.z -= khSfsEye * khSfsNumWorkGroups.z * gl_WorkGroupSize.z;\n";
         }
         source+="khSfsOriginalMain();\n";
-        if(vertexProjection)source+="gl_Position = khSfsProjection.clipFromCenter[gl_ViewIndex] * gl_Position + khSfsProjection.eyeTranslation[gl_ViewIndex];\n";
+        if(vertexProjection){
+            // Keep the reference profile's screen/world UI split. Orthographic
+            // overlays have no world depth to divide the IPD displacement by.
+            if(request.screenSpaceUi)source+="if (gl_Position.w > 8.0) ";
+            source+="gl_Position = khSfsProjection.clipFromCenter[gl_ViewIndex] * gl_Position + khSfsProjection.eyeTranslation[gl_ViewIndex];\n";
+        }
         source+="}\n";
     }
     result.glsl=source;
@@ -215,7 +222,23 @@ bool needsStereoProjection(const std::vector<uint32_t>& original,bool profileRep
     if(compiler.get_execution_model()!=spv::ExecutionModelVertex)return false;
     for(const auto& buffer:compiler.get_shader_resources().uniform_buffers){
         if(profileReplacement){if(compiler.get_decoration(buffer.id,spv::DecorationDescriptorSet)==0&&compiler.get_decoration(buffer.id,spv::DecorationBinding)==30&&!compiler.get_active_buffer_ranges(buffer.id).empty())return true;}
-        else {const auto& type=compiler.get_type(buffer.base_type_id);for(uint32_t i=0;i<type.member_types.size();++i)if(compiler.get_member_name(buffer.base_type_id,i)=="mvpmatrixw")return true;}
+        else {
+            const auto& type=compiler.get_type(buffer.base_type_id);
+            bool view=false,projection=false,viewProjection=false;
+            const auto active=compiler.get_active_buffer_ranges(buffer.id);
+            for(uint32_t i=0;i<type.member_types.size();++i){
+                const auto name=compiler.get_member_name(buffer.base_type_id,i);
+                if(name=="mvpmatrixw")return true;
+                bool used=false;for(const auto& range:active)used|=range.index==i;
+                if(!used)continue;
+                view|=name=="viewmatrixw";
+                projection|=name=="projectionmatrixw";
+                viewProjection|=name=="viewprojectionmatrixw";
+            }
+            // GPU particles assemble view and projection separately; distant
+            // world geometry can use VP directly. Both still need per-eye clip.
+            if(viewProjection||(view&&projection))return true;
+        }
     }
     return false;
 }

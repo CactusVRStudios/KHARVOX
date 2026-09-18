@@ -1,5 +1,6 @@
 #include "../src/sfs/DoomLighting.h"
 #include "../src/sfs/ShaderCompiler.h"
+#include "../src/sfs/ShaderProfile.h"
 #include <fstream>
 #include <stdexcept>
 #include <iostream>
@@ -13,8 +14,14 @@ int main(int argc,char** argv){try{
         ShaderCompileOptions options;options.vertexProjection=needsStereoProjection(words,false);check(options.vertexProjection);
         const auto compiled=compileStereoShader(words,options);
         check(compiled.vertexProjectionApplied==(i==2)); // Atlas vs camera, same MVP member.
+        options.screenSpaceUi=true;
+        const auto ui=compileStereoShader(words,options);
+        check(ui.screenSpaceUiApplied==(i==2));
+        if(i==2)check(ui.glsl.find("if (gl_Position.w > 8.0) gl_Position = khSfsProjection")!=std::string::npos);
     }
     std::string unrelated="void main() { /* shared light data */ }";
+    check(doomUiShader(0xd7790e0979cc584full)&&doomUiShader(0xc757868ee21edb47ull));
+    check(!doomUiShader(0x6fb890e92d8bf507ull));
     const auto untouched=unrelated;auto none=correctDoomLighting(unrelated);
     check(unrelated==untouched&&!none.clusters&&!none.worldPositions);
     std::string shader=R"(

@@ -132,11 +132,19 @@ if(BUILD_TESTING AND WIN32)
   add_test(NAME sfs-shadow-projection-gpu COMMAND KharvoxSfsShadowProjectionGpuTests "${sfs_fixtures}/shadow-projection.vert.spv" "${sfs_fixtures}/sampling.frag.spv")
   add_test(NAME sfs-camera-depth-projection-gpu COMMAND KharvoxSfsShadowProjectionGpuTests "${sfs_fixtures}/shadow-projection.vert.spv" "${sfs_fixtures}/sampling.frag.spv" camera)
   set_tests_properties(sfs-shadow-projection-gpu sfs-camera-depth-projection-gpu PROPERTIES TIMEOUT 30)
+  add_custom_command(OUTPUT "${sfs_fixtures}/particle-projection.vert.spv"
+    COMMAND "${KHARVOX_GLSLANG_ROOT}/bin/glslang.exe" -V --target-env vulkan1.1
+      "${PROJECT_SOURCE_DIR}/tests/shaders/sfs_particle_projection.vert" -o "${sfs_fixtures}/particle-projection.vert.spv"
+    DEPENDS "${PROJECT_SOURCE_DIR}/tests/shaders/sfs_particle_projection.vert" VERBATIM)
+  target_sources(KharvoxSfsShadowProjectionGpuTests PRIVATE "${sfs_fixtures}/particle-projection.vert.spv")
+  add_test(NAME sfs-particle-projection-gpu COMMAND KharvoxSfsShadowProjectionGpuTests "${sfs_fixtures}/particle-projection.vert.spv" "${sfs_fixtures}/sampling.frag.spv" camera)
+  set_tests_properties(sfs-particle-projection-gpu PROPERTIES TIMEOUT 30)
   add_custom_command(OUTPUT "${sfs_fixtures}/material-atlas.vert.spv"
     COMMAND "${KHARVOX_GLSLANG_ROOT}/bin/glslang.exe" -V --target-env vulkan1.1
       "${PROJECT_SOURCE_DIR}/tests/shaders/sfs_material_atlas.vert" -o "${sfs_fixtures}/material-atlas.vert.spv"
     DEPENDS "${PROJECT_SOURCE_DIR}/tests/shaders/sfs_material_atlas.vert" VERBATIM)
   add_executable(KharvoxSfsLightingRewriteTests ../../tests/sfs_lighting_rewrite_tests.cpp "${sfs_fixtures}/material-atlas.vert.spv" "${sfs_fixtures}/shadow-projection.vert.spv")
   target_link_libraries(KharvoxSfsLightingRewriteTests PRIVATE KharvoxSfsCompiler)
+  target_include_directories(KharvoxSfsLightingRewriteTests PRIVATE "${PROJECT_SOURCE_DIR}/third-party/vulkan-headers/include")
   add_test(NAME sfs-lighting-rewrite COMMAND KharvoxSfsLightingRewriteTests "${sfs_fixtures}/material-atlas.vert.spv" "${sfs_fixtures}/shadow-projection.vert.spv")
 endif()

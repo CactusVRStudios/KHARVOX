@@ -8,6 +8,37 @@ bool near(float a,float b){return std::abs(a-b)<.0001f;}
 int main(){
     using namespace kharvox;
     {
+        SfsWeaponDrawBridge bridge;
+        AerWeaponFrame old{};old.input.valid=true;old.input.epoch=4;
+        old.camera.key={100,7,0};old.camera.bodyAxis={1,0,0,0,1,0,0,0,1};
+        float origin[3]{10,2,3},axis[9]{1,0,0,0,1,0,0,0,1};uint64_t source=100;
+        check(!bridge.apply(0,12,34,1,100,old,origin,axis,source));
+        check(!bridge.apply(2,12,34,1,100,old,origin,axis,source));
+        auto current=old;current.camera.key.poseId=101;current.camera.bodyOrigin[0]=4;current.input.grip[0]=3;
+        origin[0]=-999;
+        check(bridge.apply(0,12,34,1,101,current,origin,axis,source));
+        check(near(origin[0],17)&&near(origin[1],2));
+        // Repeated calls do not accumulate movement or extend the deadline.
+        check(bridge.apply(0,12,34,1,102,current,origin,axis,source));check(near(origin[0],17));
+        check(!bridge.apply(0,12,34,1,103,current,origin,axis,source));
+        check(!bridge.apply(4,12,34,1,101,current,origin,axis,source));
+        check(!bridge.apply(0,12,35,1,101,current,origin,axis,source));
+        check(!bridge.apply(0,12,34,2,101,current,origin,axis,source));
+        check(!bridge.apply(0,13,34,1,101,current,origin,axis,source));
+        for(int change=0;change<5;++change){auto reset=current;
+            if(change==0)++reset.input.epoch;
+            if(change==1)++reset.input.generation;
+            if(change==2)++reset.camera.key.level;
+            if(change==3)reset.camera.key.domain=1;
+            if(change==4)reset.input.valid=false;
+            check(!bridge.apply(0,12,34,1,101,reset,origin,axis,source));
+        }
+        // Fresh animation resumes immediately and replaces the old offset.
+        origin[0]=30;check(!bridge.apply(2,12,34,1,102,current,origin,axis,source));
+        current.camera.key.poseId=102;current.camera.bodyOrigin[0]=8;
+        check(bridge.apply(0,12,34,1,103,current,origin,axis,source));check(near(origin[0],34));
+    }
+    {
         // The same queued render model must keep its animation-local placement,
         // regardless of whether the next native animation update finished first.
         for(bool publishNewAnimation:{false,true}){

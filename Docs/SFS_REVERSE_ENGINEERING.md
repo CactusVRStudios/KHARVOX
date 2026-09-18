@@ -960,3 +960,18 @@ reliably produces the flicker. Keep as reproduction, not proof of a floor or
 reflection cause. Test21 changes only flare controls; weapon binding is unchanged.
 Recommended next diagnostic: Ctrl+Shift+T, eight-second CPU pose trace while
 repeating that movement. Ctrl+Shift+P produces isolated GPU image snapshots.
+## 0.96 Test 22 - bounded SFS weapon source gap bridge
+
+Test21 doorway CPU trace contained uncorrected tracked weapon draws, including
+pose 21254 at present 21257 followed by corrected placement at present 21258.
+This is evidence of intermittent association loss, not proof of GPU flicker.
+SFS now retains a confirmed per-model/asset draw placement for at most two
+present intervals and three pose IDs, rebasing it through the actual current
+controller/body frame. Bridged draws never renew their own deadline. Only
+status zero (missing association) can recover; ambiguous/invalid states cannot.
+Weapon kind, model, asset, epoch, calibration generation, level and gameplay
+domain checks prevent reuse across transitions. AER is unchanged.
+The last confirmed animation-local placement can persist briefly during the gap;
+newly confirmed animation replaces it immediately. No new GPU work is added.
+[SFS-WEAPON-GAP] logs identify actual recovery. Test21 lens flare suppression
+remains active. Headset confirmation at the doorway is still required.

@@ -2589,7 +2589,19 @@ int KharvoxWeaponResolveAerDraw(kharvox::AerSourceKey source,const float* origin
             start=now;frames=changed=poseChanges=0;
         }
     }
-    const int status=weaponSourceTransforms.forDraw(source,origin,axis,targetOrigin,targetAxis,matchedPoseId,found?&frame:nullptr,model,asset,recovered,followBody);
+    int status=weaponSourceTransforms.forDraw(source,origin,axis,targetOrigin,targetAxis,matchedPoseId,found?&frame:nullptr,model,asset,recovered,followBody);
+    static kharvox::SfsWeaponDrawBridge gapBridge;
+    if(followBody&&frame.input.epoch==weaponSourceEpoch.load(std::memory_order_acquire)
+        &&frame.input.generation==pose.resetGeneration.load(std::memory_order_acquire)
+        &&gapBridge.apply(status,model,asset,unsigned(KharvoxWeaponCurrentKind()),KharvoxCameraCurrentPresentSerial(),
+            frame,targetOrigin,targetAxis,matchedPoseId)){
+        status=6;
+        if(recovered)*recovered=true;
+        static std::atomic<uint64_t> bridges{};const auto count=++bridges;
+        if(kharvox::extendedDiagnosticsEnabled()&&(count<=8||count%120==0))
+            log("[SFS-WEAPON-GAP] controller/body rebase model="+std::to_string(model)
+                +" pose="+std::to_string(source.poseId)+" count="+std::to_string(count));
+    }
     if(followBody&&(status==1||status==2||status==6)){
         std::lock_guard lock(laserSourceMutex);
         LaserSourceSnapshot sample{};

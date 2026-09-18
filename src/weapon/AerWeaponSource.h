@@ -187,6 +187,41 @@ inline bool rebaseAerDrawPlacement(const AerWeaponFrame& from,const AerWeaponFra
     return true;
 }
 
+// SFS-only short gap bridge. Confirmed draws refresh the cache; bridged draws
+// never do, so a missing source cannot perpetuate an old animation indefinitely.
+class SfsWeaponDrawBridge {
+    struct Entry {
+        uintptr_t model{},asset{};unsigned kind{};uint64_t present{},source{};
+        AerWeaponFrame frame{};std::array<float,12> pose{};
+    };
+    std::mutex mutex_;std::array<Entry,64> entries_{};size_t next_{};
+public:
+    bool apply(int status,uintptr_t model,uintptr_t asset,unsigned kind,uint64_t present,
+        const AerWeaponFrame& frame,float* origin,float* axis,uint64_t& source){
+        if(!model||!asset||!frame.input.valid||!frame.camera.key.valid()||frame.camera.key.domain)return false;
+        std::lock_guard lock(mutex_);
+        Entry* saved=nullptr;
+        for(auto& e:entries_)if(e.model==model){saved=&e;break;}
+        if(status==1||status==2||status==6){
+            // Older asynchronous jobs must not overwrite the newer confirmation.
+            if(saved&&saved->present>present)return false;
+            if(!saved){saved=&entries_[next_];next_=(next_+1)%entries_.size();}
+            *saved={model,asset,kind,present,source,frame,{}};
+            std::memcpy(saved->pose.data(),origin,3*sizeof(float));
+            std::memcpy(saved->pose.data()+3,axis,9*sizeof(float));return false;
+        }
+        // Ambiguous or invalid sources are not eligible for recovery.
+        if(status!=0||!saved||saved->asset!=asset||saved->kind!=kind
+            ||present<saved->present||present-saved->present>2
+            ||frame.camera.key.poseId<saved->frame.camera.key.poseId
+            ||frame.camera.key.poseId-saved->frame.camera.key.poseId>3)return false;
+        float result[12]{};
+        if(!rebaseAerDrawPlacement(saved->frame,frame,saved->pose.data(),saved->pose.data()+3,result,result+3))return false;
+        std::memcpy(origin,result,3*sizeof(float));std::memcpy(axis,result+3,9*sizeof(float));
+        source=saved->source;return true;
+    }
+};
+
 // The root may have been positioned with last update's animated grip joint.
 // Anchor the completed child using this update's joint and the actual held root.
 // Preserve child animation/rotation; correct only the inherited grip translation.

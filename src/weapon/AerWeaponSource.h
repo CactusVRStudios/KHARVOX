@@ -315,7 +315,8 @@ public:
         return std::memcmp(targetOrigin,origin,sizeof(result.origin))
             ||std::memcmp(targetAxis,axis,sizeof(result.axis))?2:1;
     }
-    bool hold(const AerWeaponFrame& frame,uintptr_t entity,unsigned role,float* origin,float* axis){
+    bool hold(const AerWeaponFrame& frame,uintptr_t entity,unsigned role,float* origin,float* axis,AerWeaponFrame* heldFrame=nullptr){
+        if(heldFrame)*heldFrame=frame;
         if(!frame.camera.key.valid()||!entity||!origin||!axis)return false;
         std::lock_guard lock(mutex_);
         for(auto& e:entries_){
@@ -326,6 +327,10 @@ public:
             // Keep one immutable model pose for this pair, including repeat
             // evaluations of the first eye. A new pose ID, entity, role or
             // calibration/weapon epoch still creates a fresh snapshot.
+            // A repeated camera publication may have moved within this ID.
+            // Children must inherit the camera belonging to the held model,
+            // otherwise draw-time rebasing subtracts the wrong body position.
+            if(heldFrame)*heldFrame=e.frame;
             std::memcpy(origin,e.origin.data(),sizeof(e.origin));std::memcpy(axis,e.axis.data(),sizeof(e.axis));return true;
         }
         auto& e=entries_[next_];next_=(next_+1)%entries_.size();

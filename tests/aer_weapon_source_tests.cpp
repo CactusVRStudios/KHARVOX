@@ -127,6 +127,26 @@ int main(){
         movementCase(0);
         movementCase(3);
     }
+    {
+        // Repeated root evaluation can observe a newer body camera for the
+        // same tracking ID. Its held transform and metadata must stay paired
+        // when a child prop is first recorded after that movement.
+        AerWeaponSourceTransforms moving;
+        AerWeaponFrame first{};first.camera.key={1100,4,0};first.input.valid=true;
+        first.camera.bodyAxis={1,0,0,0,1,0,0,0,1};
+        float root[3]{12,2,3};AerWeaponFrame held{};
+        check(!moving.hold(first,99,0,root,axis,&held));
+        auto current=first;current.camera.bodyOrigin[0]=10;
+        root[0]=22;
+        check(moving.hold(current,99,0,root,axis,&held));
+        check(near(root[0],12)&&near(held.camera.bodyOrigin[0],0));
+        check(!moving.hold(held,100,1,root,axis));
+        for(int repeat=0;repeat<3;++repeat){
+            float out[12]{};uint64_t source{};
+            const auto status=moving.forDraw(current.camera.key,root,axis,out,out+3,source,&current,0,0,nullptr,true);
+            check(status==2&&near(out[0],22)&&near(out[1],2));
+        }
+    }
     origin[0]=50;check(!transforms.hold(frame,42,1,origin,axis)); // prop role distinct
     check(!transforms.hold(frame,43,0,origin,axis)); // object identity
     frame.camera.key.level=3;check(!transforms.hold(frame,42,0,origin,axis));

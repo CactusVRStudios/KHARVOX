@@ -2290,7 +2290,7 @@ bool buildControllerTransform(uintptr_t entity, const float* nativeOrigin, const
     if(sourceBound){
         if(sourceFrame.input.epoch!=weaponSourceEpoch.load(std::memory_order_acquire)
             ||sourceFrame.input.generation!=pose.resetGeneration.load(std::memory_order_acquire))return false;
-        const bool reused=weaponSourceTransforms.hold(sourceFrame,entity,0,desiredOrigin,desiredAxis);
+        const bool reused=weaponSourceTransforms.hold(sourceFrame,entity,0,desiredOrigin,desiredAxis,&sourceFrame);
         weaponRootSource=sourceFrame;weaponRootSourceValid=true;
         weaponRootSourcePresent=KharvoxCameraCurrentPresentSerial();
         traceWeaponSource(kharvox::pose_trace::WeaponSourceRoot,entity,sourceFrame,desiredOrigin,desiredAxis,reused?2:1);
@@ -2315,8 +2315,9 @@ bool synchronizeAerAnimatedWeaponProp(
         }
         std::memcpy(synchronizedOrigin,nativeOrigin,3*sizeof(float));
         std::memcpy(synchronizedAxis,nativeAxis,9*sizeof(float));
-        const bool reused=weaponSourceTransforms.hold(weaponRootSource,entity,1,synchronizedOrigin,synchronizedAxis);
-        traceWeaponSource(kharvox::pose_trace::WeaponSourceProp,entity,weaponRootSource,synchronizedOrigin,synchronizedAxis,reused?2:1);
+        kharvox::AerWeaponFrame propSource;
+        const bool reused=weaponSourceTransforms.hold(weaponRootSource,entity,1,synchronizedOrigin,synchronizedAxis,&propSource);
+        traceWeaponSource(kharvox::pose_trace::WeaponSourceProp,entity,propSource,synchronizedOrigin,synchronizedAxis,reused?2:1);
         static std::atomic<uint64_t> counts{};const auto n=counts.fetch_add(1,std::memory_order_relaxed)+1;
         if(kharvox::extendedDiagnosticsEnabled()&&(n<=4||n%1024==0)) {
             LARGE_INTEGER now{},frequency{};QueryPerformanceCounter(&now);QueryPerformanceFrequency(&frequency);

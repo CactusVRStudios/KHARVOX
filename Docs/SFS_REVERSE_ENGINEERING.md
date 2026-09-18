@@ -787,3 +787,8 @@ SFS FramePose includes cinematic/scripted/gameplay contexts and enables world
 projection for all three; menu/quad context remains mono on the virtual screen.
 Immersive and other-cinematics-in-quad options, Glory Kill exceptions and boss/
 HUD-movie guards remain active. This source review is not per-sequence headset QA.
+Test 12: preserve held weapon source metadata
+- Repeated root evaluations can receive a newer body camera under the same tracking pose ID. hold() kept the first world transform but its caller passed the newer camera to child props. SFS draw rebasing could therefore disagree between root and prop while walking.
+- Return the actual held frame with the held transform; propagate it to the root/child binding and report actual held prop metadata in traces. Immutable AER pair behavior and strict draw ambiguity checks remain intact.
+- Regression reproduces the mixed-camera failure before the fix and verifies stable movement correction across repeated draws afterward. Headset confirmation of remaining flicker is pending.
+- Render Scale and optional FSR1 already support valid SFS stereo pairs; FSR1 requires scale below 100 percent and is bypassed for quad presentation. Latest user run used 100 percent, FSR disabled.

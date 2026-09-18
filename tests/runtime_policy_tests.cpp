@@ -189,6 +189,9 @@ int main() {
     if (fullFrameQuadDistanceMeters(true) != 2.0f) return 31;
     if (fullFrameQuadWidthMeters(false) != 2.0f) return 32;
     if (fullFrameQuadWidthMeters(true) != 2.0f) return 33;
+    if (std::abs(fullFrameQuadHeightMeters(2.0f,2496,2688)-2.1538462f)>0.00001f) return 133;
+    if (fullFrameQuadHeightMeters(2.0f,1920,1080)!=1.125f) return 134;
+    if (fullFrameQuadHeightMeters(2.0f,0,0)!=1.125f) return 135;
 
     // The Praetor pickup remains reported as an immersive cinematic by the
     // game, but its manager-owned native UI must still force the full frame to

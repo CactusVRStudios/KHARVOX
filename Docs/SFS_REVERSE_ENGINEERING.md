@@ -606,3 +606,21 @@ Artifact: out/beta096/KHARVOX-0.96-SFS-Source-Ring-NVIDIA-test4.zip.
 Fresh user logs must include [SFS-PATHS] and any [SFS-MIXED] entries. GPU completion
 waits/full multi-frame resource pipelining remain separate unfinished work; this
 package does not claim Vk3DVision performance parity or a confirmed visual fix.
+## Source Ring test 5: Quad aspect and targeted diagnostics
+
+The test 4 source was 2496x2688 per eye, but its full-frame Quad used 16:9
+physical geometry. The shared menu/pause/Cinewindow path now derives height
+from the submitted subimage extent. Invalid extents retain the legacy fallback.
+Tests cover the reported source dimensions, legacy 16:9 and invalid extents.
+
+Controller publication timestamps now remain attached to AerWeaponInput across
+source-history latching. Sampled prop logs measure publication-to-prop age and
+include source/current Present serials. This is not sensor-to-photon latency.
+No unproven change to the coherent camera/weapon/prop binding was made.
+
+Extended logging maps blended graphics pipeline variants to shader hashes and
+depth/blend state at creation (bounded to 512 candidates). This identifies
+candidate transparent passes, not a proven faulty window/reflection material.
+The diagnostics neither add draw-path formatting nor change GPU waits.
+Weapon latency and reflective materials still require targeted reproduction;
+no performance gain or complete Vk3DVision equivalence is asserted.

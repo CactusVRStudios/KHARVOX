@@ -7,8 +7,11 @@ int main(){
     using namespace kharvox;
     AerWeaponSourceHistory h;AerWeaponInput input;
     input.valid=true;input.generation=1;input.epoch=7;input.grip={10,20,30};
+    input.sampleQpc=1234;
     h.remember(771,2,input);
     auto newer=input;newer.grip={100,200,300};
+    newer.sampleQpc=5678;
+    check(h.remember(771,2,newer).sampleQpc==1234);
     check(h.remember(771,2,newer).grip==input.grip); // second eye keeps pair's input
     h.remember(773,2,newer); // programming next pair cannot change source 771
     AerWeaponCamera camera;camera.key={771,2,1};camera.present=40;

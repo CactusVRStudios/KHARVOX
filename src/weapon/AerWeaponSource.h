@@ -20,6 +20,7 @@ struct AerWeaponInput {
     std::array<float,3> grip{},baseline{};
     std::array<float,4> orientation{0,0,0,1};
     unsigned generation{};uint64_t epoch{};bool valid{};
+    uint64_t sampleQpc{}; // Controller publication time, not sensor exposure time.
 };
 struct AerWeaponCamera {
     AerSourceKey key{};uint64_t present{};

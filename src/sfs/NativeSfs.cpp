@@ -11,6 +11,7 @@
 #include "FrameProjection.h"
 #include "../native/NativeStereo.h"
 #include "../common/RuntimeLog.h"
+#include "../common/DiagnosticLogging.h"
 #include <windows.h>
 #include <array>
 #include <atomic>
@@ -68,6 +69,7 @@ struct State {
     std::unordered_map<VkFramebuffer,bool> mixedFramebuffers;
     std::atomic<uint64_t> indirectMono{},indirectStereo{},mixedPasses{};
     uint32_t mixedDiagnostics{};
+    uint32_t materialDiagnostics{};
     std::unordered_map<VkDescriptorSetLayout,uint32_t> dynamicCounts;
     std::unordered_map<VkDescriptorSet,uint32_t> setDynamicCounts;
     std::unordered_map<VkDescriptorSet,VkDescriptorPool> setPools;
@@ -209,6 +211,30 @@ VKAPI_ATTR void VKAPI_CALL destroyPool(VkDevice d,VkDescriptorPool pool,const Vk
 VKAPI_ATTR VkResult VKAPI_CALL graphics(VkDevice d,VkPipelineCache cache,uint32_t count,const VkGraphicsPipelineCreateInfo* infos,const VkAllocationCallbacks* a,VkPipeline* out){RESULT_BEGIN
     for(uint32_t j=0;j<count;++j)out[j]=VK_NULL_HANDLE;
     for(uint32_t j=0;j<count;++j){auto info=infos[j];std::vector<VkPipelineShaderStageCreateInfo> stages(info.pStages,info.pStages+info.stageCount);const auto seed=pipelineSeed(info);
+        // Correlate transparent material state with exact profile variants.
+        // Creation-only and bounded: no string formatting on draw/record paths.
+        if(kharvox::extendedDiagnosticsEnabled()&&s->materialDiagnostics<512
+            &&info.pColorBlendState&&info.pColorBlendState->attachmentCount){
+            bool blended=false;
+            for(uint32_t k=0;k<info.pColorBlendState->attachmentCount;++k)
+                blended|=info.pColorBlendState->pAttachments[k].blendEnable!=0;
+            if(blended){
+                ++s->materialDiagnostics;
+                std::string signature;
+                for(const auto& stage:stages){const auto& code=s->shaders.at(stage.module);
+                    signature+=" stage"+std::to_string(stage.stage)+"="+shaderKey(profileHash(code.data(),uint32_t(code.size()*4)))
+                        +"_"+shaderKey(profileHash(code.data(),uint32_t(code.size()*4),seed));}
+                const auto* depth=info.pDepthStencilState;
+                note("[SFS-MATERIAL] translucent subpass="+std::to_string(info.subpass)
+                    +" depthTest="+std::to_string(depth?depth->depthTestEnable:0)
+                    +" depthWrite="+std::to_string(depth?depth->depthWriteEnable:0)
+                    +" depthCompare="+std::to_string(depth?depth->depthCompareOp:0)+signature);
+                for(uint32_t k=0;k<info.pColorBlendState->attachmentCount;++k){const auto& b=info.pColorBlendState->pAttachments[k];
+                    note("[SFS-MATERIAL] attachment="+std::to_string(k)+" blend="+std::to_string(b.blendEnable)
+                        +" src="+std::to_string(b.srcColorBlendFactor)+" dst="+std::to_string(b.dstColorBlendFactor)
+                        +" op="+std::to_string(b.colorBlendOp)+" mask="+std::to_string(b.colorWriteMask));}
+            }
+        }
         for(auto& stage:stages){const auto& code=s->shaders.at(stage.module);const auto variant=profileHash(code.data(),uint32_t(code.size()*4),seed);bool compute{};stage.module=compiledModule(s,stage.module,variant,compute,doomShadowProjection(info));}info.pStages=stages.data();
         // Derivative batch indices must not escape their original batch.
         if(info.flags&VK_PIPELINE_CREATE_DERIVATIVE_BIT)throw std::runtime_error("SFS derivative pipelines need batch remapping");

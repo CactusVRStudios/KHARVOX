@@ -366,6 +366,13 @@ inline float fullFrameQuadWidthMeters(bool) {
     return 2.0f;
 }
 
+inline float fullFrameQuadHeightMeters(float width, int pixelWidth, int pixelHeight) {
+    // Match the submitted subimage, including any aspect-preserving crop.
+    return width * (pixelWidth > 0 && pixelHeight > 0
+        ? static_cast<float>(pixelHeight) / static_cast<float>(pixelWidth)
+        : 9.0f / 16.0f);
+}
+
 inline bool shouldSuppressStereoForTimedTransition(
     std::uint64_t now, std::uint64_t guardUntil) {
     return guardUntil && now <= guardUntil;

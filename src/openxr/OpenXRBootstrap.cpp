@@ -5446,10 +5446,14 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
     const float completeFrameWidth=s.hudEverythingQuad
         ?std::max(0.05f,hudAngularWidthMeters)
         :kharvox::fullFrameQuadWidthMeters(false);
-    quad.size={completeFrameWidth,completeFrameWidth*9.0f/16.0f};
+    quad.size={completeFrameWidth,kharvox::fullFrameQuadHeightMeters(
+        completeFrameWidth,quad.subImage.imageRect.extent.width,
+        quad.subImage.imageRect.extent.height)};
     // Diagnostic distinguishes a moving layer from movement within its pixels.
     if(s.quadMode&&(s.frame%120==0)){
         log("[QUAD-POSE] r262 fixed="+std::to_string(s.cinewindowAnchor.valid)
+            +" pixels="+std::to_string(quad.subImage.imageRect.extent.width)+"x"+std::to_string(quad.subImage.imageRect.extent.height)
+            +" meters="+std::to_string(quad.size.width)+"x"+std::to_string(quad.size.height)
             +" headQ="+std::to_string(locatedMonoPose.orientation.x)+","
             +std::to_string(locatedMonoPose.orientation.y)+","
             +std::to_string(locatedMonoPose.orientation.z)+","

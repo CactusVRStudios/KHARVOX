@@ -39,6 +39,7 @@ struct PoseState {
     std::array<std::atomic<float>, 4> deltaQuaternion{};
     std::atomic<bool> valid{};
     std::atomic<unsigned> resetGeneration{1};
+    uint64_t sampleQpc{}; // Protected by controllerInputMutex.
 };
 
 PoseState pose;
@@ -56,6 +57,7 @@ kharvox::AerWeaponInput currentControllerInput(){
     for(int i=0;i<3;++i){input.grip[i]=pose.grip[i].load();input.baseline[i]=pose.baselineGrip[i].load();}
     for(int i=0;i<4;++i)input.orientation[i]=pose.deltaQuaternion[i].load();
     input.valid=pose.valid.load();input.generation=pose.resetGeneration.load();input.epoch=weaponSourceEpoch.load();
+    input.sampleQpc=pose.sampleQpc;
     return input;
 }
 bool resolveWeaponSource(kharvox::AerWeaponFrame& frame,
@@ -2315,9 +2317,16 @@ bool synchronizeAerAnimatedWeaponProp(
         const bool reused=weaponSourceTransforms.hold(weaponRootSource,entity,1,synchronizedOrigin,synchronizedAxis);
         traceWeaponSource(kharvox::pose_trace::WeaponSourceProp,entity,weaponRootSource,synchronizedOrigin,synchronizedAxis,reused?2:1);
         static std::atomic<uint64_t> counts{};const auto n=counts.fetch_add(1,std::memory_order_relaxed)+1;
-        if(kharvox::extendedDiagnosticsEnabled()&&(n<=4||n%1024==0))
+        if(kharvox::extendedDiagnosticsEnabled()&&(n<=4||n%1024==0)) {
+            LARGE_INTEGER now{},frequency{};QueryPerformanceCounter(&now);QueryPerformanceFrequency(&frequency);
+            const auto sample=weaponRootSource.input.sampleQpc;
+            const double ageMs=sample&&frequency.QuadPart>0&&uint64_t(now.QuadPart)>=sample
+                ?1000.0*double(uint64_t(now.QuadPart)-sample)/double(frequency.QuadPart):-1.0;
             log("[AER-WEAPON-SOURCE] r263 pose="+std::to_string(weaponRootSource.camera.key.poseId)
-                +" eye="+std::to_string(weaponRootSource.camera.key.eye)+" reused="+std::to_string(reused)+" count="+std::to_string(n));
+                +" eye="+std::to_string(weaponRootSource.camera.key.eye)+" reused="+std::to_string(reused)+" count="+std::to_string(n)
+                +" inputToPropMs="+std::to_string(ageMs)+" sourcePresent="+std::to_string(weaponRootSource.camera.present)
+                +" currentPresent="+std::to_string(KharvoxCameraCurrentPresentSerial()));
+        }
         return reused;
     }
     const auto pairState = kharvox::unpackAerWeaponPairState(
@@ -2761,6 +2770,7 @@ void KharvoxWeaponSetControllerPose(
         return;
     }
     const float gripValues[]{gripForward, gripLateral, gripUp};
+    LARGE_INTEGER published{};QueryPerformanceCounter(&published);pose.sampleQpc=uint64_t(published.QuadPart);
     const float baselineValues[]{baselineForward, baselineLateral, baselineUp};
     const float quaternionValues[]{controllerQuaternionX, controllerQuaternionY, controllerQuaternionZ, controllerQuaternionW};
     for (int index = 0; index < 3; ++index) {

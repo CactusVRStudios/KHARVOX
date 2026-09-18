@@ -51,6 +51,13 @@ tools/probe_native_sfs.ps1 -Runtime out/beta096/native-runtime -Game 'D:\Games\d
 Omit `-OpenXrManifest` only when intentionally testing the active installed
 OpenXR runtime. The script restores its environment and stops only its owned
 game process after the test deadline. It does not modify the system runtime.
+The probe now enables the launcher's 6DoF weapon mode and explicitly disables
+custom hands by default. `-ShowHands` enables KHARVOX hand models;
+`-NativeViewmodel` reproduces the earlier untracked DOOM weapon/arms baseline.
+Original DOOM arms are hidden only when controller placement is actually active;
+enabling the flag alone cannot establish tracking or weapon stability.
+The frame-1810 crop capture used the old baseline with 6DoF disabled, so it does
+not validate controller timing or stability while walking.
 
 The provider integration below records the earlier experiment, not the current
 implementation plan.

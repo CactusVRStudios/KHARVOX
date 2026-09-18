@@ -4,7 +4,9 @@ param(
     [Parameter(Mandatory=$true)][string]$Profile,
     [string]$OpenXrManifest,
     [ValidateRange(30,1800)][int]$Seconds=300,
-    [switch]$CaptureEyes
+    [switch]$CaptureEyes,
+    [switch]$ShowHands,
+    [switch]$NativeViewmodel
 )
 $ErrorActionPreference='Stop'
 # Local developer prototype, not the external Vk3DVision binary probe.
@@ -30,6 +32,12 @@ $settings=@{
     VK_LAYER_PATH=$Runtime; VK_INSTANCE_LAYERS='VK_LAYER_KHARVOX_OPENXR';
     KHARVOX_ENABLE_LAYER='1'; KHARVOX_SFS_NATIVE_PROBE='1'; KHARVOX_SFS_NATIVE_VR='1';
     KHARVOX_SFS_PROFILE=$Profile; KHARVOX_EXTENDED_LOGGING='1'; KHARVOX_RENDER_SCALE='0.5';
+    # Match the launcher's tracked weapon path by default. The earlier probe
+    # left this unset, displaying DOOM's animated arms/viewmodel instead.
+    KHARVOX_WEAPON_6DOF=$(if($NativeViewmodel){'0'}else{'1'});
+    KHARVOX_SHOW_HANDS=$(if($ShowHands){'1'}else{'0'});
+    KHARVOX_WORLD_SCALE='39.3701'; KHARVOX_WEAPON_SCALE='0.77';
+    KHARVOX_HANDS_PROJECTION_SCALE='1';
     KHARVOX_CAPTURE_EYES=$(if($CaptureEyes){'1'}else{'0'});
     KHARVOX_SFS_CAPTURE_ONCE=$(if($CaptureEyes){'1'}else{'0'});
     DISABLE_VK_LAYER_VALVE_steam_overlay_1='1'; DISABLE_VK_LAYER_VALVE_steam_fossilize_1='1';
@@ -44,7 +52,7 @@ try{
         [Environment]::SetEnvironmentVariable($key,$settings[$key],'Process')
     }
     $owned=Start-Process -FilePath $Game -WorkingDirectory (Split-Path $Game) -WindowStyle Hidden -PassThru -ArgumentList '+com_skipKeyPressOnLoadScreens 1 +r_renderAPI 1 +com_skipIntroVideo 1 +r_fullscreen 0 +r_mode 19 +r_windowWidth 960 +r_windowHeight 540'
-    Write-Output "Native Vulkan SFS test PID $($owned.Id); deadline $Seconds seconds. Load the campaign with Enter, then Space."
+    Write-Output "Native Vulkan SFS test PID $($owned.Id); deadline $Seconds seconds; tracked weapon=$(!$NativeViewmodel); custom hands=$ShowHands. Load the campaign with Enter, then Space."
     if($owned.WaitForExit($Seconds*1000)){Write-Output "Game exit code: $($owned.ExitCode)"}
     else{Write-Output "Test deadline reached; stopping only owned PID $($owned.Id)."; $owned.Kill(); $owned.WaitForExit()}
 }finally{

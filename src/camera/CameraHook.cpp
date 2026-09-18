@@ -1728,6 +1728,9 @@ extern "C" void __fastcall patchCamera(void* rawContext, void* rawReturnAddress)
         std::memcpy(unmodifiedBasis, bodyBasis, sizeof(bodyBasis));
     }
     float stableBodyOrigin[3]{unmodifiedPosition[0], unmodifiedPosition[1], unmodifiedPosition[2]};
+    // Preserve the actual source view before physics reconstruction and before
+    // room-scale/HMD translation modifies the camera storage in place.
+    const float sourceViewBodyOrigin[3]{unmodifiedPosition[0],unmodifiedPosition[1],unmodifiedPosition[2]};
     const bool mayCalibrateAnchor=kharvox::mayCalibrateBodyAnchor(gameplayCamera,
         animatedSequenceActive.load(std::memory_order_acquire),
         KharvoxCameraPlayerWeaponControlActive(),KharvoxCameraBossSequenceActive());
@@ -1934,7 +1937,17 @@ extern "C" void __fastcall patchCamera(void* rawContext, void* rawReturnAddress)
         if(!observed.domain&&aerRenderPairEnabled.load(std::memory_order_acquire)){
             kharvox::AerWeaponCamera weaponCamera;
             weaponCamera.key={observed.poseId,observed.level,observed.eye};weaponCamera.present=observed.present;
-            std::memcpy(weaponCamera.bodyOrigin.data(),stableBodyOrigin,sizeof(stableBodyOrigin));
+            kharvox::bindAerWeaponBodyOrigin(weaponCamera,centeredSfsSource,sourceViewBodyOrigin,stableBodyOrigin);
+            if(centeredSfsSource&&kharvox::extendedDiagnosticsEnabled()){
+                static std::atomic<uint64_t> divergent{};
+                float delta[3]{};for(int i=0;i<3;++i)delta[i]=stableBodyOrigin[i]-sourceViewBodyOrigin[i];
+                if(std::abs(delta[0])>.25f||std::abs(delta[1])>.25f||std::abs(delta[2])>.25f){
+                    const auto count=++divergent;
+                    if(count<=8||count%240==0)log("[SFS-WEAPON-ANCHOR] excludedPhysicsDelta="
+                        +std::to_string(delta[0])+","+std::to_string(delta[1])+","+std::to_string(delta[2])
+                        +" pose="+std::to_string(observed.poseId)+" count="+std::to_string(count));
+                }
+            }
             std::memcpy(weaponCamera.bodyAxis.data(),bodyBasis,sizeof(bodyBasis));
             std::memcpy(weaponCamera.headAxis.data(),hudAnchorAxis,sizeof(hudAnchorAxis));
             weaponCamera.bodyYawDelta=bodyRebaseDelta;

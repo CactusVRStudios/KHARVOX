@@ -33,6 +33,14 @@ struct AerWeaponCamera {
 // Match the existing queued draw-source lifetime across root, prop and draw.
 inline constexpr uint64_t aerWeaponSourcePresentAge=3;
 struct AerWeaponFrame {AerWeaponCamera camera{};AerWeaponInput input{};};
+inline void bindAerWeaponBodyOrigin(AerWeaponCamera& camera,bool centeredSfs,
+    const float* nativeViewOrigin,const float* physicsViewOrigin){
+    // SFS hands are composed against this rendered camera, not the independently
+    // advancing physics tick. Exclude HMD translation here: grip is already
+    // relative to the same tracking origin and must not inherit it twice.
+    std::memcpy(camera.bodyOrigin.data(),centeredSfs?nativeViewOrigin:physicsViewOrigin,
+        sizeof(camera.bodyOrigin));
+}
 inline bool alignAerWeaponDrawCamera(AerWeaponFrame& frame,const float* origin){
     if(!origin||!frame.camera.renderOriginValid)return false;
     for(int i=0;i<3;++i)if(!std::isfinite(origin[i])

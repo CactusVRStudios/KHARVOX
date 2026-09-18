@@ -6,6 +6,29 @@ bool near(float a,float b){return std::abs(a-b)<.0001f;}
 int main(){
     using namespace kharvox;
     {
+        // A physics tick can lead the view by one walking step or jump over
+        // a pipe while the camera eases vertically. The VR grip relative to
+        // that rendered camera must not move with the unrelated physics tick.
+        AerWeaponFrame source{};source.input.valid=true;source.camera.key={3000,7,0};
+        source.camera.bodyAxis={1,0,0,0,1,0,0,0,1};source.input.grip={12,4,-8};
+        float axis[9]{},grip[3]{};
+        for(int n=0;n<12;++n){
+            const float camera[3]{float(n*4),100,float(87+n)};
+            const float physics[3]{camera[0]+(n%3==1?4.f:0.f),100,camera[2]+(n%3==1?16.f:0.f)};
+            bindAerWeaponBodyOrigin(source.camera,true,camera,physics);
+            check(aerControllerWorldFrame(source,grip,axis));
+            for(int i=0;i<3;++i)check(near(grip[i]-camera[i],source.input.grip[i]));
+            source.camera.renderOrigin={camera[0]+2,camera[1]-1,camera[2]+3};
+            source.camera.renderOriginValid=true;
+            auto draw=source;const float actualView[3]{camera[0]+6,camera[1]-1,camera[2]+3};
+            check(alignAerWeaponDrawCamera(draw,actualView));
+            check(aerControllerWorldFrame(draw,grip,axis));
+            check(near(grip[0]-actualView[0],10)); // grip 12 minus room-scale 2
+            bindAerWeaponBodyOrigin(source.camera,false,camera,physics);
+            check(source.camera.bodyOrigin[0]==physics[0]&&source.camera.bodyOrigin[2]==physics[2]);
+        }
+    }
+    {
         AerWeaponDrawFrames draws;
         AerWeaponFrame f{};f.camera.key={2000,9,0};f.input.valid=true;
         f.camera.renderOrigin={20,30,40};f.camera.bodyOrigin={20,30,35};

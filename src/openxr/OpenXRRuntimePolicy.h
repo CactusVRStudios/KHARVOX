@@ -373,6 +373,12 @@ inline float fullFrameQuadHeightMeters(float width, int pixelWidth, int pixelHei
         : 9.0f / 16.0f);
 }
 
+inline int fullFrameQuadCroppedHeight(int width, int height) {
+    // Keep the full horizontal image and remove excess above/below its centre.
+    if(width<=0||height<=0)return height;
+    return std::min(height,std::max(1,int(int64_t(width)*9/16)));
+}
+
 inline bool shouldSuppressStereoForTimedTransition(
     std::uint64_t now, std::uint64_t guardUntil) {
     return guardUntil && now <= guardUntil;

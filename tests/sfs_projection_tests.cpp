@@ -1,4 +1,5 @@
 #include "../src/sfs/FrameProjection.h"
+#include "../src/sfs/SourcePoseHistory.h"
 #include <iostream>
 #include <stdexcept>
 using namespace kharvox::sfs;
@@ -23,7 +24,28 @@ int main(){try{
         const float expectedY=-2*y/(et-eb)+(et+eb)*depth/(et-eb);
         check(std::abs((data.clip[e][0]*originalX+data.clip[e][12]*depth+data.translation[e][0]-expectedX)/depth)<1e-5f);
         check(std::abs((data.clip[e][5]*originalY+data.clip[e][13]*depth+data.translation[e][1]-expectedY)/depth)<1e-5f);
+        // The glass lookup's homogeneous window transform must land on the
+        // same eye pixel as the independently projected world point above.
+        const float windowX=(originalX+depth)*.5f,windowY=(originalY+depth)*.5f;
+        const float refrX=((windowX*2-depth)*data.clip[e][0]+data.clip[e][12]*depth+data.translation[e][0]+depth)*.5f/depth;
+        const float refrY=((windowY*2-depth)*data.clip[e][5]+data.clip[e][13]*depth+data.translation[e][1]+depth)*.5f/depth;
+        check(std::abs(refrX-(expectedX/depth+1)*.5f)<1e-5f);
+        check(std::abs(refrY-(expectedY/depth+1)*.5f)<1e-5f);
     }
+    SourcePoseHistory history;
+    kharvox::native::FramePose producer{};producer.gameplay=true;producer.serial=10;
+    producer.source={91,2,kharvox::native::SceneDomain::Gameplay};producer.head=center;producer.views=eyes;
+    history.remember(producer,data);
+    auto acquired=producer;acquired.serial=12;acquired.source.poseId=93;
+    acquired.head.orientation={0,.1f,0,.994987f};
+    kharvox::native::FramePose resolved;
+    kharvox::AerSourceObservation observation{{91,2,0,0},1,false};
+    check(history.resolve(observation,acquired,data,resolved));
+    check(resolved.source.poseId==91&&resolved.head.orientation.w==1&&resolved.serial==10);
+    observation.ambiguous=true;check(!history.resolve(observation,acquired,data,resolved));observation.ambiguous=false;
+    observation.key.level=3;check(!history.resolve(observation,acquired,data,resolved));observation.key.level=2;
+    auto changed=data;changed.clip[0][0]+=.1f;check(!history.resolve(observation,acquired,changed,resolved));
+    acquired.serial=20;check(!history.resolve(observation,acquired,data,resolved));
     eyes[0].pose.position.z=.01f;check(!frameProjection(center,source,eyes,39.37f,true,data));
     check(frameProjection(center,source,eyes,39.37f,false,data));check(data.translation[0][0]==0&&data.clip[0][0]==1);
     eyes[0].pose.position.z=0;eyes[0].pose.orientation={0,.1f,0,.994987f};check(!frameProjection(center,source,eyes,39.37f,true,data));

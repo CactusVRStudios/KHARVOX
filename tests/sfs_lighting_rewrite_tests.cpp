@@ -25,9 +25,11 @@ int main(int argc,char** argv){try{
         vec3 frustumVec = mix(frustumVecX1, frustumVecX0, vec3(1.0 - (tc.y * freqLow_fragmentUniforms.resolutionscale.w)));
         vec3 world_pos = freqLow_fragmentUniforms.globalvieworigin.xyz + (frustumVec * zLinear);
         world_pos -= (camera_horizontal_world_normalized * adjustment_magnitude);
+        vec2 winPosPrev = vec2(dot(world_pos, high.prevviewprojectionmatrixx.xyz),dot(world_pos, high.prevviewprojectionmatrixy.xyz)) * rcpHW;
     )";
     const auto result=correctDoomLighting(shader);
     check(result.clusters==1&&result.worldPositions==1);
+    check(result.temporal==1&&shader.find("winPosPrev = khSfsPreviousUv(winPosPrev, rcpHW);")!=std::string::npos);
     check(shader.find("clusterCoordinate.x -=")==std::string::npos);
     check(shader.find("world_pos -=")==std::string::npos);
     check(shader.find("khSfsCenterUv(clusterCoordinate.xy, freqLow_fragmentUniforms.projectionmatrixz.w")!=std::string::npos);
@@ -35,6 +37,16 @@ int main(int argc,char** argv){try{
     // A partial/unknown reconstruction must not erase its profile correction.
     std::string partial="world_pos -= (camera_horizontal_world_normalized * adjustment_magnitude);";
     const auto before=partial;correctDoomLighting(partial);check(partial==before);
+    for(bool profile:{false,true}){
+        std::string glass="mat4 m = mat4(low.globalpostowindowx);\nvec4 refr_tc = MatrixMul(p, m);\n";
+        if(profile)glass+="refr_tc.x += ((_1360.vk3d_params[gl_ViewIndex].stereo.x * (refr_tc.w - _1360.vk3d_params[gl_ViewIndex].stereo.y)) * 0.5);\n";
+        glass+="vec2 uv = refr_tc.xy / vec2(refr_tc.w);\nvec4 color = tex2Dlod(samp_scenemip0, uv);";
+        auto fixed=correctDoomLighting(glass);check(fixed.refractions==1);
+        check(glass.find("refr_tc.x +=")==std::string::npos);
+        check(glass.find("khSfsEyeWindow(refr_tc)")<glass.find("vec2 uv"));
+    }
+    std::string unknown="vec4 refr_tc = MatrixMul(p, m);";
+    const auto unknownBefore=unknown;check(correctDoomLighting(unknown).refractions==0&&unknown==unknownBefore);
     std::cout<<"Generic/profile lighting anchors and replacement without double correction passed\n";
     return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

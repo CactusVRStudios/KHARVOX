@@ -15,7 +15,7 @@ struct ShaderCompileOptions {
 struct CompiledShader {
     std::vector<uint32_t> words;
     std::string glsl;
-    unsigned clusterCorrections{}, worldCorrections{};
+    unsigned clusterCorrections{}, worldCorrections{}, refractionCorrections{}, temporalCorrections{};
     bool vertexProjectionApplied{};
     // Descriptor bindings whose original 2D view must become an array view.
     struct Binding {uint32_t set{},binding{};bool storage{},depth{};};

@@ -4014,7 +4014,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
     kharvox::native::StereoFrame nativeFrame{};
     bool nativeFrameValid=false;
     if(nativeBackend){
-        nativeFrameValid=sfsBackend?kharvox::sfs::pair(s.device,it->second.images[srcIndex],it->second.extent,it->second.format,nativeFrame):kharvox::native::pair(it->second.images[srcIndex],it->second.extent,it->second.format,nativeFrame);
+        nativeFrameValid=sfsBackend?kharvox::sfs::pair(s.device,it->second.images[srcIndex],it->second.extent,it->second.format,nativeFrame,&aerSourceObservation):kharvox::native::pair(it->second.images[srcIndex],it->second.extent,it->second.format,nativeFrame);
     }
 
     std::array<XrView,2> lockedCinematicViewSpaceViews{{
@@ -5428,6 +5428,10 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
     quad.eyeVisibility=XR_EYE_VISIBILITY_BOTH;
     quad.subImage.swapchain=quadEye.handle;
     quad.subImage.imageRect=submittedRects[0];
+    const auto croppedHeight=kharvox::fullFrameQuadCroppedHeight(
+        quad.subImage.imageRect.extent.width,quad.subImage.imageRect.extent.height);
+    quad.subImage.imageRect.offset.y+=(quad.subImage.imageRect.extent.height-croppedHeight)/2;
+    quad.subImage.imageRect.extent.height=croppedHeight;
     const float completeFrameDistance=s.hudEverythingQuad?KharvoxHudDistanceMeters()
         :kharvox::fullFrameQuadDistanceMeters(false);
     if(!s.cinewindowFollowsHeadset&&s.cinewindowAnchor.valid){

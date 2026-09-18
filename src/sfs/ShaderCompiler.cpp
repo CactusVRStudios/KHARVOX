@@ -140,14 +140,16 @@ CompiledShader compileStereoShader(const std::vector<uint32_t>& original,const S
        (request.computeStereo || (request.profileReplacement && hasStereoStorageOutput(original)))))
         lighting=correctDoomLighting(source);
     result.clusterCorrections=lighting.clusters;result.worldCorrections=lighting.worldPositions;
+    result.refractionCorrections=lighting.refractions;
+    result.temporalCorrections=lighting.temporal;
     const auto versionEnd=source.find('\n');
     std::string prefix;
     if(model!=spv::ExecutionModelGLCompute)prefix="#extension GL_EXT_multiview : require\n";
     if(request.computeStereo)prefix+="uint khSfsEye;\nuvec3 khSfsGlobalInvocationID, khSfsWorkGroupID, khSfsNumWorkGroups;\n";
-    if(vertexProjection||lighting.clusters||lighting.worldPositions){
+    if(vertexProjection||lighting.clusters||lighting.worldPositions||lighting.refractions){
         for(const auto& u:resources.uniform_buffers)if(compiler.get_decoration(u.id,spv::DecorationDescriptorSet)==0&&compiler.get_decoration(u.id,spv::DecorationBinding)==31)
             throw std::runtime_error("SFS: projection descriptor binding collision");
-        prefix+="layout(set=0,binding=31,std140) uniform KharvoxStereoProjection { layout(offset=64) mat4 clipFromCenter[2]; vec4 eyeTranslation[2]; } khSfsProjection;\n";
+        prefix+="layout(set=0,binding=31,std140) uniform KharvoxStereoProjection { layout(offset=64) mat4 clipFromCenter[2]; vec4 eyeTranslation[2]; mat4 previousClipFromCenter[2]; vec4 previousEyeTranslation[2]; } khSfsProjection;\n";
         if(lighting.clusters||lighting.worldPositions)prefix+=lightingProjectionHelper(model!=spv::ExecutionModelGLCompute?"gl_ViewIndex":request.computeStereo?"khSfsEye":"gl_WorkGroupID.z / (gl_NumWorkGroups.z / 2u)");
     }
     if(vertexProjection){

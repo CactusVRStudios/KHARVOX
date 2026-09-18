@@ -50,6 +50,7 @@ if(BUILD_TESTING AND WIN32)
   add_executable(KharvoxSfsProjectionTests ../../tests/sfs_projection_tests.cpp)
   target_compile_features(KharvoxSfsProjectionTests PRIVATE cxx_std_17)
   target_include_directories(KharvoxSfsProjectionTests PRIVATE "${PROJECT_SOURCE_DIR}/third-party/openxr-sdk/include")
+  target_include_directories(KharvoxSfsProjectionTests PRIVATE "${PROJECT_SOURCE_DIR}/third-party/vulkan-headers/include")
   add_test(NAME sfs-frame-projection COMMAND KharvoxSfsProjectionTests)
   set(sfs_fixtures "${CMAKE_CURRENT_BINARY_DIR}/fixtures")
   add_custom_command(OUTPUT "${sfs_fixtures}/indirect.comp.spv"

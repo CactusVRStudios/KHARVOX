@@ -9,9 +9,11 @@ struct alignas(16) FrameUniforms {
     std::array<LegacyEye,2> legacy{};
     std::array<std::array<float,16>,2> clip{};
     std::array<std::array<float,4>,2> translation{};
-    FrameUniforms(){for(auto& m:clip)for(unsigned i=0;i<4;++i)m[i*5]=1;}
+    std::array<std::array<float,16>,2> previousClip{};
+    std::array<std::array<float,4>,2> previousTranslation{};
+    FrameUniforms(){for(auto& m:clip)for(unsigned i=0;i<4;++i)m[i*5]=1;previousClip=clip;}
 };
-static_assert(sizeof(FrameUniforms)==224,"std140 SFS frame layout");
+static_assert(sizeof(FrameUniforms)==384,"std140 SFS frame layout");
 // Exact x/y projection for parallel eye cameras. Canted/longitudinal eye offsets
 // need the game's depth projection, and must not silently use this approximation.
 inline bool frameProjection(const XrPosef& center,const XrFovf& source,

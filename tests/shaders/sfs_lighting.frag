@@ -3,6 +3,7 @@ layout(set=0,binding=0) uniform sampler2D stereoImage;
 layout(set=0,binding=1) uniform sampler2D monoImage;
 struct Low {vec4 projectionmatrixz;vec4 globalvieworigin;vec4 resolutionscale;vec4 frustumvectl;vec4 frustumvectr;vec4 frustumvecbl;};
 struct Inputs {vec4 fragCoord;};
+struct High {vec4 prevviewprojectionmatrixx;vec4 prevviewprojectionmatrixy;};
 void main() {
     Low freqLow_fragmentUniforms=Low(vec4(0,0,0,2),vec4(0),vec4(1),vec4(-1,-1,1,0),vec4(1,-1,1,0),vec4(-1,1,1,0));
     Inputs inputs=Inputs(vec4(0,0,1,1));
@@ -14,5 +15,10 @@ void main() {
     vec3 frustumVec = mix(frustumVecX1, frustumVecX0, vec3(1.0 - (tc.y * freqLow_fragmentUniforms.resolutionscale.w)));
     float zLinear=freqLow_fragmentUniforms.projectionmatrixz.w/(inputs.fragCoord.z+freqLow_fragmentUniforms.projectionmatrixz.z);
     vec3 world_pos = freqLow_fragmentUniforms.globalvieworigin.xyz + (frustumVec * zLinear);
-    gl_FragDepth=texelFetch(stereoImage,ivec2(2),0).r+texture(monoImage,vec2(.5)).r+clusterCoordinate.x*.001+world_pos.x*.1;
+    High high=High(vec4(.5,0,.5,0),vec4(0,.5,.5,0));
+    float rcpHW=1.0/zLinear;
+    vec2 winPosPrev = vec2(dot(world_pos, high.prevviewprojectionmatrixx.xyz),dot(world_pos, high.prevviewprojectionmatrixy.xyz)) * rcpHW;
+    // Static geometry must produce zero motion after per-eye reprojection.
+    vec2 velocity=tc-winPosPrev;
+    gl_FragDepth=texelFetch(stereoImage,ivec2(2),0).r+texture(monoImage,vec2(.5)).r+clusterCoordinate.x*.001+world_pos.x*.1+dot(velocity,vec2(.1));
 }

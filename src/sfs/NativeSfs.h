@@ -1,6 +1,7 @@
 #pragma once
 #include <vulkan/vulkan.h>
 #include <openxr/openxr.h>
+namespace kharvox {struct AerSourceObservation;}
 namespace kharvox::native {struct FramePose;struct StereoFrame;}
 namespace kharvox::sfs {
 #ifdef KHARVOX_HAVE_SFS_COMPILER
@@ -24,7 +25,7 @@ bool vrEnabled();
 void prepare(VkDevice,const kharvox::native::FramePose&,const XrFovf&);
 void copyCompleted(VkDevice);
 void beginFrame(VkDevice,VkSwapchainKHR=VK_NULL_HANDLE,uint32_t imageIndex=0);
-bool pair(VkDevice,VkImage,VkExtent2D,VkFormat,kharvox::native::StereoFrame&);
+bool pair(VkDevice,VkImage,VkExtent2D,VkFormat,kharvox::native::StereoFrame&,const AerSourceObservation* =nullptr);
 bool eyeAttachmentView(VkDevice,VkImageView,uint32_t,VkImageView&);
 #else
 inline bool sourceRingRequested(){return false;}
@@ -47,7 +48,7 @@ inline bool vrEnabled(){return false;}
 inline void prepare(VkDevice,const kharvox::native::FramePose&,const XrFovf&){}
 inline void copyCompleted(VkDevice){}
 inline void beginFrame(VkDevice,VkSwapchainKHR=VK_NULL_HANDLE,uint32_t=0){}
-inline bool pair(VkDevice,VkImage,VkExtent2D,VkFormat,kharvox::native::StereoFrame&){return false;}
+inline bool pair(VkDevice,VkImage,VkExtent2D,VkFormat,kharvox::native::StereoFrame&,const AerSourceObservation* =nullptr){return false;}
 inline bool eyeAttachmentView(VkDevice,VkImageView,uint32_t,VkImageView&){return false;}
 #endif
 }

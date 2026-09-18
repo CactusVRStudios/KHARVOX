@@ -3,13 +3,26 @@
 #include <string>
 
 namespace kharvox::sfs {
-struct LightingCorrections { unsigned clusters{}, worldPositions{}; };
+struct LightingCorrections { unsigned clusters{}, worldPositions{}, refractions{}, temporal{}; };
 
 // These are DOOM semantic anchors, also retained by its AMD modules, rather
 // than GPU-specific shader hashes. Unknown shader layouts remain untouched.
 // Buffers containing clustered light lists are built for the centered camera.
 inline LightingCorrections correctDoomLighting(std::string& source) {
     LightingCorrections result;
+    // Window-space refraction must sample the same eye projection that produced
+    // scenemip. A horizontal TV separation alone misses the HMD's FOV scale/y.
+    const std::regex refract(R"(vec4 refr_tc = MatrixMul\([^;\n]+\);)");
+    std::smatch refr;
+    if(source.find(".globalpostowindowx")!=std::string::npos
+       &&source.find("samp_scenemip0")!=std::string::npos
+       &&std::regex_search(source,refr,refract)){
+        source=std::regex_replace(source,std::regex(R"(refr_tc\.x \+= [^;\n]*\.stereo\.[^;\n]*;)"),"");
+        if(std::regex_search(source,refr,refract)){
+            source.insert(size_t(refr.position()+refr.length()),"\n    refr_tc = khSfsEyeWindow(refr_tc);");
+            ++result.refractions;
+        }
+    }
     const std::string anchor="clusterCoordinate.y = 1.0 - clusterCoordinate.y;";
     std::smatch uniform;
     const std::regex projection(R"((\w+)\.projectionmatrixz)");
@@ -41,11 +54,29 @@ inline LightingCorrections correctDoomLighting(std::string& source) {
         source=std::regex_replace(source,std::regex(R"(world_pos -= \(camera_horizontal_world_normalized \* adjustment_magnitude\);)"),"");
         source=std::regex_replace(source,std::regex(R"(world_pos\.xyz -= adjustment_magnitude \* camera_horizontal_world_normalized;)"),"");
         ++result.worldPositions;
+        // The previous world-to-window matrix is also centered. Current-eye
+        // reconstruction alone leaves spurious motion even for a static scene.
+        const std::regex previous(R"(vec2 winPosPrev = [^;\n]*\.prevviewprojectionmatrixx[^;\n]*\.prevviewprojectionmatrixy[^;\n]*\* rcpHW;)");
+        std::smatch p;
+        if(std::regex_search(source,p,previous)){
+            source.insert(size_t(p.position()+p.length()),"\n    winPosPrev = khSfsPreviousUv(winPosPrev, rcpHW);");
+            ++result.temporal;
+        }
     }
     return result;
 }
 inline std::string lightingProjectionHelper(const std::string& eye){
-    return "vec2 khSfsCenterUv(vec2 uv, float clipW, bool flipY) {\n"
+    return "vec2 khSfsPreviousUv(vec2 uv, float inverseW) {\n"
+        "    int eye = int("+eye+");\n"
+        "    mat4 m = khSfsProjection.previousClipFromCenter[eye];\n"
+        "    return ((uv * 2.0 - 1.0) * vec2(m[0][0], m[1][1]) + m[3].xy + khSfsProjection.previousEyeTranslation[eye].xy * inverseW + 1.0) * 0.5;\n}\n"
+        "vec4 khSfsEyeWindow(vec4 window) {\n"
+        "    int eye = int("+eye+");\n"
+        "    mat4 m = khSfsProjection.clipFromCenter[eye];\n"
+        "    vec2 clipXY = (window.xy * 2.0 - window.ww) * vec2(m[0][0], m[1][1]);\n"
+        "    window.xy = (clipXY + m[3].xy * window.w + khSfsProjection.eyeTranslation[eye].xy + window.ww) * 0.5;\n"
+        "    return window;\n}\n"
+        "vec2 khSfsCenterUv(vec2 uv, float clipW, bool flipY) {\n"
         "    int eye = int("+eye+");\n"
         "    mat4 m = khSfsProjection.clipFromCenter[eye];\n"
         "    vec2 ndc = uv * 2.0 - 1.0; if (flipY) ndc.y = -ndc.y;\n"

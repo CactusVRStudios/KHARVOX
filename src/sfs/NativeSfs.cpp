@@ -9,6 +9,7 @@
 #include "ShadowProjection.h"
 #include "StereoResources.h"
 #include "FrameProjection.h"
+#include "SourcePoseHistory.h"
 #include "../native/NativeStereo.h"
 #include "../common/RuntimeLog.h"
 #include "../common/DiagnosticLogging.h"
@@ -53,6 +54,10 @@ struct State {
     FrameUniforms pendingUniforms{};
     native::FramePose pendingPose{},renderPose{};
     std::unordered_map<VkImage,native::FramePose> imagePoses;
+    std::unordered_map<VkImage,FrameUniforms> imageUniforms;
+    SourcePoseHistory sourcePoseHistory;
+    FrameUniforms renderUniforms;
+    uint64_t sourcePoseSamples{};
     bool pending{},completed{true},frameValid{};
     bool profileTiming{};
     uint64_t profiledFrames{},retireNs{},uploadNs{},maxRetireNs{};
@@ -131,7 +136,7 @@ VkShaderModule compiledModule(const std::shared_ptr<State>& s,VkShaderModule ori
     auto shader=compileStereoShader(input,options);
     note("shader="+key+" stage="+std::to_string(stage)+" profile="+(replacement?"matched":"generic")+
          " projection="+std::to_string(shader.vertexProjectionApplied)+" sharedShadow="+std::to_string(sharedShadow)+" stereoCompute="+std::to_string(stereoCompute)+
-         " clusters="+std::to_string(shader.clusterCorrections)+" world="+std::to_string(shader.worldCorrections));
+         " clusters="+std::to_string(shader.clusterCorrections)+" world="+std::to_string(shader.worldCorrections)+" refraction="+std::to_string(shader.refractionCorrections)+" temporal="+std::to_string(shader.temporalCorrections));
     VkShaderModuleCreateInfo info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};info.codeSize=shader.words.size()*4;info.pCode=shader.words.data();
     VkShaderModule result{};auto r=FN(vkCreateShaderModule)(s->device,&info,nullptr,&result);
     if(r!=VK_SUCCESS)throw std::runtime_error("Stereo shader module creation failed");
@@ -402,6 +407,7 @@ void prepare(VkDevice d,const native::FramePose& pose,const XrFovf& source){
     FrameUniforms uniforms;
     if(!frameProjection(pose.head,source,pose.views,pose.worldScale,pose.gameplay||pose.cinematic||pose.scripted,uniforms))commandFailure("SFS headset projection unsupported: requires parallel eye cameras");
     s->pendingUniforms=uniforms;s->pendingPose=pose;s->pending=true;
+    s->sourcePoseHistory.remember(pose,uniforms);
 }
 void copyCompleted(VkDevice d){if(!vrEnabled())return;auto s=state(d);std::unique_lock<std::shared_mutex> lock(s->mutex);s->completed=true;}
 void beginFrame(VkDevice d,VkSwapchainKHR chain,uint32_t imageIndex){
@@ -413,6 +419,8 @@ void beginFrame(VkDevice d,VkSwapchainKHR chain,uint32_t imageIndex){
     const auto clockNow=[] {return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());};
     const auto retireStart=s->profileTiming?clockNow():0;
     if(FN(vkDeviceWaitIdle)(d)!=VK_SUCCESS)commandFailure("SFS frame parameter retirement failed");
+    s->pendingUniforms.previousClip=s->frameValid?s->renderUniforms.clip:s->pendingUniforms.clip;
+    s->pendingUniforms.previousTranslation=s->frameValid?s->renderUniforms.translation:s->pendingUniforms.translation;
     const auto uploadStart=s->profileTiming?clockNow():0;
     void* mapped{};if(FN(vkMapMemory)(d,s->paramsMemory,0,sizeof(FrameUniforms),0,&mapped)!=VK_SUCCESS)commandFailure("SFS frame parameter map failed");
     std::memcpy(mapped,&s->pendingUniforms,sizeof(FrameUniforms));FN(vkUnmapMemory)(d,s->paramsMemory);
@@ -437,21 +445,30 @@ void beginFrame(VkDevice d,VkSwapchainKHR chain,uint32_t imageIndex){
         }
     }
     s->renderPose=s->pendingPose;s->frameValid=true;s->pending=false;s->completed=false;
+    s->renderUniforms=s->pendingUniforms;
     }
     // An acquired image uses the uniforms actually installed above, not the
     // newest pending XR prediction. Other swapchain images retain their pose.
     const auto found=s->swapchains.find(chain);
     if(found!=s->swapchains.end()&&imageIndex<found->second.size()){
         const auto image=found->second[imageIndex];
-        if(s->frameValid)s->imagePoses[image]=s->renderPose;
-        else s->imagePoses.erase(image);
+        if(s->frameValid){s->imagePoses[image]=s->renderPose;s->imageUniforms[image]=s->renderUniforms;}
+        else {s->imagePoses.erase(image);s->imageUniforms.erase(image);}
     }
 }
-bool pair(VkDevice d,VkImage image,VkExtent2D extent,VkFormat format,native::StereoFrame& result){
+bool pair(VkDevice d,VkImage image,VkExtent2D extent,VkFormat format,native::StereoFrame& result,const AerSourceObservation* observed){
     if(!vrEnabled())return false;auto s=state(d);std::unique_lock<std::shared_mutex> lock(s->mutex);
     const auto found=s->imagePoses.find(image);
     if(found==s->imagePoses.end()||s->images.layers(image)!=2)return false;
-    const auto& pose=found->second;
+    auto pose=found->second;
+    if(observed&&pose.gameplay){
+        const bool qualified=s->sourcePoseHistory.resolve(*observed,pose,s->imageUniforms.at(image),pose);
+        if(++s->sourcePoseSamples<=8||s->sourcePoseSamples%120==0)
+            note("[SFS-SOURCE-POSE] acquired="+std::to_string(found->second.source.poseId)
+                +" observed="+std::to_string(observed->key.poseId)+" qualified="+std::to_string(qualified)
+                +" count="+std::to_string(observed->count)+" ambiguous="+std::to_string(observed->ambiguous));
+        if(observed->count&&!qualified)return false;
+    }
     result={};result.pose=pose;result.generation=pose.serial;
     for(uint32_t e=0;e<2;++e)result.eyes[e]={image,extent,format,sourceLayout(d,image,VK_IMAGE_LAYOUT_PRESENT_SRC_KHR),pose.views[e].pose,pose.views[e].fov,e,pose.serial};
     return true;
@@ -462,7 +479,7 @@ void swapchainImages(VkDevice d,VkSwapchainKHR chain,uint32_t count,const VkImag
     auto& tracked=s->swapchains[chain];
     // Re-enumerating the same swapchain must not discard a valid acquisition.
     if(tracked==std::vector<VkImage>(images,images+count))return;
-    for(auto image:tracked){s->imagePoses.erase(image);s->images.destroy(d,image,nullptr,nullptr);}
+    for(auto image:tracked){s->imagePoses.erase(image);s->imageUniforms.erase(image);s->images.destroy(d,image,nullptr,nullptr);}
     tracked.assign(images,images+count);
     for(auto image:tracked)s->images.track(image,2);
 }
@@ -470,7 +487,7 @@ void swapchainDestroyed(VkDevice d,VkSwapchainKHR chain){
     if(!nativeProbeEnabled())return;
     auto s=state(d);std::unique_lock<std::shared_mutex> lock(s->mutex);
     auto found=s->swapchains.find(chain);if(found==s->swapchains.end())return;
-    for(auto image:found->second){s->imagePoses.erase(image);s->images.destroy(d,image,nullptr,nullptr);}
+    for(auto image:found->second){s->imagePoses.erase(image);s->imageUniforms.erase(image);s->images.destroy(d,image,nullptr,nullptr);}
     s->swapchains.erase(found);
 }
 bool sourceRingRequested(){static const bool enabled=[] {char value[8]{};return GetEnvironmentVariableA("KHARVOX_SFS_SOURCE_RING",value,8)==1&&value[0]=='1';}();return vrEnabled()&&enabled;}

@@ -624,3 +624,44 @@ candidate transparent passes, not a proven faulty window/reflection material.
 The diagnostics neither add draw-path formatting nor change GPU waits.
 Weapon latency and reflective materials still require targeted reproduction;
 no performance gain or complete Vk3DVision equivalence is asserted.
+## Source Ring test 6: cropped Quad, source poses and glass refraction
+
+User requested a monitor-shaped crop after the aspect-preservation fix. The
+submitted Quad now keeps its horizontal range and crops top/bottom centrally
+to 16:9, preserving shorter authored images. Tests cover 2496x2688 -> 2496x1404,
+legacy 1920x1080 and an already shorter image. Physical aspect follows the crop.
+
+Test 5 logs contain the matched glass fragment profile
+23d4de41fcd07b9b_dad36c6fdd6d4e44. It projected refraction into centered window
+coordinates and applied only the fixed-display horizontal stereo adjustment.
+Recognized globalpostowindow/scenemip refraction now uses the full homogeneous
+per-eye transform before perspective division. The rewrite handles generic and
+profile forms and removes the prior adjustment only with the complete anchors.
+Numerical tests compare both UV axes against independently projected points at
+multiple depths and asymmetric FOVs; the actual glass profile recompiles.
+This is not a claim to fix every reflection/SSR variant.
+
+SFS previously labelled its image from Acquire even when the CPU producer used
+an older camera snapshot. A bounded source history now qualifies gameplay poses
+against the existing read-only world producer observation. Uniform compatibility
+is checked before replacing pose/controllers; geometry mismatch or ambiguity
+withholds the pair. Missing observations retain acquired metadata. No additional
+GPU wait is added. Source-history tests cover delayed poses, level mismatch,
+ambiguity, incompatible FOV and stale history. Simulator logs show qualified
+acquired/observed pairs such as 923/922 and 3007/3006. Headset confirmation of the
+reported world wobble and glass artifacts remains pending.
+
+Validation: 118/118 CTests, actual glass profile compilation, launcher self-test,
+60-second bounded simulator run and approved bundled integration verification.
+Additional shader audit (test 6 final):
+- All 75 profile modules and 647 captured original modules compile: 722/722.
+- Found incomplete previous-frame projection in velocity/temporal shaders,
+  including compute. Previous world-to-window coordinates now use the previous
+  installed per-eye projection and eye translation, after current-eye world
+  reconstruction. Previous uniforms are latched at frame installation, not at
+  prediction publication. Shader logs report temporal=1 when this applies.
+- GPU regression checks stationary geometry yields zero artificial motion for
+  both eyes, including asymmetric FOV. 118/118 CTests pass after this addition.
+- All recognized world_pos/frustumVec, refr_tc and winPosPrev candidates in the
+  captured audit have the corresponding correction. This is pattern coverage,
+  not proof that every game material and temporal effect is visually correct.

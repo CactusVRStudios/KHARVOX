@@ -141,7 +141,7 @@ internal sealed class KharvoxLaunchOptions
 
 internal static class KharvoxRunner
 {
-    internal const string BuildId = "2026.09.17-launcher-v0.96-test.1";
+    internal const string BuildId = "2026.09.18-launcher-v0.96-test.11";
     private const string LayerName = "VK_LAYER_KHARVOX_OPENXR";
     private const string RegistryPath = @"SOFTWARE\Khronos\Vulkan\ImplicitLayers";
     private static readonly CultureInfo Invariant = CultureInfo.InvariantCulture;

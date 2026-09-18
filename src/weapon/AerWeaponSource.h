@@ -185,7 +185,7 @@ public:
         uintptr_t model=0,uintptr_t asset=0,bool* recovered=nullptr,bool followDrawBody=false){
         if(recovered)*recovered=false;
         if(!wanted.valid()||wanted.domain)return 0;
-        std::lock_guard lock(mutex_);const Entry* selected{};bool recognized=false;
+        std::lock_guard lock(mutex_);const Entry* selected{};Entry selectedValue{};bool recognized=false;
         std::array<const Entry*,256> identities{};size_t identityCount{};
         auto eligible=[&](const Entry& e){return e.key.valid()&&e.key.level==wanted.level&&e.key.domain==wanted.domain
             &&(!drawFrame||(e.epoch==drawFrame->input.epoch&&e.generation==drawFrame->input.generation))
@@ -241,8 +241,22 @@ public:
                 target=&t;
             }
             if(target){
-                if(selected&&(selected->origin!=target->origin||selected->axis!=target->axis))return 4;
-                selected=target;sourceId=e.key.poseId;
+                auto candidate=*target;
+                // SFS root/prop snapshots can be recorded at different body
+                // anchors for one tracking ID. Compare them in the actual
+                // draw frame, not before movement compensation.
+                if(followDrawBody&&drawFrame){
+                    if(!rebaseAerDrawPlacement(candidate.frame,*drawFrame,target->origin.data(),target->axis.data(),
+                        candidate.origin.data(),candidate.axis.data()))return 3;
+                    candidate.frame=*drawFrame;
+                }
+                if(selected){
+                    const bool same=followDrawBody
+                        ?aerWeaponPoseNear(selected->origin.data(),selected->axis.data(),candidate.origin.data(),candidate.axis.data())
+                        :selected->origin==candidate.origin&&selected->axis==candidate.axis;
+                    if(!same)return 4;
+                }
+                selectedValue=candidate;selected=&selectedValue;sourceId=e.key.poseId;
             }
         }
         auto rememberBinding=[&]{
@@ -272,7 +286,12 @@ public:
                 if(e.key.poseId>wanted.poseId)return 3;
                 Entry candidate=e;candidate.key=wanted;candidate.frame=*drawFrame;
                 if(!rebaseAerDrawPlacement(e.frame,*drawFrame,e.origin.data(),e.axis.data(),candidate.origin.data(),candidate.axis.data()))return 3;
-                if(derivedCount&&(derived[0].origin!=candidate.origin||derived[0].axis!=candidate.axis))return 4;
+                if(derivedCount){
+                    const bool same=followDrawBody
+                        ?aerWeaponPoseNear(derived[0].origin.data(),derived[0].axis.data(),candidate.origin.data(),candidate.axis.data())
+                        :derived[0].origin==candidate.origin&&derived[0].axis==candidate.axis;
+                    if(!same)return 4;
+                }
                 derived[derivedCount++]=candidate;sourceId=e.key.poseId;
             }
             if(derivedCount){std::memcpy(targetOrigin,derived[0].origin.data(),sizeof(derived[0].origin));
@@ -281,15 +300,7 @@ public:
         }
         if(!selected)return recognized?3:0;
         auto result=*selected;
-        // SFS has no second CPU eye. A repeated tracking ID can span another
-        // simulation step; retain the animation relative to the controller,
-        // but follow the body anchor of the actual draw camera.
-        if(followDrawBody&&drawFrame){
-            if(!rebaseAerDrawPlacement(result.frame,*drawFrame,result.origin.data(),result.axis.data(),
-                targetOrigin,targetAxis))return 3;
-            std::memcpy(result.origin.data(),targetOrigin,sizeof(result.origin));
-            std::memcpy(result.axis.data(),targetAxis,sizeof(result.axis));result.frame=*drawFrame;
-        }
+        // Selected SFS candidates already share the actual draw-camera frame.
         std::memcpy(targetOrigin,result.origin.data(),sizeof(result.origin));
         std::memcpy(targetAxis,result.axis.data(),sizeof(result.axis));
         for(size_t i=0;i<identityCount;++i){

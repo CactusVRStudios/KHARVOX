@@ -754,3 +754,36 @@ All 23 affected original/profile UI-family modules compiled; inspected the real
 5d8a generic output (unconditional IPD) and UI replacement (conditional IPD).
 The specific grating scene still requires headset verification; no assertion
 that this explains every black surface, and no measured performance change.
+## Test 11: moving weapon candidate comparison and AMD source-ring access
+
+Test9's grating correction was confirmed successful by the user. Residual
+weapon flicker remained during walking. Saved logs: test9-user-before-test11.log
+and test9-native-before-test11.log. Weapon draw diagnostics include status=4
+(ambiguous target); status=0 also exists and is not assumed fixed by this change.
+
+SFS previously compared root/prop target snapshots in their recorded world/body
+anchors, before rebasing the selected result to the draw camera. Two equivalent
+controller-relative poses recorded around a movement step could therefore be
+rejected, returning the original draw pose for that invocation. Normalize each
+candidate to the actual draw frame BEFORE comparing. Use the existing bounded
+pose-roundoff tolerance for SFS comparisons, including derived candidates.
+Actual ambiguity, source/level/epoch/calibration checks remain. AER keeps exact
+pair comparison. Tests exercise movement-straddling root/prop snapshots,
+repeat draws without accumulated motion and genuine animation disagreements.
+119/119 CTests pass; complete absence of headset flicker is not yet established.
+
+The source ring uses core Vulkan images, memory, fences and queue submissions.
+Remove its NVIDIA vendor-ID rejection. Existing multiview and successful resource
+creation checks remain; require at least two image array layers. Log GPU/vendor
+and capability-based admission. Existing AMD legacy-group-vote compiler handling
+and generic lighting/projection transformations remain. Earlier tester logs show
+RX 9070 XT, but no AMD device is available here to validate the new source ring.
+Launcher label/description now expose NVIDIA/AMD test status without declaring
+AMD hardware compatibility. No imported Vk3DVision DLL or NV-only source-ring
+command is introduced. Launcher build identifies test11.
+
+Cinematics and Glory Kills already enter the shared presentation/camera policy.
+SFS FramePose includes cinematic/scripted/gameplay contexts and enables world
+projection for all three; menu/quad context remains mono on the virtual screen.
+Immersive and other-cinematics-in-quad options, Glory Kill exceptions and boss/
+HUD-movie guards remain active. This source review is not per-sequence headset QA.

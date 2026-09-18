@@ -102,6 +102,31 @@ int main(){
         cameraOrigin[0]=200;check(!alignAerWeaponDrawCamera(moved,cameraOrigin));
         check(near(moved.camera.bodyOrigin[0],20));
     }
+    {
+        // Root and prop share the native copied pose, but their target
+        // snapshots straddle a body movement for the same tracking ID.
+        auto movementCase=[&](float animationDifference){
+            AerWeaponSourceTransforms moving;
+            AerWeaponFrame old{};old.camera.key={1000,4,0};old.input.valid=true;
+            old.camera.bodyAxis={1,0,0,0,1,0,0,0,1};old.camera.headAxis=old.camera.bodyAxis;
+            float native[3]{12,2,3},rootPose[3]{12,2,3},propPose[3]{22+animationDifference,2,3};
+            check(!moving.hold(old,99,0,native,axis));
+            check(!moving.hold(old,99,1,native,axis));
+            auto root=old;root.camera.key.poseId=1001;
+            auto prop=root;prop.camera.bodyOrigin[0]=10;
+            check(!moving.hold(root,99,0,rootPose,axis));
+            check(!moving.hold(prop,99,1,propPose,axis));
+            float out[12]{};uint64_t source{};
+            check(moving.forDraw(root.camera.key,native,axis,out,out+3,source,&prop)==4);
+            for(int repeat=0;repeat<3;++repeat){
+                const auto status=moving.forDraw(root.camera.key,native,axis,out,out+3,source,&prop,0,0,nullptr,true);
+                if(animationDifference>0)check(status==4); // genuine ambiguity still rejected
+                else {check(status==2);check(near(out[0],22)&&near(out[1],2));}
+            }
+        };
+        movementCase(0);
+        movementCase(3);
+    }
     origin[0]=50;check(!transforms.hold(frame,42,1,origin,axis)); // prop role distinct
     check(!transforms.hold(frame,43,0,origin,axis)); // object identity
     frame.camera.key.level=3;check(!transforms.hold(frame,42,0,origin,axis));

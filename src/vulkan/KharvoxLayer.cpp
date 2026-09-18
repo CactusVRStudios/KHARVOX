@@ -1098,7 +1098,8 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateDevice(VkPhysicalDevice p,const VkDeviceC
           if(!kharvox::sfs::initialize(*out,p,deviceProcBase,memory))stopVulkanStartup("Native SFS probe initialization failed");
           if(kharvox::sfs::sourceRingRequested()){
               VkPhysicalDeviceProperties properties{};physicalDispatch.getPhysicalDeviceProperties(p,&properties);
-              if(properties.vendorID!=0x10de)stopVulkanStartup("The experimental SFS source-ring renderer currently requires an NVIDIA GPU.");
+              if(properties.limits.maxImageArrayLayers<2)stopVulkanStartup("SFS source ring requires two-layer Vulkan images.");
+              logLine("[SFS-SOURCE] capability-gated source ring GPU="+std::string(properties.deviceName)+" vendor="+std::to_string(properties.vendorID)+"; hardware validation is separate from capability support",true);
               uint32_t count{};physicalDispatch.getPhysicalDeviceQueueFamilyProperties(p,&count,nullptr);
               std::vector<VkQueueFamilyProperties> families(count);physicalDispatch.getPhysicalDeviceQueueFamilyProperties(p,&count,families.data());
               VkQueue acquisitionQueue{};

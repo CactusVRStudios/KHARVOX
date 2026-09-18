@@ -9,9 +9,9 @@ internal static class VulkanSfs
 {
     internal const string Key = "VULKAN_SFS";
     internal static string Label => File.Exists(Path.Combine(AppContext.BaseDirectory, "sfs_source_ring"))
-        ? "Vulkan SFS Source Ring (NVIDIA Test)" : "Vulkan Single-Frame Stereo (Test)";
+        ? "Vulkan SFS Source Ring (Test)" : "Vulkan Single-Frame Stereo (Test)";
     internal static string Description => File.Exists(Path.Combine(AppContext.BaseDirectory, "sfs_source_ring"))
-        ? "NVIDIA test: application-owned stereo images go directly to OpenXR. The DOOM desktop window stays black; use the headset for menus."
+        ? "Vulkan multiview test for NVIDIA and AMD: stereo images go directly to OpenXR. AMD hardware validation is pending. The desktop window stays black; use the headset for menus."
         : "Experimental same-frame stereo. Headset tracking, hand timing and full game compatibility are still being tested.";
     internal const string Blocker = "This package does not contain a complete native Vulkan SFS test build. Use the prepared 0.96 native test package or select AER.";
 

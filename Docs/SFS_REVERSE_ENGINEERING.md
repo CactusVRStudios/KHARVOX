@@ -268,3 +268,53 @@ launcher and select Vulkan Single-Frame Stereo (Test). The next useful tester
 observations are menu visibility, campaign visibility, and fresh logs showing
 runtime-device-downstream routing, submitted layers and any shader failures.
 Local source logs and transformed game shaders remain outside Git/the report.
+
+## PSVR2 image-quality follow-up / fix 2 (2026-09-18)
+
+The tester's logs2.zip now accompanies a report of visible headset output and
+120 fps, but very low detail and broken lighting, especially in the right eye.
+The log confirms a 1280x720 game source against 2804x2860 OpenXR eye images at
+100% scale. The per-eye crop is only 969x720. This is a confirmed source-resolution
+mismatch; the log cannot measure shadow distance or prove the exact visual cause.
+
+Changes:
+
+- Native SFS VR now uses the existing headset-sized engine/surface path, including
+  its scaled-window/core-window fallback. The non-VR probe and external provider
+  retain their old behavior. For the tester's recommendation at 100%, the 16:9
+  carrier becomes 5088x2862 per array layer. This increases GPU/memory cost; the
+  previous 120 fps result does not predict performance at the corrected size.
+- Promoted 2D comparison samplers read shared layer zero, matching the DOOM
+  profile's mono shadow sampling. Ordinary scene-depth/color sampling remains
+  per eye. This change does not globally disable stereo render passes.
+- Recognized clustered-light lookups are mapped back to the centered camera
+  before indexing its shared light-list buffers. The inverse uses the same
+  projection uniform as geometry, including the depth-dependent eye translation.
+  Valid cluster coordinates are clamped before conversion to buffer indices.
+- Recognized deferred-lighting/fog world-position reconstruction receives the
+  equivalent correction in its frustum basis. Existing profile corrections are
+  removed when superseded, avoiding double displacement. These semantic anchors
+  apply to original modules as well as hash-matched replacements. Unknown shader
+  structures are left untouched; this is not universal shader compatibility.
+- Once-per-compiled-module diagnostics record profile match, vertex projection,
+  stereo compute, cluster correction and world correction counts. They make
+  unmatched AMD variants visible in the next tester log.
+
+Validation: Release build and 112/112 CTests pass, including actual local Vulkan
+GPU readbacks for shared comparison shadows, distinct scene images, centered
+light clusters/world positions, and asymmetric eye projections. Rewrite tests
+cover profile replacement without double correction and untouched unknown code.
+All 722 local original/profile modules compile; 56 receive cluster corrections,
+14 world-position corrections, and 66 contain comparison samplers. The tester's
+complete AMD shader set was not supplied, so this is not an AMD replay.
+
+A bounded 45-second Simulator run (PID 13612) used recommendation 2064x2208,
+scale 50%, source 1984x1116, and reached at least 1440 submitted quad frames with
+zero logged lifecycle violations/end-frame errors, then stopped at the deadline.
+This validates startup and resolution plumbing, not campaign lighting or PSVR2
+hardware. The existing AER-derived weapon, hand, locomotion and source-pose paths
+are retained. Real Radeon/PSVR2 visual verification is still required.
+
+Complete tester package: out/beta096/psvr2-steamxr-fix2/ and
+out/beta096/KHARVOX-0.96-SFS-PSVR2-SteamXR-fix2.zip. The runtime bundles both approved
+integration DLLs and both bridges and must pass the mandatory package verifier.

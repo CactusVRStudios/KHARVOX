@@ -4,6 +4,12 @@
 
 void require(bool value){if(!value)std::abort();}
 int main(){
+    require(kharvox::headsetSizedSource(false,false,false)); // AER
+    require(kharvox::headsetSizedSource(false,true,true)); // native SFS VR
+    require(!kharvox::headsetSizedSource(false,true,false)); // desktop probe
+    require(!kharvox::headsetSizedSource(true,false,false)); // external provider
+    const auto psvr2=kharvox::independentSourceExtent(2804,2860,1.f,16384);
+    require(psvr2.width==5088&&psvr2.height==2862);
     require(kharvox::independentSurfaceResult(VK_SUBOPTIMAL_KHR,true)==VK_SUCCESS);
     require(kharvox::independentSurfaceResult(VK_SUBOPTIMAL_KHR,false)==VK_SUBOPTIMAL_KHR);
     for(auto error:{VK_ERROR_OUT_OF_DATE_KHR,VK_ERROR_SURFACE_LOST_KHR,VK_ERROR_DEVICE_LOST})

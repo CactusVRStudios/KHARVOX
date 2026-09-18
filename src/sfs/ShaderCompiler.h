@@ -7,10 +7,12 @@ namespace kharvox::sfs {
 struct ShaderCompileOptions {
     bool computeStereo{};
     bool vertexProjection{};
+    bool profileReplacement{};
 };
 struct CompiledShader {
     std::vector<uint32_t> words;
     std::string glsl;
+    unsigned clusterCorrections{}, worldCorrections{};
     // Descriptor bindings whose original 2D view must become an array view.
     struct Binding {uint32_t set{},binding{};bool storage{},depth{};};
     std::vector<Binding> arrayBindings;

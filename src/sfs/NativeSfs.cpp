@@ -90,8 +90,12 @@ VkShaderModule compiledModule(const std::shared_ptr<State>& s,VkShaderModule ori
     const auto key=shaderKey(primary)+"_"+shaderKey(variant);
     auto cached=s->compiled.find(key);if(cached!=s->compiled.end())return cached->second;
     ShaderCompileOptions options;options.computeStereo=stereoCompute&&!replacement;
+    options.profileReplacement=bool(replacement);
     options.vertexProjection=needsStereoProjection(input,bool(replacement));
     auto shader=compileStereoShader(input,options);
+    note("shader="+key+" stage="+std::to_string(stage)+" profile="+(replacement?"matched":"generic")+
+         " projection="+std::to_string(options.vertexProjection)+" stereoCompute="+std::to_string(stereoCompute)+
+         " clusters="+std::to_string(shader.clusterCorrections)+" world="+std::to_string(shader.worldCorrections));
     VkShaderModuleCreateInfo info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};info.codeSize=shader.words.size()*4;info.pCode=shader.words.data();
     VkShaderModule result{};auto r=FN(vkCreateShaderModule)(s->device,&info,nullptr,&result);
     if(r!=VK_SUCCESS)throw std::runtime_error("Stereo shader module creation failed");

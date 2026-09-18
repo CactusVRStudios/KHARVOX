@@ -918,7 +918,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateInstance(const VkInstanceCreateInfo* ci,c
     }
     KharvoxXRInitialize(VK_NULL_HANDLE);auto required=KharvoxXRRequiredInstanceExtensions();std::vector<const char*> enabled;enabled.reserve(ci->enabledExtensionCount+required.size()+1);for(uint32_t i=0;i<ci->enabledExtensionCount;i++)enabled.push_back(ci->ppEnabledExtensionNames[i]);auto addExtension=[&](const char*name,const char*reason){for(auto*e:enabled)if(!std::strcmp(e,name))return;enabled.push_back(name);logLine(std::string("Enabling ")+reason+" instance extension "+name);};for(auto&name:required)addExtension(name.c_str(),"XR");
     // Runtime auxiliary instances returned above retain untouched WSI.
-    bool independent=!kharvox::vulkanSfsEnabled()&&!kharvox::sfs::nativeProbeEnabled();
+    bool independent=kharvox::headsetSizedSource(kharvox::vulkanSfsEnabled(),kharvox::sfs::nativeProbeEnabled(),kharvox::sfs::vrEnabled());
     bool coreSurface=false;
     VkExtent2D sourceExtent{};
     if(independent){

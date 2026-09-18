@@ -5,6 +5,9 @@
 #include <cstdint>
 
 namespace kharvox {
+inline bool headsetSizedSource(bool externalSfs, bool nativeProbe, bool nativeVr) {
+    return !externalSfs && (!nativeProbe || nativeVr);
+}
 template<class T> const T* surfaceChain(const void* next, VkStructureType type) {
     auto entry=static_cast<const VkBaseInStructure*>(next);
     while(entry){if(entry->sType==type)return reinterpret_cast<const T*>(entry);entry=entry->pNext;}

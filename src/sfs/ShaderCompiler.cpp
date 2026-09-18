@@ -1,4 +1,5 @@
 #include "ShaderCompiler.h"
+#include "DoomLighting.h"
 #include <spirv_glsl.hpp>
 #include <glslang/Include/glslang_c_interface.h>
 #include <glslang/Public/resource_limits_c.h>
@@ -25,6 +26,9 @@ class StereoCompiler final:public CompilerGLSL {
         return id;
     }
     std::string sampledLayer(const TextureFunctionBaseArguments& args){
+        // A comparison sampler addresses a light's shadow map, not scene
+        // depth. The supplied DOOM profile explicitly keeps this sampling mono.
+        if(args.imgtype->image.depth)return "0";
         auto image=convert_separate_image_to_expression(args.img);
         return "min(int("+eye()+"), textureSize("+image+(args.imgtype->image.ms?").z - 1)":", 0).z - 1)");
     }
@@ -121,15 +125,23 @@ CompiledShader compileStereoShader(const std::vector<uint32_t>& original,const S
     // which subtract stereo.x rather than the convergence field in that term.
     static const std::regex displacement(R"(([A-Za-z_]\w*\.vk3d_params\[[^\]]+\]\.stereo)\.x \* \(([^()\n]+) - \1\.[xy]\))");
     source=std::regex_replace(source,displacement,"($1.x * ($2) + $1.z)");
+    LightingCorrections lighting;
+    if(model==spv::ExecutionModelFragment || (model==spv::ExecutionModelGLCompute &&
+       (request.computeStereo || (request.profileReplacement && hasStereoStorageOutput(original)))))
+        lighting=correctDoomLighting(source);
+    result.clusterCorrections=lighting.clusters;result.worldCorrections=lighting.worldPositions;
     const auto versionEnd=source.find('\n');
     std::string prefix;
     if(model!=spv::ExecutionModelGLCompute)prefix="#extension GL_EXT_multiview : require\n";
     if(request.computeStereo)prefix+="uint khSfsEye;\nuvec3 khSfsGlobalInvocationID, khSfsWorkGroupID, khSfsNumWorkGroups;\n";
-    if(request.vertexProjection){
-        if(model!=spv::ExecutionModelVertex)throw std::runtime_error("SFS: projection requires a vertex shader");
+    if(request.vertexProjection||lighting.clusters||lighting.worldPositions){
         for(const auto& u:resources.uniform_buffers)if(compiler.get_decoration(u.id,spv::DecorationDescriptorSet)==0&&compiler.get_decoration(u.id,spv::DecorationBinding)==31)
             throw std::runtime_error("SFS: projection descriptor binding collision");
         prefix+="layout(set=0,binding=31,std140) uniform KharvoxStereoProjection { layout(offset=64) mat4 clipFromCenter[2]; vec4 eyeTranslation[2]; } khSfsProjection;\n";
+        if(lighting.clusters||lighting.worldPositions)prefix+=lightingProjectionHelper(model!=spv::ExecutionModelGLCompute?"gl_ViewIndex":request.computeStereo?"khSfsEye":"gl_WorkGroupID.z / (gl_NumWorkGroups.z / 2u)");
+    }
+    if(request.vertexProjection){
+        if(model!=spv::ExecutionModelVertex)throw std::runtime_error("SFS: projection requires a vertex shader");
         // Profile shaders use fixed-display separation/convergence here. The
         // headset transform replaces those position adjustments, retaining all
         // other shader-specific corrections and mono shadow replacements.

@@ -26,7 +26,7 @@ int main(int argc,char** argv){try{
     SetEnvironmentVariableA("KHARVOX_SFS_NATIVE_VR",nullptr);
 #endif
 #endif
-    check(argc==3,"Expected vertex and fragment SPIR-V fixtures");
+    check(argc==3||argc==4,"Expected vertex and fragment SPIR-V fixtures");
     auto loader=LoadLibraryW(L"vulkan-1.dll");check(loader,"Vulkan loader unavailable");
     auto gipa=reinterpret_cast<PFN_vkGetInstanceProcAddr>(GetProcAddress(loader,"vkGetInstanceProcAddr"));
     auto createInstance=reinterpret_cast<PFN_vkCreateInstance>(gipa(nullptr,"vkCreateInstance"));
@@ -62,6 +62,9 @@ int main(int argc,char** argv){try{
     kharvox::native::FramePose pose{};pose.head.orientation.w=1;pose.worldScale=1;pose.gameplay=true;
     XrFovf projection{-.7853981634f,.7853981634f,.7853981634f,-.7853981634f};
     for(unsigned e=0;e<2;++e){pose.views[e].pose=pose.head;pose.views[e].pose.position.x=e?.032f:-.032f;pose.views[e].fov=projection;}
+#ifdef KHARVOX_SFS_TEST_LIGHTING
+    if(argc==4)for(unsigned e=0;e<2;++e){pose.views[e].fov.angleLeft=std::atan(e?-.8f:-1.2f);pose.views[e].fov.angleRight=std::atan(e?1.2f:.8f);}
+#endif
     kharvox::sfs::prepare(device,pose,projection);kharvox::sfs::beginFrame(device);
 #endif
     auto resolve=[&](const char* name){return kharvox::sfs::wrapProc(device,name,vkGetDeviceProcAddr(device,name));};
@@ -132,21 +135,28 @@ int main(int argc,char** argv){try{
     VkFramebufferCreateInfo fbInfo{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};fbInfo.renderPass=pass;fbInfo.attachmentCount=1;fbInfo.pAttachments=&view;fbInfo.width=fbInfo.height=8;fbInfo.layers=1;
     VkFramebuffer framebuffer{};ok(vkCreateFramebuffer(device,&fbInfo,nullptr,&framebuffer));
 
-    struct Texture {VkImage image{};VkDeviceMemory memory{};VkImageView view{};uint32_t layers{};};
+    struct Texture {VkImage image{};VkDeviceMemory memory{};VkImageView view{};uint32_t layers{};VkImageAspectFlags aspect{VK_IMAGE_ASPECT_COLOR_BIT};};
     auto makeTexture=[&](bool stereo){
         Texture t;VkImageCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};ci.imageType=VK_IMAGE_TYPE_2D;ci.format=VK_FORMAT_R32_SFLOAT;ci.extent={4,4,1};ci.mipLevels=ci.arrayLayers=1;ci.samples=VK_SAMPLE_COUNT_1_BIT;
         ci.usage=VK_IMAGE_USAGE_SAMPLED_BIT|VK_IMAGE_USAGE_TRANSFER_DST_BIT|(stereo?VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT:0);
+#ifdef KHARVOX_SFS_TEST_SHADOW
+        if(stereo){ci.format=VK_FORMAT_D32_SFLOAT;ci.usage=VK_IMAGE_USAGE_SAMPLED_BIT|VK_IMAGE_USAGE_TRANSFER_DST_BIT|VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;t.aspect=VK_IMAGE_ASPECT_DEPTH_BIT;}
+#endif
         ok(makeImage(device,ci,nullptr,&t.image,vkCreateImage));t.layers=registry.layers(t.image);
         VkMemoryRequirements requirements{};vkGetImageMemoryRequirements(device,t.image,&requirements);
         VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};ai.allocationSize=requirements.size;ai.memoryTypeIndex=memoryType(requirements.memoryTypeBits,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
         ok(vkAllocateMemory(device,&ai,nullptr,&t.memory));ok(vkBindImageMemory(device,t.image,t.memory,0));
-        VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};vi.image=t.image;vi.viewType=VK_IMAGE_VIEW_TYPE_2D;vi.format=ci.format;vi.subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};
+        VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};vi.image=t.image;vi.viewType=VK_IMAGE_VIEW_TYPE_2D;vi.format=ci.format;vi.subresourceRange={t.aspect,0,1,0,1};
         vi=registry.shaderViewInfo(vi);ok(vkCreateImageView(device,&vi,nullptr,&t.view));return t;
     };
     auto stereoTexture=makeTexture(true),monoTexture=makeTexture(false);
     check(stereoTexture.layers==2&&monoTexture.layers==1,"Mono texture was incorrectly duplicated");
     VkSamplerCreateInfo si{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};si.magFilter=si.minFilter=VK_FILTER_NEAREST;si.mipmapMode=VK_SAMPLER_MIPMAP_MODE_NEAREST;si.addressModeU=si.addressModeV=si.addressModeW=VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     VkSampler sampler{};ok(vkCreateSampler(device,&si,nullptr,&sampler));
+    VkSampler stereoSampler=sampler;
+#ifdef KHARVOX_SFS_TEST_SHADOW
+    si.compareEnable=VK_TRUE;si.compareOp=VK_COMPARE_OP_LESS;ok(vkCreateSampler(device,&si,nullptr,&stereoSampler));
+#endif
     VkDescriptorSetLayoutBinding bindings[2]{{0,VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,1,VK_SHADER_STAGE_FRAGMENT_BIT,nullptr},{1,VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,1,VK_SHADER_STAGE_FRAGMENT_BIT,nullptr}};
     VkDescriptorSetLayoutCreateInfo dl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};dl.bindingCount=2;dl.pBindings=bindings;
     VkDescriptorSetLayout layout{};ok(vkCreateDescriptorSetLayout(device,&dl,nullptr,&layout));
@@ -154,7 +164,7 @@ int main(int argc,char** argv){try{
     VkDescriptorPool descriptorPool{};ok(vkCreateDescriptorPool(device,&dp,nullptr,&descriptorPool));
     VkDescriptorSetAllocateInfo da{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};da.descriptorPool=descriptorPool;da.descriptorSetCount=1;da.pSetLayouts=&layout;
     VkDescriptorSet descriptor{};ok(vkAllocateDescriptorSets(device,&da,&descriptor));
-    VkDescriptorImageInfo images[2]{{sampler,stereoTexture.view,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},{sampler,monoTexture.view,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
+    VkDescriptorImageInfo images[2]{{stereoSampler,stereoTexture.view,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},{sampler,monoTexture.view,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
     VkWriteDescriptorSet writes[2]{};for(uint32_t i=0;i<2;++i){writes[i].sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;writes[i].dstSet=descriptor;writes[i].dstBinding=i;writes[i].descriptorCount=1;writes[i].descriptorType=VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;writes[i].pImageInfo=&images[i];}vkUpdateDescriptorSets(device,2,writes,0,nullptr);
     VkPipelineLayoutCreateInfo pl{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};pl.setLayoutCount=1;pl.pSetLayouts=&layout;
     VkPipelineLayout pipelineLayout{};ok(vkCreatePipelineLayout(device,&pl,nullptr,&pipelineLayout));
@@ -181,9 +191,11 @@ int main(int argc,char** argv){try{
     VkCommandBuffer command{};ok(vkAllocateCommandBuffers(device,&cbInfo,&command));
     VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};ok(vkBeginCommandBuffer(command,&begin));
     auto fill=[&](const Texture& t,float left,float right){
-        VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};b.image=t.image;b.oldLayout=VK_IMAGE_LAYOUT_UNDEFINED;b.newLayout=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;b.srcQueueFamilyIndex=b.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;b.dstAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;b.subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,t.layers};
+        VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};b.image=t.image;b.oldLayout=VK_IMAGE_LAYOUT_UNDEFINED;b.newLayout=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;b.srcQueueFamilyIndex=b.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;b.dstAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;b.subresourceRange={t.aspect,0,1,0,t.layers};
         vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,nullptr,0,nullptr,1,&b);
-        for(uint32_t eye=0;eye<t.layers;++eye){VkImageSubresourceRange r{VK_IMAGE_ASPECT_COLOR_BIT,0,1,eye,1};VkClearColorValue c{};c.float32[0]=eye?right:left;vkCmdClearColorImage(command,t.image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,&c,1,&r);}
+        for(uint32_t eye=0;eye<t.layers;++eye){VkImageSubresourceRange r{t.aspect,0,1,eye,1};
+            if(t.aspect==VK_IMAGE_ASPECT_DEPTH_BIT){VkClearDepthStencilValue c{eye?.25f:.75f,0};vkCmdClearDepthStencilImage(command,t.image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,&c,1,&r);}
+            else{VkClearColorValue c{};c.float32[0]=eye?right:left;vkCmdClearColorImage(command,t.image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,&c,1,&r);}}
         b.oldLayout=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;b.newLayout=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;b.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;b.dstAccessMask=VK_ACCESS_SHADER_READ_BIT;
         vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,0,0,nullptr,0,nullptr,1,&b);
     };
@@ -210,6 +222,13 @@ int main(int argc,char** argv){try{
     for(unsigned pixel=0;pixel<128;++pixel){float expected=pixel<64?.375f:.875f;
 #ifdef KHARVOX_SFS_TEST_AFFINE
         expected+=pixel<64?.032f:-.032f;
+#endif
+#ifdef KHARVOX_SFS_TEST_LIGHTING
+        expected=pixel<64?.3788f:.8862f;
+        if(argc==4)expected=pixel<64?.3378f:.9272f;
+#endif
+#ifdef KHARVOX_SFS_TEST_SHADOW
+        expected=.625f;
 #endif
         check(std::abs(static_cast<float*>(mapped)[pixel]-expected)<1e-6f,"Stereo sampling, mono clamping or affine eye correction produced incorrect pixels");}
     vkUnmapMemory(device,bufferMemory);vkDestroyFence(device,fence,nullptr);
@@ -245,6 +264,7 @@ int main(int argc,char** argv){try{
 
     vkDestroyPipeline(device,pipeline,nullptr);vkDestroyShaderModule(device,vertex,nullptr);vkDestroyShaderModule(device,fragment,nullptr);
     vkDestroyPipelineLayout(device,pipelineLayout,nullptr);vkDestroyDescriptorPool(device,descriptorPool,nullptr);vkDestroyDescriptorSetLayout(device,layout,nullptr);vkDestroySampler(device,sampler,nullptr);
+    if(stereoSampler!=sampler)vkDestroySampler(device,stereoSampler,nullptr);
     for(auto t:{stereoTexture,monoTexture}){vkDestroyImageView(device,t.view,nullptr);registry.destroy(device,t.image,nullptr,vkDestroyImage);vkFreeMemory(device,t.memory,nullptr);}
     vkDestroyCommandPool(device,pool,nullptr);vkDestroyBuffer(device,buffer,nullptr);vkFreeMemory(device,bufferMemory,nullptr);
     vkDestroyFramebuffer(device,framebuffer,nullptr);vkDestroyRenderPass(device,pass,nullptr);vkDestroyImageView(device,view,nullptr);

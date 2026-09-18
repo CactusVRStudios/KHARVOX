@@ -9,6 +9,7 @@ int main(int argc,char** argv){try{
     if(!input.read(reinterpret_cast<char*>(words.data()),size))throw std::runtime_error("Read failed");
     kharvox::sfs::ShaderCompileOptions options;options.vertexProjection=kharvox::sfs::needsStereoProjection(words,argc>3&&std::string(argv[3])=="profile")||(argc>3&&std::string(argv[3])=="projection");
     options.computeStereo=kharvox::sfs::hasStereoStorageOutput(words);
+    options.profileReplacement=argc>3&&std::string(argv[3])=="profile";
     if(argc>3&&std::string(argv[3])=="profile")options.computeStereo=false;
     auto result=kharvox::sfs::compileStereoShader(words,options);
     std::ofstream output(argv[2],std::ios::binary);output.write(reinterpret_cast<const char*>(result.words.data()),result.words.size()*4);

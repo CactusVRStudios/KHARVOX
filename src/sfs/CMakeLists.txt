@@ -52,6 +52,23 @@ if(BUILD_TESTING AND WIN32)
   target_include_directories(KharvoxSfsProjectionTests PRIVATE "${PROJECT_SOURCE_DIR}/third-party/openxr-sdk/include")
   add_test(NAME sfs-frame-projection COMMAND KharvoxSfsProjectionTests)
   set(sfs_fixtures "${CMAKE_CURRENT_BINARY_DIR}/fixtures")
+  add_custom_command(OUTPUT "${sfs_fixtures}/indirect.comp.spv"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${sfs_fixtures}"
+    COMMAND "${KHARVOX_GLSLANG_ROOT}/bin/glslang.exe" -V --target-env vulkan1.1
+      "${PROJECT_SOURCE_DIR}/tests/shaders/sfs_indirect.comp" -o "${sfs_fixtures}/indirect.comp.spv"
+    DEPENDS "${PROJECT_SOURCE_DIR}/tests/shaders/sfs_indirect.comp" VERBATIM)
+  add_executable(KharvoxSfsIndirectGpuTests ../../tests/sfs_source_ring_gpu_tests.cpp NativeSfs.cpp "${sfs_fixtures}/indirect.comp.spv")
+  target_compile_features(KharvoxSfsIndirectGpuTests PRIVATE cxx_std_17)
+  target_link_libraries(KharvoxSfsIndirectGpuTests PRIVATE KharvoxSfsCompiler)
+  target_compile_definitions(KharvoxSfsIndirectGpuTests PRIVATE KHARVOX_SFS_RING_RUNTIME KHARVOX_SFS_TEST_INDIRECT KHARVOX_HAVE_SFS_COMPILER WIN32_LEAN_AND_MEAN NOMINMAX)
+  target_include_directories(KharvoxSfsIndirectGpuTests PRIVATE "${PROJECT_SOURCE_DIR}/third-party/vulkan-headers/include" "${PROJECT_SOURCE_DIR}/third-party/openxr-sdk/include")
+  add_test(NAME sfs-indirect-both-eyes-gpu COMMAND KharvoxSfsIndirectGpuTests "${sfs_fixtures}/indirect.comp.spv")
+  set_tests_properties(sfs-indirect-both-eyes-gpu PROPERTIES TIMEOUT 30)
+  add_custom_command(OUTPUT "${sfs_fixtures}/indirect-shared.comp.spv"
+    COMMAND "${KHARVOX_GLSLANG_ROOT}/bin/glslang.exe" -V --target-env vulkan1.1
+      "${PROJECT_SOURCE_DIR}/tests/shaders/sfs_indirect_shared.comp" -o "${sfs_fixtures}/indirect-shared.comp.spv"
+    DEPENDS "${PROJECT_SOURCE_DIR}/tests/shaders/sfs_indirect_shared.comp" VERBATIM)
+  target_sources(KharvoxSfsIndirectGpuTests PRIVATE "${sfs_fixtures}/indirect-shared.comp.spv")
   foreach(stage vert frag)
     add_custom_command(OUTPUT "${sfs_fixtures}/sampling.${stage}.spv"
       COMMAND ${CMAKE_COMMAND} -E make_directory "${sfs_fixtures}"

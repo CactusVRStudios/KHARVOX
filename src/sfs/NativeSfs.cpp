@@ -37,6 +37,8 @@ struct CommandState {
     std::vector<Descriptor> descriptors;
     std::map<uint64_t,std::function<void()>> bindings;
     PushReplay pushes;
+    std::vector<VkImageMemoryBarrier> imageBarriers;
+    std::vector<VkImageSubresourceRange> clearRanges;
 };
 struct State {
     VkDevice device{};NativeDispatch dispatch;
@@ -62,6 +64,10 @@ struct State {
     std::unordered_map<VkFramebuffer,bool> framebufferStereo;
     std::unordered_map<VkPipeline,VkPipeline> stereoPipelines;
     std::unordered_map<VkPipeline,bool> computeStereo;
+    std::unordered_map<VkPipeline,std::array<VkPipeline,2>> indirectPipelines;
+    std::unordered_map<VkFramebuffer,bool> mixedFramebuffers;
+    std::atomic<uint64_t> indirectMono{},indirectStereo{},mixedPasses{};
+    uint32_t mixedDiagnostics{};
     std::unordered_map<VkDescriptorSetLayout,uint32_t> dynamicCounts;
     std::unordered_map<VkDescriptorSet,uint32_t> setDynamicCounts;
     std::unordered_map<VkDescriptorSet,VkDescriptorPool> setPools;
@@ -104,7 +110,7 @@ template<class T>std::shared_ptr<State> state(T handle){
 #define COMMAND_BEGIN try {CommandCpuTiming timing;auto s=state(cb);std::shared_lock<std::shared_mutex> lock(s->mutex);timing.acquired();
 #define COMMAND_END }catch(const std::exception& e){commandFailure(e.what());}
 
-VkShaderModule compiledModule(const std::shared_ptr<State>& s,VkShaderModule original,uint64_t variant,bool& stereoCompute,bool shadowProjection=false){
+VkShaderModule compiledModule(const std::shared_ptr<State>& s,VkShaderModule original,uint64_t variant,bool& stereoCompute,bool shadowProjection=false,int indirectEye=-1){
     const auto found=s->shaders.find(original);if(found==s->shaders.end())throw std::runtime_error("Untracked game shader module");
     const auto& words=found->second;const auto primary=profileHash(words.data(),uint32_t(words.size()*4));
     VkShaderStageFlagBits stage{};
@@ -114,10 +120,11 @@ VkShaderModule compiledModule(const std::shared_ptr<State>& s,VkShaderModule ori
     const auto& input=replacement?replacement.words:words;
     stereoCompute=hasStereoStorageOutput(input);
     const bool sharedShadow=shadowProjection&&!replacement&&stage==VK_SHADER_STAGE_VERTEX_BIT;
-    const auto key=shaderKey(primary)+"_"+shaderKey(variant)+(sharedShadow?"_shadow":"");
+    const auto key=shaderKey(primary)+"_"+shaderKey(variant)+(sharedShadow?"_shadow":"")+(indirectEye>=0?"_indirect"+std::to_string(indirectEye):"");
     auto cached=s->compiled.find(key);if(cached!=s->compiled.end())return cached->second;
     ShaderCompileOptions options;options.computeStereo=stereoCompute&&!replacement;
     options.profileReplacement=bool(replacement);
+    options.indirectEye=indirectEye;
     options.vertexProjection=!sharedShadow&&needsStereoProjection(input,bool(replacement));
     auto shader=compileStereoShader(input,options);
     note("shader="+key+" stage="+std::to_string(stage)+" profile="+(replacement?"matched":"generic")+
@@ -157,10 +164,18 @@ VKAPI_ATTR VkResult VKAPI_CALL createFramebuffer(VkDevice d,const VkFramebufferC
     auto info=*i;bool stereo=i->attachmentCount!=0;
     if(i->flags&VK_FRAMEBUFFER_CREATE_IMAGELESS_BIT)return VK_ERROR_FEATURE_NOT_PRESENT;
     for(uint32_t j=0;j<i->attachmentCount;++j){auto v=s->viewLayers.find(i->pAttachments[j]);if(v==s->viewLayers.end()||v->second<2)stereo=false;}
+    uint32_t stereoAttachments{};for(uint32_t j=0;j<i->attachmentCount;++j){auto v=s->viewLayers.find(i->pAttachments[j]);if(v!=s->viewLayers.end()&&v->second>=2)++stereoAttachments;}
+    const bool mixed=stereoAttachments&&stereoAttachments<i->attachmentCount;
     auto pass=s->passes.find(i->renderPass);if(pass==s->passes.end())return VK_ERROR_INITIALIZATION_FAILED;
-    if(stereo)info.renderPass=pass->second;auto r=FN(vkCreateFramebuffer)(d,&info,a,out);if(r==VK_SUCCESS)s->framebufferStereo[*out]=stereo;return r;
+    if(stereo)info.renderPass=pass->second;auto r=FN(vkCreateFramebuffer)(d,&info,a,out);if(r==VK_SUCCESS){
+        s->framebufferStereo[*out]=stereo;s->mixedFramebuffers[*out]=mixed;
+        if(mixed&&s->mixedDiagnostics++<24){
+            note("[SFS-MIXED] framebuffer="+std::to_string(reinterpret_cast<uintptr_t>(*out))+" size="+std::to_string(i->width)+"x"+std::to_string(i->height)+" stereoAttachments="+std::to_string(stereoAttachments)+" total="+std::to_string(i->attachmentCount)+" mode=mono");
+            for(uint32_t j=0;j<i->attachmentCount;++j){auto v=s->viewInfos.find(i->pAttachments[j]);if(v!=s->viewInfos.end())note("[SFS-MIXED] attachment="+std::to_string(j)+" image="+std::to_string(reinterpret_cast<uintptr_t>(v->second.image))+" format="+std::to_string(v->second.format)+" baseLayer="+std::to_string(v->second.subresourceRange.baseArrayLayer)+" viewLayers="+std::to_string(v->second.subresourceRange.layerCount));}
+        }
+    }return r;
 RESULT_END}
-VKAPI_ATTR void VKAPI_CALL destroyFramebuffer(VkDevice d,VkFramebuffer fb,const VkAllocationCallbacks* a){auto s=state(d);std::unique_lock<std::shared_mutex> lock(s->mutex);s->framebufferStereo.erase(fb);FN(vkDestroyFramebuffer)(d,fb,a);}
+VKAPI_ATTR void VKAPI_CALL destroyFramebuffer(VkDevice d,VkFramebuffer fb,const VkAllocationCallbacks* a){auto s=state(d);std::unique_lock<std::shared_mutex> lock(s->mutex);s->framebufferStereo.erase(fb);s->mixedFramebuffers.erase(fb);FN(vkDestroyFramebuffer)(d,fb,a);}
 VKAPI_ATTR VkResult VKAPI_CALL createLayout(VkDevice d,const VkDescriptorSetLayoutCreateInfo* i,const VkAllocationCallbacks* a,VkDescriptorSetLayout* out){RESULT_BEGIN
     std::vector<VkDescriptorSetLayoutBinding> bindings;if(i->bindingCount)bindings.assign(i->pBindings,i->pBindings+i->bindingCount);uint32_t dynamic=0;
     for(const auto& b:bindings){if(b.binding==30||b.binding==31)throw std::runtime_error("Game descriptor binding 30/31 conflicts with SFS");if(b.descriptorType==VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC||b.descriptorType==VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC)dynamic+=b.descriptorCount;}
@@ -203,9 +218,23 @@ VKAPI_ATTR VkResult VKAPI_CALL graphics(VkDevice d,VkPipelineCache cache,uint32_
 RESULT_END}
 VKAPI_ATTR VkResult VKAPI_CALL compute(VkDevice d,VkPipelineCache cache,uint32_t count,const VkComputePipelineCreateInfo* infos,const VkAllocationCallbacks* a,VkPipeline* out){RESULT_BEGIN
     for(uint32_t j=0;j<count;++j)out[j]=VK_NULL_HANDLE;
-    for(uint32_t j=0;j<count;++j){auto info=infos[j];bool stereo{};info.stage.module=compiledModule(s,info.stage.module,0,stereo);if(info.flags&VK_PIPELINE_CREATE_DERIVATIVE_BIT)return VK_ERROR_FEATURE_NOT_PRESENT;auto r=FN(vkCreateComputePipelines)(d,cache,1,&info,a,&out[j]);if(r!=VK_SUCCESS)return r;s->computeStereo[out[j]]=stereo;}return VK_SUCCESS;
+    for(uint32_t j=0;j<count;++j){
+        auto info=infos[j];const auto original=info.stage.module;bool stereo{};
+        if(info.flags&VK_PIPELINE_CREATE_DERIVATIVE_BIT)return VK_ERROR_FEATURE_NOT_PRESENT;
+        info.stage.module=compiledModule(s,original,0,stereo);
+        const auto& code=s->shaders.at(original);
+        const bool indirect=stereo&&!loadProfileShader(s->profile,profileHash(code.data(),uint32_t(code.size()*4)),0,VK_SHADER_STAGE_COMPUTE_BIT);
+        std::array<VkShaderModule,2> modules{};
+        if(indirect)for(int eye=0;eye<2;++eye){bool ignored{};modules[eye]=compiledModule(s,original,0,ignored,false,eye);}
+        auto r=FN(vkCreateComputePipelines)(d,cache,1,&info,a,&out[j]);if(r!=VK_SUCCESS)return r;
+        std::array<VkPipeline,2> eyes{};
+        if(indirect)for(int eye=0;eye<2;++eye){info.stage.module=modules[eye];r=FN(vkCreateComputePipelines)(d,cache,1,&info,a,&eyes[eye]);
+            if(r!=VK_SUCCESS){for(auto p:eyes)if(p)FN(vkDestroyPipeline)(d,p,a);FN(vkDestroyPipeline)(d,out[j],a);out[j]=VK_NULL_HANDLE;return r;}}
+        if(indirect)s->indirectPipelines[out[j]]=eyes;
+        s->computeStereo[out[j]]=stereo;
+    }return VK_SUCCESS;
 RESULT_END}
-VKAPI_ATTR void VKAPI_CALL destroyPipeline(VkDevice d,VkPipeline pipeline,const VkAllocationCallbacks* a){auto s=state(d);std::unique_lock<std::shared_mutex> lock(s->mutex);auto it=s->stereoPipelines.find(pipeline);if(it!=s->stereoPipelines.end()){FN(vkDestroyPipeline)(d,it->second,a);s->stereoPipelines.erase(it);}s->computeStereo.erase(pipeline);FN(vkDestroyPipeline)(d,pipeline,a);}
+VKAPI_ATTR void VKAPI_CALL destroyPipeline(VkDevice d,VkPipeline pipeline,const VkAllocationCallbacks* a){auto s=state(d);std::unique_lock<std::shared_mutex> lock(s->mutex);auto it=s->stereoPipelines.find(pipeline);if(it!=s->stereoPipelines.end()){FN(vkDestroyPipeline)(d,it->second,a);s->stereoPipelines.erase(it);}auto indirect=s->indirectPipelines.find(pipeline);if(indirect!=s->indirectPipelines.end()){for(auto eye:indirect->second)FN(vkDestroyPipeline)(d,eye,a);s->indirectPipelines.erase(indirect);}s->computeStereo.erase(pipeline);FN(vkDestroyPipeline)(d,pipeline,a);}
 VKAPI_ATTR VkResult VKAPI_CALL beginCommand(VkCommandBuffer cb,const VkCommandBufferBeginInfo* i){try{auto s=state(cb);std::shared_lock<std::shared_mutex> lock(s->mutex);if(i->pInheritanceInfo&&i->pInheritanceInfo->renderPass)return VK_ERROR_FEATURE_NOT_PRESENT;auto& command=s->commands.at(cb);command.stereo=false;command.compute=VK_NULL_HANDLE;command.graphics=VK_NULL_HANDLE;for(auto& descriptor:command.descriptors)descriptor.set=VK_NULL_HANDLE;command.bindings.clear();command.pushes.clear();return FN(vkBeginCommandBuffer)(cb,i);}catch(const std::exception& e){note(e.what());return VK_ERROR_INITIALIZATION_FAILED;}}
 VKAPI_ATTR VkResult VKAPI_CALL allocateCommands(VkDevice d,const VkCommandBufferAllocateInfo* i,VkCommandBuffer* out){RESULT_BEGIN
     auto r=FN(vkAllocateCommandBuffers)(d,i,out);if(r==VK_SUCCESS)for(uint32_t j=0;j<i->commandBufferCount;++j){s->commandPools[out[j]]=i->commandPool;s->commands.try_emplace(out[j]);}return r;
@@ -250,7 +279,7 @@ void replayBindings(const std::shared_ptr<State>& s,VkCommandBuffer cb){
     command.pushes.replay([&](VkPipelineLayout layout,VkShaderStageFlags flags,uint32_t offset,uint32_t size,const void* values){FN(vkCmdPushConstants)(cb,layout,flags,offset,size,values);});
 }
 VKAPI_ATTR void VKAPI_CALL beginPass(VkCommandBuffer cb,const VkRenderPassBeginInfo* i,VkSubpassContents contents){COMMAND_BEGIN
-    auto info=*i;auto& command=s->commands.at(cb);command.stereo=s->framebufferStereo.at(i->framebuffer);if(command.stereo)info.renderPass=s->passes.at(i->renderPass);FN(vkCmdBeginRenderPass)(cb,&info,contents);replayBindings(s,cb);
+    auto info=*i;auto& command=s->commands.at(cb);command.stereo=s->framebufferStereo.at(i->framebuffer);if(s->mixedFramebuffers.at(i->framebuffer))s->mixedPasses.fetch_add(1,std::memory_order_relaxed);if(command.stereo)info.renderPass=s->passes.at(i->renderPass);FN(vkCmdBeginRenderPass)(cb,&info,contents);replayBindings(s,cb);
 COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL endPass(VkCommandBuffer cb){COMMAND_BEGIN FN(vkCmdEndRenderPass)(cb);s->commands.at(cb).stereo=false;COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL nextPass(VkCommandBuffer cb,VkSubpassContents contents){COMMAND_BEGIN FN(vkCmdNextSubpass)(cb,contents);replayBindings(s,cb);COMMAND_END}
@@ -277,9 +306,23 @@ STENCIL_WRAPPER(stencilReference,vkCmdSetStencilReference,0x63000)
 VKAPI_ATTR void VKAPI_CALL dispatch(VkCommandBuffer cb,uint32_t x,uint32_t y,uint32_t z){COMMAND_BEGIN
     uint32_t depth{};if(!dispatchDepth(z,s->computeStereo.at(s->commands.at(cb).compute),65535,depth))throw std::runtime_error("Stereo dispatch exceeds limit");FN(vkCmdDispatch)(cb,x,y,depth);
 COMMAND_END}
+VKAPI_ATTR void VKAPI_CALL dispatchIndirect(VkCommandBuffer cb,VkBuffer buffer,VkDeviceSize offset){COMMAND_BEGIN
+    const auto pipeline=s->commands.at(cb).compute;
+    if(!s->computeStereo.at(pipeline)){
+        s->indirectMono.fetch_add(1,std::memory_order_relaxed);
+        FN(vkCmdDispatchIndirect)(cb,buffer,offset);return;
+    }
+    const auto found=s->indirectPipelines.find(pipeline);
+    if(found==s->indirectPipelines.end())throw std::runtime_error("SFS indirect compute uses an unsupported profile replacement; refusing left-eye-only output");
+    s->indirectStereo.fetch_add(1,std::memory_order_relaxed);
+    // Counts remain GPU-owned and unchanged. Each variant uses the full original
+    // workgroup grid and writes its own eye layer; shared-buffer-only work stays mono.
+    for(auto eye:found->second){FN(vkCmdBindPipeline)(cb,VK_PIPELINE_BIND_POINT_COMPUTE,eye);FN(vkCmdDispatchIndirect)(cb,buffer,offset);}
+    FN(vkCmdBindPipeline)(cb,VK_PIPELINE_BIND_POINT_COMPUTE,pipeline);
+COMMAND_END}
 VkImageSubresourceRange range(const std::shared_ptr<State>& s,VkImage image,VkImageSubresourceRange value){if(s->images.layers(image)==2&&value.baseArrayLayer==0&&value.layerCount==1)value.layerCount=2;return value;}
 VKAPI_ATTR void VKAPI_CALL barriers(VkCommandBuffer cb,VkPipelineStageFlags src,VkPipelineStageFlags dst,VkDependencyFlags deps,uint32_t nm,const VkMemoryBarrier* m,uint32_t nb,const VkBufferMemoryBarrier* b,uint32_t ni,const VkImageMemoryBarrier* i){COMMAND_BEGIN
-    std::vector<VkImageMemoryBarrier> images;if(ni)images.assign(i,i+ni);for(auto& image:images){image.subresourceRange=range(s,image.image,image.subresourceRange);
+    auto& images=s->commands.at(cb).imageBarriers;images.clear();if(ni)images.assign(i,i+ni);for(auto& image:images){image.subresourceRange=range(s,image.image,image.subresourceRange);
         if(s->sources&&s->sources->ownsImage(image.image)){
             if(image.oldLayout==VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)image.oldLayout=VK_IMAGE_LAYOUT_GENERAL;
             if(image.newLayout==VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)image.newLayout=VK_IMAGE_LAYOUT_GENERAL;
@@ -287,10 +330,10 @@ VKAPI_ATTR void VKAPI_CALL barriers(VkCommandBuffer cb,VkPipelineStageFlags src,
     }FN(vkCmdPipelineBarrier)(cb,src,dst,deps,nm,m,nb,b,ni,images.data());
 COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL clearColor(VkCommandBuffer cb,VkImage image,VkImageLayout layout,const VkClearColorValue* value,uint32_t count,const VkImageSubresourceRange* ranges){COMMAND_BEGIN
-    std::vector<VkImageSubresourceRange> copies(ranges,ranges+count);for(auto& r:copies)r=range(s,image,r);FN(vkCmdClearColorImage)(cb,image,layout,value,count,copies.data());
+    auto& copies=s->commands.at(cb).clearRanges;copies.clear();if(count)copies.assign(ranges,ranges+count);for(auto& r:copies)r=range(s,image,r);FN(vkCmdClearColorImage)(cb,image,layout,value,count,copies.data());
 COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL clearDepth(VkCommandBuffer cb,VkImage image,VkImageLayout layout,const VkClearDepthStencilValue* value,uint32_t count,const VkImageSubresourceRange* ranges){COMMAND_BEGIN
-    std::vector<VkImageSubresourceRange> copies(ranges,ranges+count);for(auto& r:copies)r=range(s,image,r);FN(vkCmdClearDepthStencilImage)(cb,image,layout,value,count,copies.data());
+    auto& copies=s->commands.at(cb).clearRanges;copies.clear();if(count)copies.assign(ranges,ranges+count);for(auto& r:copies)r=range(s,image,r);FN(vkCmdClearDepthStencilImage)(cb,image,layout,value,count,copies.data());
 COMMAND_END}
 template<class T>std::vector<T> copyRegions(const std::shared_ptr<State>& s,VkImage src,VkImage dst,uint32_t count,const T* regions){
     std::vector<T> result;for(uint32_t j=0;j<count;++j){auto region=regions[j];result.push_back(region);if(s->images.layers(dst)==2&&region.dstSubresource.baseArrayLayer==0&&region.dstSubresource.layerCount==1){region.dstSubresource.baseArrayLayer=1;if(s->images.layers(src)==2)region.srcSubresource.baseArrayLayer=1;result.push_back(region);}}return result;
@@ -352,6 +395,8 @@ void beginFrame(VkDevice d,VkSwapchainKHR chain,uint32_t imageIndex){
         s->retireNs+=retire;s->uploadNs+=clockNow()-uploadStart;
         if(retire>s->maxRetireNs)s->maxRetireNs=retire;
         if(++s->profiledFrames==120){
+            const auto indirectMono=s->indirectMono.exchange(0,std::memory_order_relaxed),indirectStereo=s->indirectStereo.exchange(0,std::memory_order_relaxed),mixed=s->mixedPasses.exchange(0,std::memory_order_relaxed);
+            note("[SFS-PATHS] frames=120 indirectShared="+std::to_string(indirectMono)+" indirectStereo="+std::to_string(indirectStereo)+" mixedMonoPasses="+std::to_string(mixed));
             const auto samples=CommandCpuTiming::samples.exchange(0,std::memory_order_relaxed);
             const auto wait=CommandCpuTiming::waitNs.exchange(0,std::memory_order_relaxed);
             const auto body=CommandCpuTiming::bodyNs.exchange(0,std::memory_order_relaxed);
@@ -430,7 +475,7 @@ PFN_vkVoidFunction wrapProc(VkDevice d,const char* name,PFN_vkVoidFunction next)
     HOOK(vkCreateGraphicsPipelines,graphics);HOOK(vkCreateComputePipelines,compute);HOOK(vkDestroyPipeline,destroyPipeline);
     HOOK(vkBeginCommandBuffer,beginCommand);HOOK(vkCmdBindPipeline,bindPipeline);HOOK(vkCmdBindDescriptorSets,bindSets);HOOK(vkCmdBindVertexBuffers,bindVertices);HOOK(vkCmdBindIndexBuffer,bindIndex);
     HOOK(vkAllocateCommandBuffers,allocateCommands);HOOK(vkFreeCommandBuffers,freeCommands);HOOK(vkDestroyCommandPool,destroyCommandPool);
-    HOOK(vkCmdSetViewport,viewport);HOOK(vkCmdSetScissor,scissor);HOOK(vkCmdPushConstants,push);HOOK(vkCmdBeginRenderPass,beginPass);HOOK(vkCmdEndRenderPass,endPass);HOOK(vkCmdDispatch,dispatch);
+    HOOK(vkCmdSetViewport,viewport);HOOK(vkCmdSetScissor,scissor);HOOK(vkCmdPushConstants,push);HOOK(vkCmdBeginRenderPass,beginPass);HOOK(vkCmdEndRenderPass,endPass);HOOK(vkCmdDispatch,dispatch);HOOK(vkCmdDispatchIndirect,dispatchIndirect);
     HOOK(vkCmdNextSubpass,nextPass);HOOK(vkCmdSetLineWidth,lineWidth);HOOK(vkCmdSetDepthBias,depthBias);HOOK(vkCmdSetBlendConstants,blendConstants);HOOK(vkCmdSetDepthBounds,depthBounds);
     HOOK(vkCmdSetStencilCompareMask,stencilCompare);HOOK(vkCmdSetStencilWriteMask,stencilWrite);HOOK(vkCmdSetStencilReference,stencilReference);
     HOOK(vkCmdPipelineBarrier,barriers);HOOK(vkCmdClearColorImage,clearColor);HOOK(vkCmdClearDepthStencilImage,clearDepth);

@@ -570,3 +570,39 @@ images/views, hand framebuffers and readback ownership. No full multi-frame
 resource ring or equal-performance claim is made. The next VDXR comparison should
 use the same scene, render scale and settings as test 2 and inspect both Game
 Latency and the new command CPU timing lines.
+## Source Ring test 4: indirect compute and mixed-pass diagnosis
+
+vkCmdDispatchIndirect is now intercepted. Generic compute pipelines with stereo
+storage-image output have two fixed-eye variants compiled at pipeline creation.
+Each variant executes the original GPU-owned grid and logical workgroup IDs;
+counts are not read back or rewritten. The original compute pipeline is restored
+before returning. Shared-buffer-only compute remains one dispatch. This closes
+a definite unhandled path; it does NOT prove the reported blink light uses it.
+Profile-replacement stereo compute does not yet have a verified fixed-eye rewrite;
+if used indirectly, it stops explicitly instead of silently rendering one eye.
+The observed game profiles in the current logs use generic compute variants.
+
+Framebuffer creation reports mixed mono/stereo attachment details (bounded to
+24 framebuffers), and frame counters report executed mixed passes and shared vs
+stereo indirect dispatches. Mixed framebuffers are not blindly promoted: a shared
+attachment can make that incorrect. These counters are diagnostic evidence, not
+proof that any particular visible effect uses the recorded pass.
+
+CPU work: image-barrier and clear-range scratch vectors are retained per command
+buffer, removing repeated allocations in those hooks. Existing parallel metadata
+access, typed pipeline/descriptor state and batched push constants remain.
+No image quality reduction or GPU lifetime wait removal was made.
+
+Validation: 118/118 tests. A new real-GPU integration test writes indirect counts
+on the GPU, dispatches stereo image work, follows it with a direct dispatch to
+verify pipeline restoration, and checks both eye layers over 20 frames. It covers
+zero-sized dispatches and Z=3 logical grids. A shared-buffer-only shader uses an
+atomic counter to prove its 48 invocations are not duplicated (and zero stays zero).
+The packaged simulator menu run reports zero indirect/mixed passes in sampled
+menu windows; this does not settle the campaign effect diagnosis. Hardware
+verification of the reported particle/light defect and performance is pending.
+
+Artifact: out/beta096/KHARVOX-0.96-SFS-Source-Ring-NVIDIA-test4.zip.
+Fresh user logs must include [SFS-PATHS] and any [SFS-MIXED] entries. GPU completion
+waits/full multi-frame resource pipelining remain separate unfinished work; this
+package does not claim Vk3DVision performance parity or a confirmed visual fix.

@@ -8,6 +8,9 @@ struct ShaderCompileOptions {
     bool computeStereo{};
     bool vertexProjection{};
     bool profileReplacement{};
+    // Indirect group counts stay GPU-owned. A fixed-eye variant executes the
+    // original dispatch grid once for its own layer, without rewriting counts.
+    int indirectEye{-1};
 };
 struct CompiledShader {
     std::vector<uint32_t> words;

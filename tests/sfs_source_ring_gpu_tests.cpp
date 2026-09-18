@@ -10,9 +10,10 @@
 #include <cmath>
 #include <thread>
 #include <atomic>
+#include <fstream>
 static void check(bool value,const char* message){if(!value)throw std::runtime_error(message);}
 static void ok(VkResult result){if(result!=VK_SUCCESS)throw std::runtime_error("Vulkan result "+std::to_string(result));}
-int main(){try{
+int main(int argc,char** argv){try{
 #ifdef KHARVOX_SFS_RING_RUNTIME
  SetEnvironmentVariableA("KHARVOX_SFS_NATIVE_PROBE","1");
 #endif
@@ -67,6 +68,9 @@ int main(){try{
  kharvox::sfs::SourceRing ring;check(ring.initialize(device,queue,vkGetDeviceProcAddr,memory,nullptr,nullptr),"Ring init failed");
 #endif
  VkSwapchainCreateInfoKHR chainInfo{VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR};chainInfo.minImageCount=2;chainInfo.imageFormat=VK_FORMAT_R8G8B8A8_UNORM;chainInfo.imageExtent={4,4};chainInfo.imageArrayLayers=2;chainInfo.imageUsage=VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+#ifdef KHARVOX_SFS_TEST_INDIRECT
+ chainInfo.imageUsage|=VK_IMAGE_USAGE_STORAGE_BIT;
+#endif
  VkSwapchainKHR chain{};ok(ring.create(chainInfo,&chain));ok(ring.enumerate(chain,&count,nullptr));check(count==2,"Engine image count changed");
  std::array<VkImage,5> images{};uint32_t partial=1;check(ring.enumerate(chain,&partial,images.data())==VK_INCOMPLETE&&partial==1,"Enumeration truncation broken");count=2;ok(ring.enumerate(chain,&count,images.data()));
 #ifdef KHARVOX_SFS_RING_RUNTIME
@@ -100,11 +104,30 @@ int main(){try{
  for(auto& worker:workers)worker.join();check(!failed,"Parallel command recording failed");
  for(auto pool:parallelPools)vkDestroyCommandPool(device,pool,nullptr);
 #endif
- VkBufferCreateInfo bufferInfo{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};bufferInfo.size=128;bufferInfo.usage=VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+ VkBufferCreateInfo bufferInfo{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};bufferInfo.size=144;bufferInfo.usage=VK_BUFFER_USAGE_TRANSFER_DST_BIT;
  VkBuffer buffer{};ok(vkCreateBuffer(device,&bufferInfo,nullptr,&buffer));VkMemoryRequirements requirements{};vkGetBufferMemoryRequirements(device,buffer,&requirements);
  uint32_t memoryType=UINT32_MAX;for(uint32_t n=0;n<memory.memoryTypeCount;++n)if((requirements.memoryTypeBits&(1u<<n))&&(memory.memoryTypes[n].propertyFlags&(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))==(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)){memoryType=n;break;}check(memoryType!=UINT32_MAX,"No readback memory");
  VkMemoryAllocateInfo memoryInfo{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};memoryInfo.allocationSize=requirements.size;memoryInfo.memoryTypeIndex=memoryType;
  VkDeviceMemory readback{};ok(vkAllocateMemory(device,&memoryInfo,nullptr,&readback));ok(vkBindBufferMemory(device,buffer,readback,0));
+#ifdef KHARVOX_SFS_TEST_INDIRECT
+ DEVICE(vkCreateShaderModule);DEVICE(vkDestroyShaderModule);DEVICE(vkCreateDescriptorSetLayout);DEVICE(vkDestroyDescriptorSetLayout);DEVICE(vkCreateDescriptorPool);DEVICE(vkDestroyDescriptorPool);DEVICE(vkAllocateDescriptorSets);DEVICE(vkUpdateDescriptorSets);DEVICE(vkCreatePipelineLayout);DEVICE(vkDestroyPipelineLayout);DEVICE(vkCreateComputePipelines);DEVICE(vkDestroyPipeline);DEVICE(vkCmdBindPipeline);DEVICE(vkCmdBindDescriptorSets);DEVICE(vkCmdDispatchIndirect);DEVICE(vkCmdDispatch);DEVICE(vkCmdUpdateBuffer);
+ check(argc==2,"Missing compute fixture");std::ifstream shaderFile(argv[1],std::ios::binary|std::ios::ate);check(bool(shaderFile),"Cannot read shader");std::vector<uint32_t> words(size_t(shaderFile.tellg())/4);shaderFile.seekg(0);shaderFile.read(reinterpret_cast<char*>(words.data()),words.size()*4);
+ VkShaderModuleCreateInfo shaderInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};shaderInfo.codeSize=words.size()*4;shaderInfo.pCode=words.data();VkShaderModule shader{};ok(vkCreateShaderModule(device,&shaderInfo,nullptr,&shader));
+ VkDescriptorSetLayoutBinding imageBinding{0,VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,1,VK_SHADER_STAGE_COMPUTE_BIT,nullptr};VkDescriptorSetLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};layoutInfo.bindingCount=1;layoutInfo.pBindings=&imageBinding;VkDescriptorSetLayout descriptorLayout{};ok(vkCreateDescriptorSetLayout(device,&layoutInfo,nullptr,&descriptorLayout));
+ VkDescriptorPoolSize descriptorSize[2]{{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,2},{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,1}};VkDescriptorPoolCreateInfo descriptorInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};descriptorInfo.maxSets=3;descriptorInfo.poolSizeCount=2;descriptorInfo.pPoolSizes=descriptorSize;VkDescriptorPool descriptors{};ok(vkCreateDescriptorPool(device,&descriptorInfo,nullptr,&descriptors));
+ std::array<VkDescriptorSetLayout,2> layouts{descriptorLayout,descriptorLayout};std::array<VkDescriptorSet,2> sets{};VkDescriptorSetAllocateInfo setsInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};setsInfo.descriptorPool=descriptors;setsInfo.descriptorSetCount=2;setsInfo.pSetLayouts=layouts.data();ok(vkAllocateDescriptorSets(device,&setsInfo,sets.data()));
+ for(unsigned n=0;n<2;++n){VkDescriptorImageInfo imageInfo{VK_NULL_HANDLE,views[n],VK_IMAGE_LAYOUT_GENERAL};VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};write.dstSet=sets[n];write.dstBinding=0;write.descriptorCount=1;write.descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;write.pImageInfo=&imageInfo;vkUpdateDescriptorSets(device,1,&write,0,nullptr);}
+ VkPipelineLayoutCreateInfo pipelineLayoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};pipelineLayoutInfo.setLayoutCount=1;pipelineLayoutInfo.pSetLayouts=&descriptorLayout;VkPipelineLayout pipelineLayout{};ok(vkCreatePipelineLayout(device,&pipelineLayoutInfo,nullptr,&pipelineLayout));
+ VkComputePipelineCreateInfo computeInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};computeInfo.layout=pipelineLayout;computeInfo.stage={VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};computeInfo.stage.stage=VK_SHADER_STAGE_COMPUTE_BIT;computeInfo.stage.module=shader;computeInfo.stage.pName="main";VkPipeline pipeline{};ok(vkCreateComputePipelines(device,VK_NULL_HANDLE,1,&computeInfo,nullptr,&pipeline));
+ VkBufferCreateInfo indirectInfo{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};indirectInfo.size=16;indirectInfo.usage=VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT|VK_BUFFER_USAGE_TRANSFER_DST_BIT|VK_BUFFER_USAGE_TRANSFER_SRC_BIT|VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;VkBuffer indirectBuffer{};ok(vkCreateBuffer(device,&indirectInfo,nullptr,&indirectBuffer));vkGetBufferMemoryRequirements(device,indirectBuffer,&requirements);
+ for(uint32_t n=0;n<memory.memoryTypeCount;++n)if(requirements.memoryTypeBits&(1u<<n)){memoryInfo.memoryTypeIndex=n;break;}
+ memoryInfo.allocationSize=requirements.size;VkDeviceMemory indirectMemory{};ok(vkAllocateMemory(device,&memoryInfo,nullptr,&indirectMemory));ok(vkBindBufferMemory(device,indirectBuffer,indirectMemory,0));
+ DEVICE(vkCmdCopyBuffer);
+ std::string sharedPath=argv[1];sharedPath.replace(sharedPath.find("indirect.comp.spv"),17,"indirect-shared.comp.spv");std::ifstream sharedFile(sharedPath,std::ios::binary|std::ios::ate);check(bool(sharedFile),"Cannot read shared shader");std::vector<uint32_t> sharedWords(size_t(sharedFile.tellg())/4);sharedFile.seekg(0);sharedFile.read(reinterpret_cast<char*>(sharedWords.data()),sharedWords.size()*4);shaderInfo.codeSize=sharedWords.size()*4;shaderInfo.pCode=sharedWords.data();VkShaderModule sharedShader{};ok(vkCreateShaderModule(device,&shaderInfo,nullptr,&sharedShader));
+ imageBinding.descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;VkDescriptorSetLayout sharedLayout{};ok(vkCreateDescriptorSetLayout(device,&layoutInfo,nullptr,&sharedLayout));setsInfo.descriptorSetCount=1;setsInfo.pSetLayouts=&sharedLayout;VkDescriptorSet sharedSet{};ok(vkAllocateDescriptorSets(device,&setsInfo,&sharedSet));
+ VkDescriptorBufferInfo sharedBufferInfo{indirectBuffer,0,16};VkWriteDescriptorSet sharedWrite{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};sharedWrite.dstSet=sharedSet;sharedWrite.dstBinding=0;sharedWrite.descriptorCount=1;sharedWrite.descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;sharedWrite.pBufferInfo=&sharedBufferInfo;vkUpdateDescriptorSets(device,1,&sharedWrite,0,nullptr);
+ pipelineLayoutInfo.pSetLayouts=&sharedLayout;VkPipelineLayout sharedPipelineLayout{};ok(vkCreatePipelineLayout(device,&pipelineLayoutInfo,nullptr,&sharedPipelineLayout));computeInfo.layout=sharedPipelineLayout;computeInfo.stage.module=sharedShader;VkPipeline sharedPipeline{};ok(vkCreateComputePipelines(device,VK_NULL_HANDLE,1,&computeInfo,nullptr,&sharedPipeline));
+#endif
  VkSemaphoreCreateInfo semaphoreInfo{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};VkSemaphore acquired{},rendered{};ok(vkCreateSemaphore(device,&semaphoreInfo,nullptr,&acquired));ok(vkCreateSemaphore(device,&semaphoreInfo,nullptr,&rendered));
  VkFenceCreateInfo fenceInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};VkFence completed{},acquireFence{};ok(vkCreateFence(device,&fenceInfo,nullptr,&completed));ok(vkCreateFence(device,&fenceInfo,nullptr,&acquireFence));
  auto present=[&](uint32_t index,bool consumed,uint32_t waits){VkPresentInfoKHR info{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};info.swapchainCount=1;info.pSwapchains=&chain;info.pImageIndices=&index;info.waitSemaphoreCount=waits;info.pWaitSemaphores=waits?&rendered:nullptr;VkResult perImage=VK_NOT_READY;info.pResults=&perImage;ok(ring.present(queue,info,consumed));ok(perImage);};
@@ -124,7 +147,23 @@ int main(){try{
 #endif
   const float red=float(frame+1)/32.0f;
   for(uint32_t eye=0;eye<2;++eye){VkClearColorValue color{};color.float32[0]=red;color.float32[1]=float(eye);color.float32[3]=1;VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT,0,1,eye,1};vkCmdClearColorImage(command,images[index],VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,&color,1,&range);}
+#ifdef KHARVOX_SFS_TEST_INDIRECT
+  barrier(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,VK_IMAGE_LAYOUT_GENERAL,VK_ACCESS_TRANSFER_WRITE_BIT,VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT);
+  // GPU writes the indirect grid. Never map/read the counts back on the CPU.
+  const uint32_t counts[4]{frame%4?4u:0u,4,3,0};vkCmdUpdateBuffer(command,indirectBuffer,0,sizeof(counts),counts);
+  VkMemoryBarrier countsReady{VK_STRUCTURE_TYPE_MEMORY_BARRIER};countsReady.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;countsReady.dstAccessMask=VK_ACCESS_INDIRECT_COMMAND_READ_BIT;vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,0,1,&countsReady,0,nullptr,0,nullptr);
+  vkCmdBindPipeline(command,VK_PIPELINE_BIND_POINT_COMPUTE,pipeline);vkCmdBindDescriptorSets(command,VK_PIPELINE_BIND_POINT_COMPUTE,pipelineLayout,0,1,&sets[index],0,nullptr);
+  vkCmdDispatchIndirect(command,indirectBuffer,0);
+  barrier(VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_LAYOUT_GENERAL,VK_ACCESS_SHADER_WRITE_BIT,VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT);
+  // Direct dispatch must still use the original pipeline after the wrapper.
+  vkCmdDispatch(command,4,4,1);
+  countsReady.dstAccessMask=VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT;vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,0,1,&countsReady,0,nullptr,0,nullptr);
+  vkCmdBindPipeline(command,VK_PIPELINE_BIND_POINT_COMPUTE,sharedPipeline);vkCmdBindDescriptorSets(command,VK_PIPELINE_BIND_POINT_COMPUTE,sharedPipelineLayout,0,1,&sharedSet,0,nullptr);vkCmdDispatchIndirect(command,indirectBuffer,0);
+  VkMemoryBarrier counterReady{VK_STRUCTURE_TYPE_MEMORY_BARRIER};counterReady.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT;counterReady.dstAccessMask=VK_ACCESS_TRANSFER_READ_BIT;vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,1,&counterReady,0,nullptr,0,nullptr);VkBufferCopy counterCopy{12,128,4};vkCmdCopyBuffer(command,indirectBuffer,buffer,1,&counterCopy);
+  barrier(VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,VK_ACCESS_SHADER_WRITE_BIT,VK_ACCESS_TRANSFER_READ_BIT);
+#else
   barrier(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,VK_ACCESS_TRANSFER_WRITE_BIT,VK_ACCESS_TRANSFER_READ_BIT);
+#endif
   VkBufferImageCopy copy{};copy.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,2};copy.imageExtent={4,4,1};vkCmdCopyImageToBuffer(command,images[index],VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,buffer,1,&copy);
   barrier(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,VK_IMAGE_LAYOUT_GENERAL,VK_ACCESS_TRANSFER_READ_BIT,VK_ACCESS_MEMORY_READ_BIT);
   VkMemoryBarrier host{VK_STRUCTURE_TYPE_MEMORY_BARRIER};host.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;host.dstAccessMask=VK_ACCESS_HOST_READ_BIT;vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&host,0,nullptr,0,nullptr);timing.end(command);ok(vkEndCommandBuffer(command));
@@ -133,8 +172,12 @@ int main(){try{
   present(index,frame%2,1);
   VkSubmitInfo finish{VK_STRUCTURE_TYPE_SUBMIT_INFO};ok(vkQueueSubmit(queue,1,&finish,completed));ok(vkWaitForFences(device,1,&completed,VK_TRUE,10000000000ull));ok(vkResetFences(device,1,&completed));
   double gpuMs{};check(timing.completed(gpuMs)&&std::isfinite(gpuMs)&&gpuMs>=0,"GPU timestamps unavailable after completion");check(!timing.completed(gpuMs),"GPU timestamp sample reused");
-  void* mapped{};ok(vkMapMemory(device,readback,0,128,0,&mapped));auto bytes=static_cast<unsigned char*>(mapped);
+  void* mapped{};ok(vkMapMemory(device,readback,0,144,0,&mapped));auto bytes=static_cast<unsigned char*>(mapped);
   for(uint32_t eye=0;eye<2;++eye)for(uint32_t pixel=0;pixel<16;++pixel){const auto offset=eye*64+pixel*4;check(std::abs(int(bytes[offset])-int(std::lround(red*255)))<=1,"Stale frame pixels");check(bytes[offset+1]==eye*255,"Wrong eye layer");}
+#ifdef KHARVOX_SFS_TEST_INDIRECT
+  for(unsigned eye=0;eye<2;++eye)for(unsigned pixel=0;pixel<16;++pixel)check(std::abs(int(bytes[eye*64+pixel*4+2])-(frame%4?128:32))<=1,"Indirect grid/eye output or pipeline restoration incorrect");
+  uint32_t sharedCount{};std::memcpy(&sharedCount,bytes+128,4);check(sharedCount==(frame%4?48u:0u),"Shared-buffer-only indirect work was duplicated");
+#endif
   vkUnmapMemory(device,readback);
  }
  std::array<uint32_t,2> leased{};for(auto& index:leased){ok(ring.acquire(chain,UINT64_MAX,VK_NULL_HANDLE,acquireFence,&index));ok(vkWaitForFences(device,1,&acquireFence,VK_TRUE,10000000000ull));ok(vkResetFences(device,1,&acquireFence));}
@@ -142,6 +185,10 @@ int main(){try{
  chainInfo.oldSwapchain=chain;VkSwapchainKHR replacement{};ok(ring.create(chainInfo,&replacement));check(ring.acquire(chain,0,acquired,VK_NULL_HANDLE,&unavailable)==VK_ERROR_OUT_OF_DATE_KHR,"Retired chain acquired");
  for(auto index:leased)present(index,false,0);
  ok(vkDeviceWaitIdle(device));
+#ifdef KHARVOX_SFS_TEST_INDIRECT
+ vkDestroyPipeline(device,pipeline,nullptr);vkDestroyShaderModule(device,shader,nullptr);vkDestroyPipelineLayout(device,pipelineLayout,nullptr);vkDestroyDescriptorPool(device,descriptors,nullptr);vkDestroyDescriptorSetLayout(device,descriptorLayout,nullptr);vkDestroyBuffer(device,indirectBuffer,nullptr);vkFreeMemory(device,indirectMemory,nullptr);
+ vkDestroyPipeline(device,sharedPipeline,nullptr);vkDestroyShaderModule(device,sharedShader,nullptr);vkDestroyPipelineLayout(device,sharedPipelineLayout,nullptr);vkDestroyDescriptorSetLayout(device,sharedLayout,nullptr);
+#endif
 #ifdef KHARVOX_SFS_RING_RUNTIME
  for(unsigned n=0;n<2;++n){vkDestroyFramebuffer(device,framebuffers[n],nullptr);vkDestroyImageView(device,views[n],nullptr);}vkDestroyRenderPass(device,pass,nullptr);
 #endif

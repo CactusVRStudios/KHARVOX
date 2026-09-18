@@ -23,6 +23,7 @@ struct NativeDispatch {
     PFN_vkCmdCopyBufferToImage vkCmdCopyBufferToImage{};
     PFN_vkCmdCopyImage vkCmdCopyImage{};
     PFN_vkCmdDispatch vkCmdDispatch{};
+    PFN_vkCmdDispatchIndirect vkCmdDispatchIndirect{};
     PFN_vkCmdEndRenderPass vkCmdEndRenderPass{};
     PFN_vkCmdNextSubpass vkCmdNextSubpass{};
     PFN_vkCmdPipelineBarrier vkCmdPipelineBarrier{};
@@ -83,6 +84,7 @@ struct NativeDispatch {
         vkCmdCopyBufferToImage=reinterpret_cast<PFN_vkCmdCopyBufferToImage>(resolver(device,"vkCmdCopyBufferToImage"));
         vkCmdCopyImage=reinterpret_cast<PFN_vkCmdCopyImage>(resolver(device,"vkCmdCopyImage"));
         vkCmdDispatch=reinterpret_cast<PFN_vkCmdDispatch>(resolver(device,"vkCmdDispatch"));
+        vkCmdDispatchIndirect=reinterpret_cast<PFN_vkCmdDispatchIndirect>(resolver(device,"vkCmdDispatchIndirect"));
         vkCmdEndRenderPass=reinterpret_cast<PFN_vkCmdEndRenderPass>(resolver(device,"vkCmdEndRenderPass"));
         vkCmdNextSubpass=reinterpret_cast<PFN_vkCmdNextSubpass>(resolver(device,"vkCmdNextSubpass"));
         vkCmdPipelineBarrier=reinterpret_cast<PFN_vkCmdPipelineBarrier>(resolver(device,"vkCmdPipelineBarrier"));

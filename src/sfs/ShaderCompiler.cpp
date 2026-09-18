@@ -105,6 +105,9 @@ public:
 }
 
 CompiledShader compileStereoShader(const std::vector<uint32_t>& original,const ShaderCompileOptions& request){
+    if(request.indirectEye < -1 || request.indirectEye > 1 ||
+       (request.indirectEye>=0&&(!request.computeStereo||request.profileReplacement)))
+        throw std::runtime_error("SFS: unsupported indirect eye compilation policy");
     static std::once_flag initialization;
     std::call_once(initialization,[]{if(!glslang_initialize_process())throw std::runtime_error("glslang initialization failed");});
     StereoCompiler compiler(original,request.computeStereo);
@@ -170,7 +173,10 @@ CompiledShader compileStereoShader(const std::vector<uint32_t>& original,const S
         const auto main=source.find("void main()");if(main==std::string::npos)throw std::runtime_error("SFS: missing GLSL entry point");
         source.replace(main,11,"void khSfsOriginalMain()");
         source+="\nvoid main() {\n";
-        if(request.computeStereo)source+="khSfsNumWorkGroups = gl_NumWorkGroups; khSfsNumWorkGroups.z /= 2u;\nkhSfsEye = gl_WorkGroupID.z / khSfsNumWorkGroups.z;\nkhSfsWorkGroupID = gl_WorkGroupID; khSfsWorkGroupID.z %= khSfsNumWorkGroups.z;\nkhSfsGlobalInvocationID = gl_GlobalInvocationID; khSfsGlobalInvocationID.z -= khSfsEye * khSfsNumWorkGroups.z * gl_WorkGroupSize.z;\n";
+        if(request.computeStereo){
+            if(request.indirectEye>=0)source+="khSfsNumWorkGroups = gl_NumWorkGroups;\nkhSfsEye = "+std::to_string(request.indirectEye)+"u;\nkhSfsWorkGroupID = gl_WorkGroupID;\nkhSfsGlobalInvocationID = gl_GlobalInvocationID;\n";
+            else source+="khSfsNumWorkGroups = gl_NumWorkGroups; khSfsNumWorkGroups.z /= 2u;\nkhSfsEye = gl_WorkGroupID.z / khSfsNumWorkGroups.z;\nkhSfsWorkGroupID = gl_WorkGroupID; khSfsWorkGroupID.z %= khSfsNumWorkGroups.z;\nkhSfsGlobalInvocationID = gl_GlobalInvocationID; khSfsGlobalInvocationID.z -= khSfsEye * khSfsNumWorkGroups.z * gl_WorkGroupSize.z;\n";
+        }
         source+="khSfsOriginalMain();\n";
         if(vertexProjection)source+="gl_Position = khSfsProjection.clipFromCenter[gl_ViewIndex] * gl_Position + khSfsProjection.eyeTranslation[gl_ViewIndex];\n";
         source+="}\n";

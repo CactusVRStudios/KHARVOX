@@ -5,6 +5,14 @@
 void require(bool condition){if(!condition)std::abort();}
 int main(){
     constexpr uint64_t mib=1024*1024;
+    for(auto flags:{0u,2u,4u,8u,16u,20u}){
+        require(kharvox::engineImageAllocationFlags(186122240,flags,true,128*mib,true)==(flags|1u));
+        require(kharvox::engineImageAllocationFlags(186122240,flags,true,128*mib,false)==flags);
+        require(kharvox::engineImageAllocationFlags(186122240,flags,false,128*mib,true)==flags);
+        require(kharvox::engineImageAllocationFlags(128*mib,flags,true,128*mib,true)==flags);
+        require(kharvox::engineImageAllocationFlags(186122240,flags,true,0,true)==flags);
+        require(kharvox::engineImageAllocationFlags(186122240,flags|1u,true,128*mib,true)==(flags|1u));
+    }
     // Captured failing simulator/VDXR allocation versus a successful smaller one.
     require(kharvox::oversizedEnginePoolImage(186122240,4,true,128*mib));
     require(!kharvox::oversizedEnginePoolImage(56229888,4,true,128*mib));

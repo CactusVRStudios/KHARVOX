@@ -16,9 +16,6 @@ endforeach()
 add_executable(KharvoxSfsCompile ../../tools/sfs_compile.cpp)
 target_link_libraries(KharvoxSfsCompile PRIVATE KharvoxSfsCompiler)
 if(BUILD_TESTING AND WIN32)
-  add_executable(KharvoxSfsLightingRewriteTests ../../tests/sfs_lighting_rewrite_tests.cpp)
-  target_compile_features(KharvoxSfsLightingRewriteTests PRIVATE cxx_std_17)
-  add_test(NAME sfs-lighting-rewrite COMMAND KharvoxSfsLightingRewriteTests)
   add_executable(KharvoxSfsGroupVoteTests ../../tests/sfs_group_vote_tests.cpp)
   target_link_libraries(KharvoxSfsGroupVoteTests PRIVATE KharvoxSfsCompiler)
   target_include_directories(KharvoxSfsGroupVoteTests PRIVATE "${KHARVOX_SPIRV_CROSS_SOURCE}")
@@ -87,4 +84,23 @@ if(BUILD_TESTING AND WIN32)
   endforeach()
   add_test(NAME sfs-lighting-asymmetric-gpu COMMAND KharvoxSfslightingGpuTests "${sfs_fixtures}/sampling.vert.spv" "${sfs_fixtures}/lighting.frag.spv" asymmetric)
   set_tests_properties(sfs-lighting-asymmetric-gpu PROPERTIES TIMEOUT 30)
+  add_custom_command(OUTPUT "${sfs_fixtures}/shadow-projection.vert.spv"
+    COMMAND "${KHARVOX_GLSLANG_ROOT}/bin/glslang.exe" -V --target-env vulkan1.1
+      "${PROJECT_SOURCE_DIR}/tests/shaders/sfs_shadow_projection.vert" -o "${sfs_fixtures}/shadow-projection.vert.spv"
+    DEPENDS "${PROJECT_SOURCE_DIR}/tests/shaders/sfs_shadow_projection.vert" VERBATIM)
+  add_executable(KharvoxSfsShadowProjectionGpuTests ../../tests/sfs_sampling_gpu_tests.cpp NativeSfs.cpp
+    "${sfs_fixtures}/shadow-projection.vert.spv" "${sfs_fixtures}/sampling.frag.spv")
+  target_link_libraries(KharvoxSfsShadowProjectionGpuTests PRIVATE KharvoxSfsCompiler)
+  target_compile_definitions(KharvoxSfsShadowProjectionGpuTests PRIVATE KHARVOX_SFS_TEST_RUNTIME KHARVOX_SFS_TEST_AFFINE KHARVOX_SFS_TEST_SHADOW_PROJECTION KHARVOX_HAVE_SFS_COMPILER WIN32_LEAN_AND_MEAN NOMINMAX)
+  target_include_directories(KharvoxSfsShadowProjectionGpuTests PRIVATE "${PROJECT_SOURCE_DIR}/third-party/openxr-sdk/include" "${PROJECT_SOURCE_DIR}/third-party/vulkan-headers/include")
+  add_test(NAME sfs-shadow-projection-gpu COMMAND KharvoxSfsShadowProjectionGpuTests "${sfs_fixtures}/shadow-projection.vert.spv" "${sfs_fixtures}/sampling.frag.spv")
+  add_test(NAME sfs-camera-depth-projection-gpu COMMAND KharvoxSfsShadowProjectionGpuTests "${sfs_fixtures}/shadow-projection.vert.spv" "${sfs_fixtures}/sampling.frag.spv" camera)
+  set_tests_properties(sfs-shadow-projection-gpu sfs-camera-depth-projection-gpu PROPERTIES TIMEOUT 30)
+  add_custom_command(OUTPUT "${sfs_fixtures}/material-atlas.vert.spv"
+    COMMAND "${KHARVOX_GLSLANG_ROOT}/bin/glslang.exe" -V --target-env vulkan1.1
+      "${PROJECT_SOURCE_DIR}/tests/shaders/sfs_material_atlas.vert" -o "${sfs_fixtures}/material-atlas.vert.spv"
+    DEPENDS "${PROJECT_SOURCE_DIR}/tests/shaders/sfs_material_atlas.vert" VERBATIM)
+  add_executable(KharvoxSfsLightingRewriteTests ../../tests/sfs_lighting_rewrite_tests.cpp "${sfs_fixtures}/material-atlas.vert.spv" "${sfs_fixtures}/shadow-projection.vert.spv")
+  target_link_libraries(KharvoxSfsLightingRewriteTests PRIVATE KharvoxSfsCompiler)
+  add_test(NAME sfs-lighting-rewrite COMMAND KharvoxSfsLightingRewriteTests "${sfs_fixtures}/material-atlas.vert.spv" "${sfs_fixtures}/shadow-projection.vert.spv")
 endif()

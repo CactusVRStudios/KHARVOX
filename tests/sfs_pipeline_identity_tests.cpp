@@ -1,4 +1,5 @@
 #include "../src/sfs/PipelineIdentity.h"
+#include "../src/sfs/ShadowProjection.h"
 #include <iostream>
 int main(){
     // Real DOOM startup fixed-state fixture. Its seed resolves existing provider
@@ -20,5 +21,13 @@ int main(){
     if(kharvox::sfs::pipelineSeed(p)!=hash)return 2;
     ds.depthWriteEnable=1;
     if(kharvox::sfs::pipelineSeed(p)==hash)return 3;
+    cb.attachmentCount=0;rs.depthBiasEnable=1;
+    if(!kharvox::sfs::doomShadowProjection(p))return 4;
+    rs.depthBiasEnable=0; // Camera depth prepass still needs stereo.
+    if(kharvox::sfs::doomShadowProjection(p))return 5;
+    rs.depthBiasEnable=1;cb.attachmentCount=1; // Biased color/decal pass.
+    if(kharvox::sfs::doomShadowProjection(p))return 6;
+    cb.attachmentCount=0;ds.depthWriteEnable=0;
+    if(kharvox::sfs::doomShadowProjection(p))return 7;
     std::cout<<"DOOM pipeline profile identity passed\n";
 }

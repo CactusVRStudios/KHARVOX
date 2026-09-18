@@ -17,4 +17,11 @@ inline bool oversizedEnginePoolImage(uint32_t bytes, uint32_t flags,
     // alignment of the offset does not require rounding the size up again.
     return image && !(flags & 1) && capacity && uint64_t(bytes) > capacity;
 }
+// The game's own non-pooled allocator records ownership and frees the allocation
+// normally. Preserve every memory-property flag and use it only for oversized
+// native SFS images, whose requirements include both promoted eye layers.
+inline uint32_t engineImageAllocationFlags(uint32_t bytes,uint32_t flags,
+    bool image,uint64_t capacity,bool nativeSfsVr) {
+    return nativeSfsVr&&oversizedEnginePoolImage(bytes,flags,image,capacity)?flags|1u:flags;
+}
 }

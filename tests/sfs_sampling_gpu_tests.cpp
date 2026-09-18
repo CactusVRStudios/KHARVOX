@@ -157,15 +157,28 @@ int main(int argc,char** argv){try{
 #ifdef KHARVOX_SFS_TEST_SHADOW
     si.compareEnable=VK_TRUE;si.compareOp=VK_COMPARE_OP_LESS;ok(vkCreateSampler(device,&si,nullptr,&stereoSampler));
 #endif
-    VkDescriptorSetLayoutBinding bindings[2]{{0,VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,1,VK_SHADER_STAGE_FRAGMENT_BIT,nullptr},{1,VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,1,VK_SHADER_STAGE_FRAGMENT_BIT,nullptr}};
+    VkDescriptorSetLayoutBinding bindings[3]{{0,VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,1,VK_SHADER_STAGE_FRAGMENT_BIT,nullptr},{1,VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,1,VK_SHADER_STAGE_FRAGMENT_BIT,nullptr},{2,VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,1,VK_SHADER_STAGE_VERTEX_BIT,nullptr}};
     VkDescriptorSetLayoutCreateInfo dl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};dl.bindingCount=2;dl.pBindings=bindings;
+#ifdef KHARVOX_SFS_TEST_SHADOW_PROJECTION
+    dl.bindingCount=3;
+#endif
     VkDescriptorSetLayout layout{};ok(vkCreateDescriptorSetLayout(device,&dl,nullptr,&layout));
-    VkDescriptorPoolSize ps{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,2};VkDescriptorPoolCreateInfo dp{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};dp.maxSets=1;dp.poolSizeCount=1;dp.pPoolSizes=&ps;
+    VkDescriptorPoolSize ps[2]{{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,2},{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,1}};VkDescriptorPoolCreateInfo dp{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};dp.maxSets=1;dp.poolSizeCount=2;dp.pPoolSizes=ps;
     VkDescriptorPool descriptorPool{};ok(vkCreateDescriptorPool(device,&dp,nullptr,&descriptorPool));
     VkDescriptorSetAllocateInfo da{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};da.descriptorPool=descriptorPool;da.descriptorSetCount=1;da.pSetLayouts=&layout;
     VkDescriptorSet descriptor{};ok(vkAllocateDescriptorSets(device,&da,&descriptor));
     VkDescriptorImageInfo images[2]{{stereoSampler,stereoTexture.view,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},{sampler,monoTexture.view,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
     VkWriteDescriptorSet writes[2]{};for(uint32_t i=0;i<2;++i){writes[i].sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;writes[i].dstSet=descriptor;writes[i].dstBinding=i;writes[i].descriptorCount=1;writes[i].descriptorType=VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;writes[i].pImageInfo=&images[i];}vkUpdateDescriptorSets(device,2,writes,0,nullptr);
+#ifdef KHARVOX_SFS_TEST_SHADOW_PROJECTION
+    VkBuffer cameraBuffer{};VkDeviceMemory cameraMemory{};
+    VkBufferCreateInfo cameraInfo{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};cameraInfo.size=16;cameraInfo.usage=VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+    ok(vkCreateBuffer(device,&cameraInfo,nullptr,&cameraBuffer));vkGetBufferMemoryRequirements(device,cameraBuffer,&req);
+    alloc.allocationSize=req.size;alloc.memoryTypeIndex=memoryType(req.memoryTypeBits,VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    ok(vkAllocateMemory(device,&alloc,nullptr,&cameraMemory));ok(vkBindBufferMemory(device,cameraBuffer,cameraMemory,0));
+    void* cameraData{};ok(vkMapMemory(device,cameraMemory,0,16,0,&cameraData));
+    const float cameraValues[4]{0,0,0,.032f};std::memcpy(cameraData,cameraValues,16);vkUnmapMemory(device,cameraMemory);
+    VkDescriptorBufferInfo cameraBinding{cameraBuffer,0,16};VkWriteDescriptorSet cameraWrite{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};cameraWrite.dstSet=descriptor;cameraWrite.dstBinding=2;cameraWrite.descriptorCount=1;cameraWrite.descriptorType=VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;cameraWrite.pBufferInfo=&cameraBinding;vkUpdateDescriptorSets(device,1,&cameraWrite,0,nullptr);
+#endif
     VkPipelineLayoutCreateInfo pl{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};pl.setLayoutCount=1;pl.pSetLayouts=&layout;
     VkPipelineLayout pipelineLayout{};ok(vkCreatePipelineLayout(device,&pl,nullptr,&pipelineLayout));
     auto module=[&](const char* path){std::ifstream f(path,std::ios::binary|std::ios::ate);check(bool(f),"Shader fixture missing");auto size=f.tellg();check(size>=20&&size%4==0,"Invalid fixture size");std::vector<uint32_t> words(size_t(size)/4);f.seekg(0);f.read(reinterpret_cast<char*>(words.data()),size);auto compiled=kharvox::sfs::compileStereoShader(words);
@@ -179,6 +192,9 @@ int main(int argc,char** argv){try{
     VkViewport viewport{0,0,8,8,0,1};VkRect2D scissor{{0,0},{8,8}};VkPipelineViewportStateCreateInfo vp{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};vp.viewportCount=vp.scissorCount=1;vp.pViewports=&viewport;vp.pScissors=&scissor;
     VkPipelineRasterizationStateCreateInfo raster{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};raster.lineWidth=1;VkPipelineMultisampleStateCreateInfo ms{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};ms.rasterizationSamples=VK_SAMPLE_COUNT_1_BIT;
     VkPipelineDepthStencilStateCreateInfo depth{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};depth.depthTestEnable=depth.depthWriteEnable=VK_TRUE;depth.depthCompareOp=VK_COMPARE_OP_ALWAYS;VkPipelineColorBlendStateCreateInfo blend{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+#ifdef KHARVOX_SFS_TEST_SHADOW_PROJECTION
+    raster.depthBiasEnable=argc==3;depth.depthCompareOp=VK_COMPARE_OP_LESS_OR_EQUAL;
+#endif
     VkGraphicsPipelineCreateInfo pi{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};pi.stageCount=2;pi.pStages=stages;pi.pVertexInputState=&vi;pi.pInputAssemblyState=&ia;pi.pViewportState=&vp;pi.pRasterizationState=&raster;pi.pMultisampleState=&ms;pi.pDepthStencilState=&depth;pi.pColorBlendState=&blend;pi.layout=pipelineLayout;pi.renderPass=pass;
     VkPipeline pipeline{};ok(vkCreateGraphicsPipelines(device,VK_NULL_HANDLE,1,&pi,nullptr,&pipeline));
     VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};bi.size=512;bi.usage=VK_BUFFER_USAGE_TRANSFER_DST_BIT;
@@ -201,6 +217,9 @@ int main(int argc,char** argv){try{
     };
     fill(stereoTexture,.25f,.75f);fill(monoTexture,.125f,.125f);
     VkClearValue clear{};clear.depthStencil.depth=0;
+#ifdef KHARVOX_SFS_TEST_SHADOW_PROJECTION
+    clear.depthStencil.depth=1;
+#endif
     VkRenderPassBeginInfo rp{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};rp.renderPass=pass;rp.framebuffer=framebuffer;rp.renderArea.extent={8,8};rp.clearValueCount=1;rp.pClearValues=&clear;
 #ifdef KHARVOX_SFS_TEST_RUNTIME
     vkCmdBindPipeline(command,VK_PIPELINE_BIND_POINT_GRAPHICS,pipeline);vkCmdBindDescriptorSets(command,VK_PIPELINE_BIND_POINT_GRAPHICS,pipelineLayout,0,1,&descriptor,0,nullptr);
@@ -229,6 +248,10 @@ int main(int argc,char** argv){try{
 #endif
 #ifdef KHARVOX_SFS_TEST_SHADOW
         expected=.625f;
+#endif
+#ifdef KHARVOX_SFS_TEST_SHADOW_PROJECTION
+        const auto boundary=argc==3?2u:pixel<64?6u:0u;
+        expected=(pixel%8)<boundary?1.f:pixel<64?.375f:.875f;
 #endif
         check(std::abs(static_cast<float*>(mapped)[pixel]-expected)<1e-6f,"Stereo sampling, mono clamping or affine eye correction produced incorrect pixels");}
     vkUnmapMemory(device,bufferMemory);vkDestroyFence(device,fence,nullptr);
@@ -265,6 +288,9 @@ int main(int argc,char** argv){try{
     vkDestroyPipeline(device,pipeline,nullptr);vkDestroyShaderModule(device,vertex,nullptr);vkDestroyShaderModule(device,fragment,nullptr);
     vkDestroyPipelineLayout(device,pipelineLayout,nullptr);vkDestroyDescriptorPool(device,descriptorPool,nullptr);vkDestroyDescriptorSetLayout(device,layout,nullptr);vkDestroySampler(device,sampler,nullptr);
     if(stereoSampler!=sampler)vkDestroySampler(device,stereoSampler,nullptr);
+#ifdef KHARVOX_SFS_TEST_SHADOW_PROJECTION
+    vkDestroyBuffer(device,cameraBuffer,nullptr);vkFreeMemory(device,cameraMemory,nullptr);
+#endif
     for(auto t:{stereoTexture,monoTexture}){vkDestroyImageView(device,t.view,nullptr);registry.destroy(device,t.image,nullptr,vkDestroyImage);vkFreeMemory(device,t.memory,nullptr);}
     vkDestroyCommandPool(device,pool,nullptr);vkDestroyBuffer(device,buffer,nullptr);vkFreeMemory(device,bufferMemory,nullptr);
     vkDestroyFramebuffer(device,framebuffer,nullptr);vkDestroyRenderPass(device,pass,nullptr);vkDestroyImageView(device,view,nullptr);

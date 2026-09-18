@@ -4,6 +4,7 @@ param(
     [Parameter(Mandatory=$true)][string]$Profile,
     [string]$OpenXrManifest,
     [ValidateRange(30,1800)][int]$Seconds=300,
+    [ValidateRange(0.1,4.0)][double]$RenderScale=0.5,
     [switch]$CaptureEyes,
     [switch]$ShowHands,
     [switch]$NativeViewmodel
@@ -31,7 +32,7 @@ if(!(Get-ChildItem -LiteralPath $Profile -Filter '*.spv' -File | Select-Object -
 $settings=@{
     VK_LAYER_PATH=$Runtime; VK_INSTANCE_LAYERS='VK_LAYER_KHARVOX_OPENXR';
     KHARVOX_ENABLE_LAYER='1'; KHARVOX_SFS_NATIVE_PROBE='1'; KHARVOX_SFS_NATIVE_VR='1';
-    KHARVOX_SFS_PROFILE=$Profile; KHARVOX_EXTENDED_LOGGING='1'; KHARVOX_RENDER_SCALE='0.5';
+    KHARVOX_SFS_PROFILE=$Profile; KHARVOX_EXTENDED_LOGGING='1'; KHARVOX_RENDER_SCALE=$RenderScale.ToString([Globalization.CultureInfo]::InvariantCulture);
     # Match the launcher's tracked weapon path by default. The earlier probe
     # left this unset, displaying DOOM's animated arms/viewmodel instead.
     KHARVOX_WEAPON_6DOF=$(if($NativeViewmodel){'0'}else{'1'});

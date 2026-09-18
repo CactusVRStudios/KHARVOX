@@ -120,6 +120,13 @@ CompiledShader compileStereoShader(const std::vector<uint32_t>& original,const S
         if(type.image.dim==spv::Dim2D&&!type.image.arrayed)result.arrayBindings.push_back({compiler.get_decoration(resource.id,spv::DecorationDescriptorSet),compiler.get_decoration(resource.id,spv::DecorationBinding),storage,type.image.depth});}};
     bindings(resources.sampled_images,false);bindings(resources.separate_images,false);bindings(resources.storage_images,true);
     auto source=compiler.compile();
+    // The profile's virtual-material atlas pass writes atlas coordinates to
+    // gl_Position and uses MVP only for a varying. A declared mvpmatrixw alone
+    // must not shift the atlas. Recognize the same semantic form on other GPUs.
+    const bool atlasPosition=source.find("vec2 atlasTilePos = vec2(in_VmtrTC.x, in_VmtrTC.y);")!=std::string::npos &&
+        source.find("gl_Position = vec4((atlasTilePos * 2.0) - vec2(1.0), 0.0, 1.0);")!=std::string::npos;
+    const bool vertexProjection=request.vertexProjection&&!atlasPosition;
+    result.vertexProjectionApplied=vertexProjection;
     // Reconstruct the profile's horizontal clip correction in affine form.
     // stereo.z is KHARVOX's intercept. Also correct the two supplied fog variants
     // which subtract stereo.x rather than the convergence field in that term.
@@ -134,13 +141,13 @@ CompiledShader compileStereoShader(const std::vector<uint32_t>& original,const S
     std::string prefix;
     if(model!=spv::ExecutionModelGLCompute)prefix="#extension GL_EXT_multiview : require\n";
     if(request.computeStereo)prefix+="uint khSfsEye;\nuvec3 khSfsGlobalInvocationID, khSfsWorkGroupID, khSfsNumWorkGroups;\n";
-    if(request.vertexProjection||lighting.clusters||lighting.worldPositions){
+    if(vertexProjection||lighting.clusters||lighting.worldPositions){
         for(const auto& u:resources.uniform_buffers)if(compiler.get_decoration(u.id,spv::DecorationDescriptorSet)==0&&compiler.get_decoration(u.id,spv::DecorationBinding)==31)
             throw std::runtime_error("SFS: projection descriptor binding collision");
         prefix+="layout(set=0,binding=31,std140) uniform KharvoxStereoProjection { layout(offset=64) mat4 clipFromCenter[2]; vec4 eyeTranslation[2]; } khSfsProjection;\n";
         if(lighting.clusters||lighting.worldPositions)prefix+=lightingProjectionHelper(model!=spv::ExecutionModelGLCompute?"gl_ViewIndex":request.computeStereo?"khSfsEye":"gl_WorkGroupID.z / (gl_NumWorkGroups.z / 2u)");
     }
-    if(request.vertexProjection){
+    if(vertexProjection){
         if(model!=spv::ExecutionModelVertex)throw std::runtime_error("SFS: projection requires a vertex shader");
         // Profile shaders use fixed-display separation/convergence here. The
         // headset transform replaces those position adjustments, retaining all
@@ -159,13 +166,13 @@ CompiledShader compileStereoShader(const std::vector<uint32_t>& original,const S
     if(model!=spv::ExecutionModelGLCompute)prefix.erase(0,prefix.find('\n')+1);
     auto declaration=source.find("\n\n");if(declaration==std::string::npos)declaration=source.find('\n');
     source.insert(declaration+1,prefix);
-    if(request.computeStereo||request.vertexProjection){
+    if(request.computeStereo||vertexProjection){
         const auto main=source.find("void main()");if(main==std::string::npos)throw std::runtime_error("SFS: missing GLSL entry point");
         source.replace(main,11,"void khSfsOriginalMain()");
         source+="\nvoid main() {\n";
         if(request.computeStereo)source+="khSfsNumWorkGroups = gl_NumWorkGroups; khSfsNumWorkGroups.z /= 2u;\nkhSfsEye = gl_WorkGroupID.z / khSfsNumWorkGroups.z;\nkhSfsWorkGroupID = gl_WorkGroupID; khSfsWorkGroupID.z %= khSfsNumWorkGroups.z;\nkhSfsGlobalInvocationID = gl_GlobalInvocationID; khSfsGlobalInvocationID.z -= khSfsEye * khSfsNumWorkGroups.z * gl_WorkGroupSize.z;\n";
         source+="khSfsOriginalMain();\n";
-        if(request.vertexProjection)source+="gl_Position = khSfsProjection.clipFromCenter[gl_ViewIndex] * gl_Position + khSfsProjection.eyeTranslation[gl_ViewIndex];\n";
+        if(vertexProjection)source+="gl_Position = khSfsProjection.clipFromCenter[gl_ViewIndex] * gl_Position + khSfsProjection.eyeTranslation[gl_ViewIndex];\n";
         source+="}\n";
     }
     result.glsl=source;

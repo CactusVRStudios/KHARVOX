@@ -318,3 +318,64 @@ are retained. Real Radeon/PSVR2 visual verification is still required.
 Complete tester package: out/beta096/psvr2-steamxr-fix2/ and
 out/beta096/KHARVOX-0.96-SFS-PSVR2-SteamXR-fix2.zip. The runtime bundles both approved
 integration DLLs and both bridges and must pass the mandatory package verifier.
+
+## logs3.zip: shared shadow generation and oversized allocations / fix 3
+
+The tester confirms that fix 2 at 80% renders the right eye normally, but an
+object changes from lit to shadowed to lit as the player approaches. logs3.zip
+records 4096x2304 source at 80%, 567 shader variants, **zero** profile matches,
+236 projected vertex variants, 36 cluster corrections and six world corrections.
+Thus the Radeon run uses the generic compiler throughout; its shader hashes do
+not activate the supplied profile's per-pipeline exceptions. The logs do not
+contain the AMD SPIR-V or a capture of the reported rock, so they cannot directly
+measure its shadow coverage.
+
+The Vk3DVision DOOM ShaderSwap files explicitly distinguish shadow and camera
+variants of the same vertex shader. For example, a760518252dc0c5e variant
+b299d288a841675b contains no stereo position adjustment, while dd9957bdd0bd9a41
+does. Captured pipeline packets associate the former with biased depth-only
+shadow work. Several other supplied variants have the same distinction. The
+profile also has a deliberate biased-depth HUD replacement; exact replacements
+must retain precedence over any general classification.
+
+Fix 3 therefore adds a generic fallback for depth-only, depth-writing,
+LESS_OR_EQUAL, depth-biased pipelines: keep the light-space vertex projection
+unchanged. It applies only without a matching replacement. Camera depth passes
+retain stereo projection, color/decal passes are excluded, and cached module
+identity/diagnostics include the shared-shadow role. The shared comparison
+sampling introduced in fix 2 is preserved.
+
+The e671b5dec2461b5c material-atlas profile likewise leaves raster position
+unshifted. Its original shader contains mvpmatrixw only for a varying, yet our
+old member-presence heuristic shifted its atlas position. The compiler now
+recognizes the explicit atlas-coordinate raster pattern and excludes it from
+headset projection even without a profile match. Other uses of in_VmtrTC are
+not classified as atlas rasterization merely by their input name.
+
+The prior failed launch in logs3 contains imageBytes=154009616, flags=0x4,
+poolBlockBytes=134217728. Native SFS now routes oversized image requests through
+DOOM's existing bit-0 standalone allocation path instead of its fixed-size pool.
+Other allocation flags and all arguments are preserved; ordinary images/buffers,
+uninitialized capacities and AER behavior remain unchanged. The supported binary's
+wrapper, flag extraction, branch and ownership-record bytes are checked before
+enabling the hook. DOOM owns allocation/freeing and handles actual allocation
+failure; this does not manufacture VRAM or remove hardware limits.
+
+Validation: 114/114 CTests and 722/722 local shader translations pass. GPU
+readbacks verify unshifted shadow raster coverage and, with the same vertex
+module, shifted camera-depth coverage. Atlas/compiler tests cover the misleading
+MVP member. Allocation tests cover the strict size boundary, flag preservation,
+non-SFS and buffer exclusions. A 45-second Simulator test (PID 9028), with no
+matching ShaderSwap files and scale 150%, used source 5888x3312. Seven real image
+requests of 156762112 bytes bypassed the 128-MiB pool successfully; 24 vertex
+variants used shared-shadow projection; no shader compile errors were recorded.
+At frame 1080 it submitted projection layers with zero lifecycle violations or
+end-frame failures, then was stopped at the deadline. This exercises the generic
+path on the local NVIDIA GPU; it is not Radeon/PSVR2 visual verification.
+
+Evidence: out/beta096/psvr2-tester-logs3/, fix3-simulator-unmatched.log,
+fix3-shader-audit/result.json and fix3-ctest.log. Complete tester delivery:
+out/beta096/psvr2-steamxr-fix3/ and
+out/beta096/KHARVOX-0.96-SFS-PSVR2-SteamXR-fix3.zip. Compare the same rock and walk
+at the previous 80% scale first; separately test 100% startup for the allocation
+change. Fresh logs now expose sharedShadow=1 for unmatched shadow variants.

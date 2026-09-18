@@ -15,7 +15,7 @@ inline uint32_t independentEngineHeight{};
 inline uint32_t __fastcall independentWidth(void*) { return independentEngineWidth; }
 inline uint32_t __fastcall independentHeight(void*) { return independentEngineHeight; }
 
-inline bool installIndependentEngineSize(uint32_t width,uint32_t height) {
+inline bool installIndependentEngineSize(uint32_t width,uint32_t height,bool nativeSfsVr=false) {
     if(independentEngineWidth)return independentEngineWidth==width&&independentEngineHeight==height;
     if(!width||!height)return false;
     auto base=reinterpret_cast<uint8_t*>(GetModuleHandleW(nullptr));
@@ -29,7 +29,7 @@ inline bool installIndependentEngineSize(uint32_t width,uint32_t height) {
     void* widthTarget=base+0x1871480;void* heightTarget=base+0x1871250;
     if(std::memcmp(widthTarget,widthCode,sizeof(widthCode))||std::memcmp(heightTarget,heightCode,sizeof(heightCode)))return false;
     auto initialized=MH_Initialize();if(initialized!=MH_OK&&initialized!=MH_ERROR_ALREADY_INITIALIZED)return false;
-    if(!installEngineMemoryGuard(base,nt->OptionalHeader.SizeOfImage))return false;
+    if(!installEngineMemoryGuard(base,nt->OptionalHeader.SizeOfImage,nativeSfsVr))return false;
     if(!installVirtualTextureGuard(base,nt->OptionalHeader.SizeOfImage))return false;
     if(MH_CreateHook(widthTarget,reinterpret_cast<void*>(&independentWidth),nullptr)!=MH_OK)return false;
     if(MH_CreateHook(heightTarget,reinterpret_cast<void*>(&independentHeight),nullptr)!=MH_OK){MH_RemoveHook(widthTarget);return false;}

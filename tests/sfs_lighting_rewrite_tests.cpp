@@ -1,9 +1,19 @@
 #include "../src/sfs/DoomLighting.h"
+#include "../src/sfs/ShaderCompiler.h"
+#include <fstream>
 #include <stdexcept>
 #include <iostream>
 using namespace kharvox::sfs;
 static void check(bool b){if(!b)throw std::runtime_error("Lighting rewrite regression");}
-int main(){try{
+int main(int argc,char** argv){try{
+    check(argc==3);
+    for(int i=1;i<3;++i){
+        std::ifstream file(argv[i],std::ios::binary|std::ios::ate);check(bool(file));const auto size=file.tellg();check(size>=20&&size%4==0);
+        std::vector<uint32_t> words(size_t(size)/4);file.seekg(0);check(bool(file.read(reinterpret_cast<char*>(words.data()),size)));
+        ShaderCompileOptions options;options.vertexProjection=needsStereoProjection(words,false);check(options.vertexProjection);
+        const auto compiled=compileStereoShader(words,options);
+        check(compiled.vertexProjectionApplied==(i==2)); // Atlas vs camera, same MVP member.
+    }
     std::string unrelated="void main() { /* shared light data */ }";
     const auto untouched=unrelated;auto none=correctDoomLighting(unrelated);
     check(unrelated==untouched&&!none.clusters&&!none.worldPositions);

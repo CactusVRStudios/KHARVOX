@@ -2,6 +2,7 @@
 #include "ShaderCompiler.h"
 #include "ShaderProfile.h"
 #include "PipelineIdentity.h"
+#include "ShadowProjection.h"
 #include "StereoResources.h"
 #include "FrameProjection.h"
 #include "../native/NativeStereo.h"
@@ -78,7 +79,7 @@ template<class T>std::shared_ptr<State> state(T handle){
 #define COMMAND_BEGIN try {auto s=state(cb);std::lock_guard<std::recursive_mutex> lock(s->mutex);
 #define COMMAND_END }catch(const std::exception& e){commandFailure(e.what());}
 
-VkShaderModule compiledModule(const std::shared_ptr<State>& s,VkShaderModule original,uint64_t variant,bool& stereoCompute){
+VkShaderModule compiledModule(const std::shared_ptr<State>& s,VkShaderModule original,uint64_t variant,bool& stereoCompute,bool shadowProjection=false){
     const auto found=s->shaders.find(original);if(found==s->shaders.end())throw std::runtime_error("Untracked game shader module");
     const auto& words=found->second;const auto primary=profileHash(words.data(),uint32_t(words.size()*4));
     VkShaderStageFlagBits stage{};
@@ -87,14 +88,15 @@ VkShaderModule compiledModule(const std::shared_ptr<State>& s,VkShaderModule ori
     const auto replacement=loadProfileShader(s->profile,primary,variant,stage);
     const auto& input=replacement?replacement.words:words;
     stereoCompute=hasStereoStorageOutput(input);
-    const auto key=shaderKey(primary)+"_"+shaderKey(variant);
+    const bool sharedShadow=shadowProjection&&!replacement&&stage==VK_SHADER_STAGE_VERTEX_BIT;
+    const auto key=shaderKey(primary)+"_"+shaderKey(variant)+(sharedShadow?"_shadow":"");
     auto cached=s->compiled.find(key);if(cached!=s->compiled.end())return cached->second;
     ShaderCompileOptions options;options.computeStereo=stereoCompute&&!replacement;
     options.profileReplacement=bool(replacement);
-    options.vertexProjection=needsStereoProjection(input,bool(replacement));
+    options.vertexProjection=!sharedShadow&&needsStereoProjection(input,bool(replacement));
     auto shader=compileStereoShader(input,options);
     note("shader="+key+" stage="+std::to_string(stage)+" profile="+(replacement?"matched":"generic")+
-         " projection="+std::to_string(options.vertexProjection)+" stereoCompute="+std::to_string(stereoCompute)+
+         " projection="+std::to_string(shader.vertexProjectionApplied)+" sharedShadow="+std::to_string(sharedShadow)+" stereoCompute="+std::to_string(stereoCompute)+
          " clusters="+std::to_string(shader.clusterCorrections)+" world="+std::to_string(shader.worldCorrections));
     VkShaderModuleCreateInfo info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};info.codeSize=shader.words.size()*4;info.pCode=shader.words.data();
     VkShaderModule result{};auto r=FN(vkCreateShaderModule)(s->device,&info,nullptr,&result);
@@ -162,7 +164,7 @@ VKAPI_ATTR void VKAPI_CALL destroyPool(VkDevice d,VkDescriptorPool pool,const Vk
 VKAPI_ATTR VkResult VKAPI_CALL graphics(VkDevice d,VkPipelineCache cache,uint32_t count,const VkGraphicsPipelineCreateInfo* infos,const VkAllocationCallbacks* a,VkPipeline* out){RESULT_BEGIN
     for(uint32_t j=0;j<count;++j)out[j]=VK_NULL_HANDLE;
     for(uint32_t j=0;j<count;++j){auto info=infos[j];std::vector<VkPipelineShaderStageCreateInfo> stages(info.pStages,info.pStages+info.stageCount);const auto seed=pipelineSeed(info);
-        for(auto& stage:stages){const auto& code=s->shaders.at(stage.module);const auto variant=profileHash(code.data(),uint32_t(code.size()*4),seed);bool compute{};stage.module=compiledModule(s,stage.module,variant,compute);}info.pStages=stages.data();
+        for(auto& stage:stages){const auto& code=s->shaders.at(stage.module);const auto variant=profileHash(code.data(),uint32_t(code.size()*4),seed);bool compute{};stage.module=compiledModule(s,stage.module,variant,compute,doomShadowProjection(info));}info.pStages=stages.data();
         // Derivative batch indices must not escape their original batch.
         if(info.flags&VK_PIPELINE_CREATE_DERIVATIVE_BIT)throw std::runtime_error("SFS derivative pipelines need batch remapping");
         auto r=FN(vkCreateGraphicsPipelines)(d,cache,1,&info,a,&out[j]);if(r!=VK_SUCCESS)return r;

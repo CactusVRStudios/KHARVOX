@@ -31,4 +31,5 @@ CompiledShader compileStereoShader(const std::vector<uint32_t>& original,
                                   const ShaderCompileOptions& options={});
 bool hasStereoStorageOutput(const std::vector<uint32_t>& original);
 bool needsStereoProjection(const std::vector<uint32_t>& original,bool profileReplacement);
+bool needsHeadsetProjection(const std::vector<uint32_t>& words,bool profileReplacement,bool shadowPass);
 }

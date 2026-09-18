@@ -3,8 +3,8 @@
 namespace kharvox::sfs {
 // DOOM's profile supplies unshifted variants for biased, depth-writing shadow
 // draws and shifted variants of the same shader for camera depth. Use this
-// fallback only when no explicit ShaderSwap replacement was found: the profile
-// also contains deliberate HUD exceptions among biased depth-only pipelines.
+// classification for generic and unshifted replacement shaders. Explicit
+// stereo profile shaders still override it: some biased HUD passes need stereo.
 inline bool doomShadowProjection(const VkGraphicsPipelineCreateInfo& p) {
     return p.pRasterizationState && p.pDepthStencilState && p.pColorBlendState &&
         p.pRasterizationState->depthBiasEnable && !p.pRasterizationState->rasterizerDiscardEnable &&

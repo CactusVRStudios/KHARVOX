@@ -1,6 +1,8 @@
 #include <vulkan/vulkan.h>
 #include "../src/sfs/StereoResources.h"
 #include "../src/sfs/ShaderCompiler.h"
+#include "../src/sfs/ShaderIdentity.h"
+#include <filesystem>
 #ifdef KHARVOX_SFS_TEST_RUNTIME
 #include "../src/sfs/NativeSfs.h"
 #include "../src/native/NativeStereo.h"
@@ -25,9 +27,30 @@ static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL countingResolver(VkDevice device
 static void check(bool value,const char* reason){if(!value)throw std::runtime_error(reason);}
 static void ok(VkResult value){check(value==VK_SUCCESS,"Vulkan operation failed");}
 int main(int argc,char** argv){try{
+#ifdef KHARVOX_SFS_TEST_SHADOW_PROJECTION
+    const bool shadowPass=argc==3||(argc==4&&std::string(argv[3])=="profile-shadow");
+    struct TemporaryProfile {
+        std::filesystem::path directory,file;
+        ~TemporaryProfile(){std::error_code ec;if(!file.empty())std::filesystem::remove(file,ec);if(!directory.empty())std::filesystem::remove(directory,ec);}
+    } profile;
+    if(argc==4&&std::string(argv[3]).rfind("profile-",0)==0){
+        // Identical unshifted replacement, selected by the real runtime loader.
+        // Only pass classification distinguishes camera from shared shadow work.
+        std::ifstream f(argv[1],std::ios::binary|std::ios::ate);check(bool(f),"Profile fixture missing");
+        const auto size=f.tellg();check(size>=20&&size%4==0,"Invalid profile fixture");
+        std::vector<uint32_t> words(size_t(size)/4);f.seekg(0);check(bool(f.read(reinterpret_cast<char*>(words.data()),size)),"Profile fixture read failed");
+        profile.directory=std::filesystem::temp_directory_path()/("kharvox-profile-"+std::to_string(GetCurrentProcessId())+"-"+std::to_string(GetTickCount64()));
+        check(std::filesystem::create_directory(profile.directory),"Temporary profile already exists");
+        profile.file=profile.directory/(kharvox::sfs::shaderKey(kharvox::sfs::profileHash(words.data(),uint32_t(size)))+"_VS.vert.spv");
+        std::filesystem::copy_file(argv[1],profile.file);
+    }
+#endif
 #ifdef KHARVOX_SFS_TEST_RUNTIME
     SetEnvironmentVariableA("KHARVOX_SFS_NATIVE_PROBE","1");
     SetEnvironmentVariableA("KHARVOX_SFS_PROFILE",nullptr);
+#ifdef KHARVOX_SFS_TEST_SHADOW_PROJECTION
+    if(!profile.directory.empty())SetEnvironmentVariableW(L"KHARVOX_SFS_PROFILE",profile.directory.c_str());
+#endif
 #ifdef KHARVOX_SFS_TEST_AFFINE
     SetEnvironmentVariableA("KHARVOX_SFS_NATIVE_VR","1");
 #else
@@ -208,7 +231,7 @@ int main(int argc,char** argv){try{
     VkPipelineRasterizationStateCreateInfo raster{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};raster.lineWidth=1;VkPipelineMultisampleStateCreateInfo ms{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};ms.rasterizationSamples=VK_SAMPLE_COUNT_1_BIT;
     VkPipelineDepthStencilStateCreateInfo depth{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};depth.depthTestEnable=depth.depthWriteEnable=VK_TRUE;depth.depthCompareOp=VK_COMPARE_OP_ALWAYS;VkPipelineColorBlendStateCreateInfo blend{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
 #ifdef KHARVOX_SFS_TEST_SHADOW_PROJECTION
-    raster.depthBiasEnable=argc==3;depth.depthCompareOp=VK_COMPARE_OP_LESS_OR_EQUAL;
+    raster.depthBiasEnable=shadowPass;depth.depthCompareOp=VK_COMPARE_OP_LESS_OR_EQUAL;
 #endif
     VkGraphicsPipelineCreateInfo pi{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};pi.stageCount=2;pi.pStages=stages;pi.pVertexInputState=&vi;pi.pInputAssemblyState=&ia;pi.pViewportState=&vp;pi.pRasterizationState=&raster;pi.pMultisampleState=&ms;pi.pDepthStencilState=&depth;pi.pColorBlendState=&blend;pi.layout=pipelineLayout;pi.renderPass=pass;
     VkPipeline pipeline{};ok(vkCreateGraphicsPipelines(device,VK_NULL_HANDLE,1,&pi,nullptr,&pipeline));
@@ -287,7 +310,7 @@ int main(int argc,char** argv){try{
         expected=.625f;
 #endif
 #ifdef KHARVOX_SFS_TEST_SHADOW_PROJECTION
-        const auto boundary=argc==3?2u:pixel<64?6u:0u;
+        const auto boundary=shadowPass?2u:pixel<64?6u:0u;
         expected=(pixel%8)<boundary?1.f:pixel<64?.375f:.875f;
 #endif
         check(std::abs(static_cast<float*>(mapped)[pixel]-expected)<1e-6f,"Stereo sampling, mono clamping or affine eye correction produced incorrect pixels");}

@@ -132,6 +132,9 @@ if(BUILD_TESTING AND WIN32)
   add_test(NAME sfs-shadow-projection-gpu COMMAND KharvoxSfsShadowProjectionGpuTests "${sfs_fixtures}/shadow-projection.vert.spv" "${sfs_fixtures}/sampling.frag.spv")
   add_test(NAME sfs-camera-depth-projection-gpu COMMAND KharvoxSfsShadowProjectionGpuTests "${sfs_fixtures}/shadow-projection.vert.spv" "${sfs_fixtures}/sampling.frag.spv" camera)
   set_tests_properties(sfs-shadow-projection-gpu sfs-camera-depth-projection-gpu PROPERTIES TIMEOUT 30)
+  add_test(NAME sfs-unshifted-profile-camera-gpu COMMAND KharvoxSfsShadowProjectionGpuTests "${sfs_fixtures}/shadow-projection.vert.spv" "${sfs_fixtures}/sampling.frag.spv" profile-camera)
+  add_test(NAME sfs-unshifted-profile-shadow-gpu COMMAND KharvoxSfsShadowProjectionGpuTests "${sfs_fixtures}/shadow-projection.vert.spv" "${sfs_fixtures}/sampling.frag.spv" profile-shadow)
+  set_tests_properties(sfs-unshifted-profile-camera-gpu sfs-unshifted-profile-shadow-gpu PROPERTIES TIMEOUT 30)
   add_custom_command(OUTPUT "${sfs_fixtures}/particle-projection.vert.spv"
     COMMAND "${KHARVOX_GLSLANG_ROOT}/bin/glslang.exe" -V --target-env vulkan1.1
       "${PROJECT_SOURCE_DIR}/tests/shaders/sfs_particle_projection.vert" -o "${sfs_fixtures}/particle-projection.vert.spv"
@@ -147,8 +150,12 @@ if(BUILD_TESTING AND WIN32)
     COMMAND "${KHARVOX_GLSLANG_ROOT}/bin/glslang.exe" -V --target-env vulkan1.1
       "${PROJECT_SOURCE_DIR}/tests/shaders/sfs_packed_world.vert" -o "${sfs_fixtures}/packed-world.vert.spv"
     DEPENDS "${PROJECT_SOURCE_DIR}/tests/shaders/sfs_packed_world.vert" VERBATIM)
-  add_executable(KharvoxSfsLightingRewriteTests ../../tests/sfs_lighting_rewrite_tests.cpp "${sfs_fixtures}/material-atlas.vert.spv" "${sfs_fixtures}/shadow-projection.vert.spv" "${sfs_fixtures}/packed-world.vert.spv")
+  add_custom_command(OUTPUT "${sfs_fixtures}/inactive-projection.vert.spv"
+    COMMAND "${KHARVOX_GLSLANG_ROOT}/bin/glslang.exe" -V --target-env vulkan1.1
+      "${PROJECT_SOURCE_DIR}/tests/shaders/sfs_inactive_projection.vert" -o "${sfs_fixtures}/inactive-projection.vert.spv"
+    DEPENDS "${PROJECT_SOURCE_DIR}/tests/shaders/sfs_inactive_projection.vert" VERBATIM)
+  add_executable(KharvoxSfsLightingRewriteTests ../../tests/sfs_lighting_rewrite_tests.cpp "${sfs_fixtures}/material-atlas.vert.spv" "${sfs_fixtures}/shadow-projection.vert.spv" "${sfs_fixtures}/packed-world.vert.spv" "${sfs_fixtures}/inactive-projection.vert.spv")
   target_link_libraries(KharvoxSfsLightingRewriteTests PRIVATE KharvoxSfsCompiler)
   target_include_directories(KharvoxSfsLightingRewriteTests PRIVATE "${PROJECT_SOURCE_DIR}/third-party/vulkan-headers/include")
-  add_test(NAME sfs-lighting-rewrite COMMAND KharvoxSfsLightingRewriteTests "${sfs_fixtures}/material-atlas.vert.spv" "${sfs_fixtures}/shadow-projection.vert.spv" "${sfs_fixtures}/packed-world.vert.spv")
+  add_test(NAME sfs-lighting-rewrite COMMAND KharvoxSfsLightingRewriteTests "${sfs_fixtures}/material-atlas.vert.spv" "${sfs_fixtures}/shadow-projection.vert.spv" "${sfs_fixtures}/packed-world.vert.spv" "${sfs_fixtures}/inactive-projection.vert.spv")
 endif()

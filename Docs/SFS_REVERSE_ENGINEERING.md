@@ -872,3 +872,35 @@ conflicting source mounts. Headset reproduction is still required: a passing
 CPU test proves this source-selection defect, not the cause of every artifact.
 Validation: 119/119 CTests pass; launcher self-test passes. No new headset
 or gameplay run performed for Test18.
+
+## Test 19: unshifted profile shaders still need headset projection (2026-09-18)
+
+Tester reports residual climbing flicker, uneven-floor geometry seams, one-eye
+Praetor upgrade HUD, and distance/view-dependent dynamic light visibility in UAC.
+Exact Test 18 provenance and map/checkpoint are not yet confirmed. Existing local
+Test 16 logs cannot establish these reports' root causes.
+
+Confirmed defect: matched profile replacements without an active TV stereo UBO
+were excluded from all headset projection, even when their active MVP emits
+centered camera clip coordinates. The recorded c757868ee21edb47_b75073cf24d7ccd1
+UI pipeline had projection=0, unlike related UI pipelines. Camera passes now use
+active MVP/VP detection as fallback; biased shared shadow passes remain unshifted.
+Explicit stereo profile exceptions and the virtual material atlas guard remain.
+Unused MVP declarations do not enable projection (disabled cb1e40 profile effect).
+
+Audit: all 61 shipped profile vertex variants compile. Comparing Test 16 recorded
+variants (shadow classification recovered from their paired original mono shader
+keys), camera projection newly applies to c757868e...b75073cf (UI),
+5b61e966...d7977921 (flare), bafd968e...9c2239f9 (position-only geometry).
+No assertion that any specific notification, ceiling light or seam uses them.
+Audit output: out/beta096/test19-profile-audit/results.json.
+
+GPU readback tests load an actual hash-matched unshifted replacement through the
+runtime profile loader: asymmetric camera projection changes both eye boundaries,
+while the identical shader in a shared shadow pass stays unshifted. Inactive MVP
+and material-atlas guards are covered too. 121/121 tests pass before packaging.
+No changes to weapon placement or calibration in this test; Test 18 remains.
+Residual climbing/weapon jump and exact reported lighting/seams are unresolved.
+Also noted for follow-up: SFS currently does not virtualize query pool slots;
+old logs contain consecutive query IDs, but their render-pass multiview state is
+not logged. Do not equate this potential issue with the reported light defect.

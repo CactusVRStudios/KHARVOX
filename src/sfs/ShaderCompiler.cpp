@@ -225,6 +225,14 @@ bool hasStereoStorageOutput(const std::vector<uint32_t>& original){
         if(compiler.get_type(image.type_id).image.dim==spv::Dim2D&&!compiler.has_decoration(image.id,spv::DecorationNonWritable))return true;
     return false;
 }
+bool needsHeadsetProjection(const std::vector<uint32_t>& words,bool profileReplacement,bool shadowPass){
+    // A TV profile may intentionally remove separation from UI/mask geometry.
+    // No active stereo UBO does not imply that its centered MVP already uses
+    // the headset FOV. Keep explicit stereo exceptions in biased passes, but
+    // never apply this fallback to an unshifted shared shadow-map shader.
+    if(profileReplacement&&needsStereoProjection(words,true))return true;
+    return !shadowPass&&needsStereoProjection(words,false);
+}
 bool needsStereoProjection(const std::vector<uint32_t>& original,bool profileReplacement){
     spirv_cross::Compiler compiler(original);
     if(compiler.get_execution_model()!=spv::ExecutionModelVertex)return false;
@@ -236,9 +244,9 @@ bool needsStereoProjection(const std::vector<uint32_t>& original,bool profileRep
             const auto active=compiler.get_active_buffer_ranges(buffer.id);
             for(uint32_t i=0;i<type.member_types.size();++i){
                 const auto name=compiler.get_member_name(buffer.base_type_id,i);
-                if(name=="mvpmatrixw")return true;
                 bool used=false;for(const auto& range:active)used|=range.index==i;
                 if(!used)continue;
+                if(name=="mvpmatrixw")return true;
                 view|=name=="viewmatrixw";
                 projection|=name=="projectionmatrixw";
                 viewProjection|=name=="viewprojectionmatrixw";

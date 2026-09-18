@@ -3,17 +3,19 @@
 #include <fstream>
 #include <iostream>
 int main(int argc,char** argv){try{
-    if(argc<3){std::cerr<<"Usage: KharvoxSfsCompile source.spv output.spv [projection|profile] [ui]\n";return 2;}
+    if(argc<3){std::cerr<<"Usage: KharvoxSfsCompile source.spv output.spv [projection|profile|profile-shadow|mono] [ui]\n";return 2;}
     const auto size=std::filesystem::file_size(argv[1]);if(size<20||size%4||size>16*1024*1024)throw std::runtime_error("Invalid input size");
     std::vector<uint32_t> words(size/4);std::ifstream input(argv[1],std::ios::binary);
     if(!input.read(reinterpret_cast<char*>(words.data()),size))throw std::runtime_error("Read failed");
-    kharvox::sfs::ShaderCompileOptions options;options.vertexProjection=kharvox::sfs::needsStereoProjection(words,argc>3&&std::string(argv[3])=="profile")||(argc>3&&std::string(argv[3])=="projection");
+    const std::string mode=argc>3?argv[3]:"";
+    const bool profile=mode=="profile"||mode=="profile-shadow";
+    kharvox::sfs::ShaderCompileOptions options;options.vertexProjection=kharvox::sfs::needsHeadsetProjection(words,profile,mode=="profile-shadow")||mode=="projection";
     options.computeStereo=kharvox::sfs::hasStereoStorageOutput(words);
-    options.profileReplacement=argc>3&&std::string(argv[3])=="profile";
+    options.profileReplacement=profile;
     options.screenSpaceUi=argc>4&&std::string(argv[4])=="ui";
     options.monoscopicView=argc>3&&std::string(argv[3])=="mono";
     if(options.monoscopicView)options.computeStereo=false;
-    if(argc>3&&std::string(argv[3])=="profile")options.computeStereo=false;
+    if(profile)options.computeStereo=false;
     auto result=kharvox::sfs::compileStereoShader(words,options);
     std::ofstream output(argv[2],std::ios::binary);output.write(reinterpret_cast<const char*>(result.words.data()),result.words.size()*4);
     if(!output)throw std::runtime_error("Write failed");

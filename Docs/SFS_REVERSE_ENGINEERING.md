@@ -500,3 +500,31 @@ source-ring-baseline.log and the final packaged-runtime probe.
 Equal performance or complete equivalence with Vk3DVision has NOT been
 established. Comparable gameplay at matching per-eye resolution/quality and a
 working reference-provider baseline remain necessary to establish that claim.
+## Source Ring test 2: eye-sized rendering and GPU copy timing
+
+The VDXR/RTX 4080 SUPER report used 100% scale, 4800x2700 per source
+layer, versus 2496x2688 per XR eye. The legacy source sizing kept a 16:9
+carrier and rounded height to multiples of 18 (2688 -> 2700 -> width 4800).
+This was inherited from the AER camera carrier, not requested supersampling.
+
+Source Ring now sizes each source layer to the maximum recommended eye width
+and height, applies the selected linear scale and rounds to even pixels.
+Its frame uniforms project directly into each eye's actual FOV; submission
+keeps that same FOV and therefore no longer crops a wide intermediate image.
+Ordinary SFS and AER retain their prior sizing/projection. For the reported
+VDXR configuration this removes 48.23% of source pixels, not necessarily that
+percentage of total GPU time. Physical-headset visual confirmation is pending.
+
+Optional Vulkan timestamps in the XR command buffer measure its copy/hand/HUD
+work independently of the CPU submit-to-completion interval. Results are read
+without WAIT_BIT, only after the existing completion boundary; unsupported
+queues skip timing. Source Ring also enables existing parameter/device-idle
+CPU timings. These do NOT directly measure every DOOM render pass or establish
+that device-idle is the bottleneck. No retirement fence was removed, and full
+multi-frame resource pipelining remains unfinished.
+
+Validation: 116/116 tests, including repeated real-GPU timestamp reads alongside
+both-eye pixel checks and existing asymmetric projection tests. Packaged-runtime
+simulator menu smoke test produced timestamp samples and successful XR frames.
+This is not gameplay or VDXR hardware performance verification.
+Artifact: out/beta096/KHARVOX-0.96-SFS-Source-Ring-NVIDIA-test2.zip.

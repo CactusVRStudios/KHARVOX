@@ -943,7 +943,9 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateInstance(const VkInstanceCreateInfo* ci,c
             TerminateProcess(GetCurrentProcess(),0x4B480002);
             for(;;)Sleep(INFINITE);
         }
-        sourceExtent=kharvox::independentSourceExtent(eyeWidth,eyeHeight,configuredRenderScale(),INT_MAX);
+        sourceExtent=kharvox::sfs::sourceRingRequested()
+            ?kharvox::stereoEyeSourceExtent(eyeWidth,eyeHeight,configuredRenderScale(),INT_MAX)
+            :kharvox::independentSourceExtent(eyeWidth,eyeHeight,configuredRenderScale(),INT_MAX);
         if(!sourceExtent.width)return VK_ERROR_INITIALIZATION_FAILED;
         if(!kharvox::installIndependentEngineSize(sourceExtent.width,sourceExtent.height,kharvox::sfs::vrEnabled())){logLine("[INDEPENDENT-SURFACE] supported engine size accessors could not be installed");return VK_ERROR_INITIALIZATION_FAILED;}
         logLine(std::string("[WSI-STARTUP] engine render size accessors armed; presentation=")+(coreSurface?"core-sized-window":"scaled-small-window"),true);

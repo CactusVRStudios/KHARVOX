@@ -1,5 +1,6 @@
 #include <windows.h>
 #include "../src/sfs/SourceRing.h"
+#include "../src/openxr/CopyGpuTiming.h"
 #ifdef KHARVOX_SFS_RING_RUNTIME
 #include "../src/sfs/NativeSfs.h"
 #endif
@@ -89,9 +90,12 @@ int main(){try{
  VkSemaphoreCreateInfo semaphoreInfo{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};VkSemaphore acquired{},rendered{};ok(vkCreateSemaphore(device,&semaphoreInfo,nullptr,&acquired));ok(vkCreateSemaphore(device,&semaphoreInfo,nullptr,&rendered));
  VkFenceCreateInfo fenceInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};VkFence completed{},acquireFence{};ok(vkCreateFence(device,&fenceInfo,nullptr,&completed));ok(vkCreateFence(device,&fenceInfo,nullptr,&acquireFence));
  auto present=[&](uint32_t index,bool consumed,uint32_t waits){VkPresentInfoKHR info{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};info.swapchainCount=1;info.pSwapchains=&chain;info.pImageIndices=&index;info.waitSemaphoreCount=waits;info.pWaitSemaphores=waits?&rendered:nullptr;VkResult perImage=VK_NOT_READY;info.pResults=&perImage;ok(ring.present(queue,info,consumed));ok(perImage);};
+ VkPhysicalDeviceProperties timingProperties{};vkGetPhysicalDeviceProperties(physical,&timingProperties);
+ kharvox::CopyGpuTiming timing;timing.initialize(device,vkGetDeviceProcAddr,timingProperties.limits.timestampPeriod,families[family].timestampValidBits);
+ check(timing.pool!=VK_NULL_HANDLE,"GPU timestamp initialization failed");
  for(uint32_t frame=0;frame<20;++frame){
   uint32_t index=UINT32_MAX;ok(ring.acquire(chain,UINT64_MAX,acquired,acquireFence,&index));check(index==frame%2,"Ring rotation broken");ok(vkWaitForFences(device,1,&acquireFence,VK_TRUE,10000000000ull));ok(vkResetFences(device,1,&acquireFence));
-  ok(vkResetCommandBuffer(command,0));VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};ok(vkBeginCommandBuffer(command,&begin));
+  ok(vkResetCommandBuffer(command,0));VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};ok(vkBeginCommandBuffer(command,&begin));timing.begin(command);
   auto barrier=[&](VkImageLayout oldLayout,VkImageLayout newLayout,VkAccessFlags src,VkAccessFlags dst){VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};b.image=images[index];b.oldLayout=oldLayout;b.newLayout=newLayout;b.srcAccessMask=src;b.dstAccessMask=dst;b.srcQueueFamilyIndex=b.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;b.subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,2};vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,0,0,nullptr,0,nullptr,1,&b);};
 #ifdef KHARVOX_SFS_RING_RUNTIME
   VkClearValue initialClear{};VkRenderPassBeginInfo passBegin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};passBegin.renderPass=pass;passBegin.framebuffer=framebuffers[index];passBegin.renderArea.extent={4,4};passBegin.clearValueCount=1;passBegin.pClearValues=&initialClear;
@@ -105,11 +109,12 @@ int main(){try{
   barrier(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,VK_ACCESS_TRANSFER_WRITE_BIT,VK_ACCESS_TRANSFER_READ_BIT);
   VkBufferImageCopy copy{};copy.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,2};copy.imageExtent={4,4,1};vkCmdCopyImageToBuffer(command,images[index],VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,buffer,1,&copy);
   barrier(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,VK_IMAGE_LAYOUT_GENERAL,VK_ACCESS_TRANSFER_READ_BIT,VK_ACCESS_MEMORY_READ_BIT);
-  VkMemoryBarrier host{VK_STRUCTURE_TYPE_MEMORY_BARRIER};host.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;host.dstAccessMask=VK_ACCESS_HOST_READ_BIT;vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&host,0,nullptr,0,nullptr);ok(vkEndCommandBuffer(command));
+  VkMemoryBarrier host{VK_STRUCTURE_TYPE_MEMORY_BARRIER};host.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;host.dstAccessMask=VK_ACCESS_HOST_READ_BIT;vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&host,0,nullptr,0,nullptr);timing.end(command);ok(vkEndCommandBuffer(command));
   VkPipelineStageFlags stage=VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;VkSubmitInfo draw{VK_STRUCTURE_TYPE_SUBMIT_INFO};draw.waitSemaphoreCount=1;draw.pWaitSemaphores=&acquired;draw.pWaitDstStageMask=&stage;draw.commandBufferCount=1;draw.pCommandBuffers=&command;draw.signalSemaphoreCount=1;draw.pSignalSemaphores=&rendered;ok(vkQueueSubmit(queue,1,&draw,VK_NULL_HANDLE));
   if(frame%2){VkSubmitInfo consume{VK_STRUCTURE_TYPE_SUBMIT_INFO};consume.waitSemaphoreCount=1;consume.pWaitSemaphores=&rendered;consume.pWaitDstStageMask=&stage;ok(vkQueueSubmit(queue,1,&consume,VK_NULL_HANDLE));}
   present(index,frame%2,1);
   VkSubmitInfo finish{VK_STRUCTURE_TYPE_SUBMIT_INFO};ok(vkQueueSubmit(queue,1,&finish,completed));ok(vkWaitForFences(device,1,&completed,VK_TRUE,10000000000ull));ok(vkResetFences(device,1,&completed));
+  double gpuMs{};check(timing.completed(gpuMs)&&std::isfinite(gpuMs)&&gpuMs>=0,"GPU timestamps unavailable after completion");check(!timing.completed(gpuMs),"GPU timestamp sample reused");
   void* mapped{};ok(vkMapMemory(device,readback,0,128,0,&mapped));auto bytes=static_cast<unsigned char*>(mapped);
   for(uint32_t eye=0;eye<2;++eye)for(uint32_t pixel=0;pixel<16;++pixel){const auto offset=eye*64+pixel*4;check(std::abs(int(bytes[offset])-int(std::lround(red*255)))<=1,"Stale frame pixels");check(bytes[offset+1]==eye*255,"Wrong eye layer");}
   vkUnmapMemory(device,readback);
@@ -122,6 +127,7 @@ int main(){try{
 #ifdef KHARVOX_SFS_RING_RUNTIME
  for(unsigned n=0;n<2;++n){vkDestroyFramebuffer(device,framebuffers[n],nullptr);vkDestroyImageView(device,views[n],nullptr);}vkDestroyRenderPass(device,pass,nullptr);
 #endif
+ timing.shutdownAfterCompletion();
  ok(ring.destroy(chain));ok(ring.destroy(replacement));
  vkDestroyFence(device,completed,nullptr);vkDestroyFence(device,acquireFence,nullptr);vkDestroySemaphore(device,acquired,nullptr);vkDestroySemaphore(device,rendered,nullptr);vkDestroyCommandPool(device,pool,nullptr);vkDestroyBuffer(device,buffer,nullptr);vkFreeMemory(device,readback,nullptr);
 #ifdef KHARVOX_SFS_RING_RUNTIME

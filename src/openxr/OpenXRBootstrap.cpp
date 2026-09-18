@@ -1,6 +1,7 @@
 #include "../common/RuntimeLog.h"
 #include "../common/VulkanSfs.h"
 #include "../sfs/NativeSfs.h"
+#include "CopyGpuTiming.h"
 #include "../common/AerRenderOrder.h"
 #include "../common/AerEyeBasis.h"
 #include "../common/AerCinematicProjection.h"
@@ -160,6 +161,7 @@ struct State {
     bool physicalIdentityQueryEnabled{};
     VkInstance vkInstance{}; VkPhysicalDevice physical{},xrPhysical{}; VkDevice device{}; VkQueue queue{}; uint32_t queueFamily{},queueIndex{},runtimeMaxVulkanApiVersion{}; KharvoxVulkanDispatch vk{};
     VkCommandPool commandPool{}; VkCommandBuffer commandBuffer{}; VkFence copyFence{};
+    kharvox::CopyGpuTiming sfsCopyTiming;
     std::unordered_map<VkSwapchainKHR,DoomSwapchain> doomSwapchains; DoomSwapchain retiredCompatibleDoomSwapchain{}; bool retiredCompatibleDoomSwapchainValid{}; ULONGLONG retiredCompatibleDoomSwapchainAt{}; VkSwapchainKHR startupActiveDoomSwapchain{}; bool vdxrSessionDeferralLogged{}; std::array<EyeSwapchain,2> eyes; EyeSwapchain hudQuad; uint32_t hudSurfaceWidth{},hudSurfaceHeight{}; float hudSafeTanHalfHorizontal{},hudSafeTanHalfVertical{}; int64_t hudQuadFormat{}; uint64_t hudQuadCopiedFrames{}; bool hudQuadRuntimeFailureLogged{}; std::array<XrView,2> views{{{XR_TYPE_VIEW},{XR_TYPE_VIEW}}};
     HeadPose head{}; XrVector3f trackingHeadPosition{}; bool trackingHeadPositionValid{}; XrQuaternionf headZero{0,0,0,1}; XrVector3f headZeroPosition{}; bool headZeroValid{}; bool headZeroPositionValid{}; bool headCameraArmed{true}; bool nativeMenuCameraPoseHeld{}; bool quadMode{true}; bool centeredQuadTransitionPending{}; unsigned centeredQuadFramesRemaining{}; bool cinewindowFollowsHeadset{cinewindowFollowsHeadsetRequested()}; bool cinewindowPresentationActive{}; bool cinewindowFixedPoseFallbackLogged{}; kharvox::CinewindowAnchor cinewindowAnchor{}; kharvox::CinewindowCaptureReadiness cinewindowCaptureReadiness{}; bool hudEverythingQuad{},hudEverythingQuadAvailable{}; bool hudEverythingQuadKeyDown{}; bool steamQuadOnly{}; bool steamMetaCompatibilityMode{}; bool presentationKeyDown{}; bool presentationManualOverride{}; XrTime lastSteamDisplayTime{}; uint64_t steamDuplicateFrames{},steamLinkReprojectedFrames{};
     uint64_t steamWaitCalls{},steamBeginCalls{},steamEndCalls{},steamDiscardedBegins{},steamEndFailures{},steamLocalOrderViolations{};bool steamFrameBegun{};
@@ -3293,7 +3295,7 @@ static void initializeOpenXR(VkInstance instance){std::lock_guard<std::mutex>l(m
     bool graphics=false;if(s.enable2)graphics=load("xrGetVulkanGraphicsRequirements2KHR",s.requirements2)&&load("xrGetVulkanGraphicsDevice2KHR",s.graphicsDevice2)&&load("xrCreateVulkanInstanceKHR",s.createVulkanInstance)&&load("xrCreateVulkanDeviceKHR",s.createVulkanDevice);else graphics=load("xrGetVulkanGraphicsRequirementsKHR",s.requirements1)&&load("xrGetVulkanGraphicsDeviceKHR",s.graphicsDevice1)&&load("xrGetVulkanInstanceExtensionsKHR",s.instanceExtensions)&&load("xrGetVulkanDeviceExtensionsKHR",s.deviceExtensions);log(std::string("Vulkan XR functions ")+(graphics?"ready":"INCOMPLETE"));if(s.enable2){log("XR_KHR_vulkan_enable2 active");log(std::string("xrCreateVulkanInstanceKHR ")+(s.createVulkanInstance?"available":"MISSING"));log(std::string("xrCreateVulkanDeviceKHR ")+(s.createVulkanDevice?"available":"MISSING"));log(std::string("xrGetVulkanGraphicsDevice2KHR ")+(s.graphicsDevice2?"available":"MISSING"));}if(!graphics)return;XrSystemGetInfo gi{XR_TYPE_SYSTEM_GET_INFO};gi.formFactor=XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;log("calling xrGetSystem");r=s.getSystem(s.instance,&gi,&s.system);log("xrGetSystem result="+std::to_string(r)+" system="+std::to_string(s.system));if(XR_SUCCEEDED(r)){XrGraphicsRequirementsVulkanKHR requirements{XR_TYPE_GRAPHICS_REQUIREMENTS_VULKAN_KHR};const XrResult requirementsResult=s.enable2?s.requirements2(s.instance,s.system,&requirements):s.requirements1(s.instance,s.system,&requirements);if(XR_SUCCEEDED(requirementsResult)){s.runtimeMaxVulkanApiVersion=VK_MAKE_API_VERSION(0,XR_VERSION_MAJOR(requirements.maxApiVersionSupported),XR_VERSION_MINOR(requirements.maxApiVersionSupported),XR_VERSION_PATCH(requirements.maxApiVersionSupported));log("Runtime Vulkan API range min="+std::to_string(XR_VERSION_MAJOR(requirements.minApiVersionSupported))+"."+std::to_string(XR_VERSION_MINOR(requirements.minApiVersionSupported))+" max="+std::to_string(XR_VERSION_MAJOR(requirements.maxApiVersionSupported))+"."+std::to_string(XR_VERSION_MINOR(requirements.maxApiVersionSupported)));}else log("Runtime Vulkan requirements query failed "+result(requirementsResult));}if(!s.enable2&&XR_SUCCEEDED(r)){uint32_t size=0;s.instanceExtensions(s.instance,s.system,0,&size,nullptr);std::vector<char>b(size);s.instanceExtensions(s.instance,s.system,size,&size,b.data());log(std::string("Required instance extensions: ")+b.data());size=0;s.deviceExtensions(s.instance,s.system,0,&size,nullptr);b.assign(size,0);s.deviceExtensions(s.instance,s.system,size,&size,b.data());log(std::string("Required device extensions: ")+b.data());}}
 
 void KharvoxXRShutdownHaptics(){clearXInputHapticState();KharvoxPsvr2SubmitTrigger(kharvox::psvr2::offCommand(s.leftHanded,kharvox::psvr2::TriggerOffReason::SessionEnd));KharvoxPsvr2IpcRequestStop();KharvoxBhapticsIpcRequestStop();}
-void KharvoxXRDeviceDestroyed(){std::lock_guard<std::mutex>l(mutex);s.handRenderer.shutdown();}
+void KharvoxXRDeviceDestroyed(){std::lock_guard<std::mutex>l(mutex);s.handRenderer.shutdown();if(s.sfsCopyTiming.pool){if(s.vk.queueWaitIdle(s.queue)==VK_SUCCESS)s.sfsCopyTiming.shutdownAfterCompletion();}}
 
 bool KharvoxXRMediationEnabled(){return GetFileAttributesW(kharvox::runtimePath(L"enable_xr_mediated").c_str())!=INVALID_FILE_ATTRIBUTES;}
 bool KharvoxXRMediationReentry(){return mediationReentry;}
@@ -4159,7 +4161,9 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
             nativeFrame.pose.source,next.source,nativeFrame.pose.viewSpace,next.viewSpace);
         if(sfsBackend){
             next.exactProjectionCrop=true;
-            for(size_t e=0;e<2;++e){next.views[e].fov=locatedImmersiveRenderFov;next.submitFov[e]=s.views[e].fov;}
+            // Owned sources have eye-shaped extents: project directly to each
+            // eye instead of rendering a wide carrier and cropping it again.
+            for(size_t e=0;e<2;++e){next.views[e].fov=kharvox::sfs::sourceRingActive(s.device)?s.views[e].fov:locatedImmersiveRenderFov;next.submitFov[e]=s.views[e].fov;}
             if(next.viewSpace)next.head={{0,0,0,1},{0,0,0}};
             else if(next.cinematic&&s.immersiveCinematicLayerPositionHeld)next.head.position=s.immersiveCinematicLayerPosition;
             kharvox::sfs::prepare(s.device,next,locatedImmersiveRenderFov);
@@ -4654,6 +4658,15 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
     VkCommandBufferBeginInfo cbi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     cbi.flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     s.vk.beginCommandBuffer(s.commandBuffer,&cbi);
+    if(sfsBackend){
+        if(!s.sfsCopyTiming.pool){
+            VkPhysicalDeviceProperties properties{};s.vk.getPhysicalDeviceProperties(s.physical,&properties);
+            uint32_t count{};s.vk.getPhysicalDeviceQueueFamilyProperties(s.physical,&count,nullptr);
+            std::vector<VkQueueFamilyProperties> families(count);s.vk.getPhysicalDeviceQueueFamilyProperties(s.physical,&count,families.data());
+            if(s.queueFamily<count)s.sfsCopyTiming.initialize(s.device,s.vk.getDeviceProcAddr,properties.limits.timestampPeriod,families[s.queueFamily].timestampValidBits);
+        }
+        s.sfsCopyTiming.begin(s.commandBuffer);
+    }
     const auto nativeOwnerGpuSpan=nativeFrameValid&&!sfsBackend?kharvox::native::beginOwnerGpuTiming(s.commandBuffer):UINT32_MAX;
     VkImage src=it->second.images[srcIndex];
     pollEyeCapture();
@@ -5154,6 +5167,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
     const bool nativeWatchRecorded=!sfsBackend&&nativeFrameValid&&!nativeFrame.rightEyeBlackDiagnostic&&updateEyeSwapchains&&kharvox::native::recordPairWatch(s.device,s.commandBuffer,nativeFrame);
     if(!sfsBackend&&nativeFrameValid&&!nativeFrame.rightEyeBlackDiagnostic)kharvox::native::recordShadowHistory(s.commandBuffer,nativeFrame);
     kharvox::native::endOwnerGpuTiming(nativeOwnerGpuSpan);
+    if(sfsBackend)s.sfsCopyTiming.end(s.commandBuffer);
     const VkResult copyRecordResult=s.vk.endCommandBuffer(s.commandBuffer);
     if(nativeFrameValid&&copyRecordResult!=VK_SUCCESS)kharvox::native::fail("Native XR copy command recording failed; resources retained");
     VkSemaphore afwSignalSemaphore{};uint64_t afwSignalValue{};const bool afwSignalPrepared=false;
@@ -5554,6 +5568,17 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
                 +" endFrameMs="+std::to_string(performanceMilliseconds(nativeEndAt,nativeEndDone))
                 +" submitToCompletionMs="+std::to_string(performanceMilliseconds(nativeSubmitDone,nativeCompleteAt))
                 +" completionVerified="+std::to_string(copyLifetime.canRetireResources())+" end="+result(r));
+    }
+    if(sfsBackend&&copyLifetime.canRetireResources()){
+        double gpuMs{};
+        if(s.sfsCopyTiming.completed(gpuMs)){
+            static uint64_t samples{};static double total{},maximum{};
+            total+=gpuMs;maximum=std::max(maximum,gpuMs);
+            if(++samples==120){
+                log("[SFS-GPU] xrCommandsMeanMs="+std::to_string(total/120.0)+" xrCommandsMaxMs="+std::to_string(maximum)+" samples=120 scope=copy+hands+hud excludes-prior-game-work");
+                samples=0;total=maximum=0;
+            }
+        }
     }
     if(!sfsBackend&&nativeFrameValid)kharvox::native::xrPresented(nativeFrame.pose.serial,r,!s.quadMode);
     if(XR_SUCCEEDED(r)){

@@ -367,7 +367,7 @@ bool sourceRingRequested(){static const bool enabled=[] {char value[8]{};return 
 bool configureSourceRing(VkDevice d,PFN_vkGetDeviceProcAddr resolver,const VkPhysicalDeviceMemoryProperties& memory,VkQueue queue,void(*lock)(),void(*unlock)()){
     auto s=state(d);std::lock_guard<std::recursive_mutex> guard(s->mutex);
     auto sources=std::make_unique<SourceRing>();if(!sources->initialize(d,queue,resolver,memory,lock,unlock))return false;
-    s->sources=std::move(sources);note("source ring ACTIVE: application-owned stereo images (engine-requested count), GENERAL layout, same-device OpenXR, desktop WSI bypass");return true;
+    s->sources=std::move(sources);s->profileTiming=true;note("source ring ACTIVE: application-owned stereo images (engine-requested count), GENERAL layout, same-device OpenXR, desktop WSI bypass");return true;
 }
 bool sourceRingActive(VkDevice d){if(!nativeProbeEnabled())return false;try{return bool(state(d)->sources);}catch(const std::exception&){return false;}}
 bool sourceSwapchain(VkDevice d,VkSwapchainKHR chain){return sourceRingActive(d)&&state(d)->sources->owns(chain);}

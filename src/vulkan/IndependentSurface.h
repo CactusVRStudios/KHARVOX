@@ -5,6 +5,15 @@
 #include <cstdint>
 
 namespace kharvox {
+// SFS projects each array layer directly into an eye. It does not need the
+// 16:9 carrier used by the alternating-eye camera path.
+inline VkExtent2D stereoEyeSourceExtent(uint32_t width,uint32_t height,float scale,uint32_t limit) {
+    if(!width||!height||!std::isfinite(scale)||scale<=0)return {};
+    const double w=std::ceil(double(width)*scale/2.0)*2.0;
+    const double h=std::ceil(double(height)*scale/2.0)*2.0;
+    if(w>limit||h>limit||w<2||h<2)return {};
+    return {uint32_t(w),uint32_t(h)};
+}
 inline bool headsetSizedSource(bool externalSfs, bool nativeProbe, bool nativeVr) {
     return !externalSfs && (!nativeProbe || nativeVr);
 }

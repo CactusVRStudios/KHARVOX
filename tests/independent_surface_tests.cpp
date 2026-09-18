@@ -4,6 +4,13 @@
 
 void require(bool value){if(!value)std::abort();}
 int main(){
+    const auto eye=kharvox::stereoEyeSourceExtent(2496,2688,1.f,16384);
+    require(eye.width==2496&&eye.height==2688);
+    const auto scaledEye=kharvox::stereoEyeSourceExtent(2496,2688,0.5f,16384);
+    require(scaledEye.width==1248&&scaledEye.height==1344);
+    require(!kharvox::stereoEyeSourceExtent(2496,2688,10.f,16384).width);
+    require(!kharvox::stereoEyeSourceExtent(0,2688,1.f,16384).width);
+    require(!kharvox::stereoEyeSourceExtent(2496,2688,std::numeric_limits<float>::infinity(),16384).width);
     require(kharvox::headsetSizedSource(false,false,false)); // AER
     require(kharvox::headsetSizedSource(false,true,true)); // native SFS VR
     require(!kharvox::headsetSizedSource(false,true,false)); // desktop probe

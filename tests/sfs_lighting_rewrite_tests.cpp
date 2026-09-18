@@ -7,16 +7,21 @@
 using namespace kharvox::sfs;
 static void check(bool b){if(!b)throw std::runtime_error("Lighting rewrite regression");}
 int main(int argc,char** argv){try{
-    check(argc==3);
-    for(int i=1;i<3;++i){
+    check(argc==4);
+    for(int i=1;i<4;++i){
         std::ifstream file(argv[i],std::ios::binary|std::ios::ate);check(bool(file));const auto size=file.tellg();check(size>=20&&size%4==0);
         std::vector<uint32_t> words(size_t(size)/4);file.seekg(0);check(bool(file.read(reinterpret_cast<char*>(words.data()),size)));
         ShaderCompileOptions options;options.vertexProjection=needsStereoProjection(words,false);check(options.vertexProjection);
         const auto compiled=compileStereoShader(words,options);
-        check(compiled.vertexProjectionApplied==(i==2)); // Atlas vs camera, same MVP member.
+        check(compiled.vertexProjectionApplied==(i!=1)); // Atlas vs camera, same MVP member.
         options.screenSpaceUi=true;
         const auto ui=compileStereoShader(words,options);
         check(ui.screenSpaceUiApplied==(i==2));
+        if(i==3){
+            check(ui.vertexProjectionApplied);
+            check(ui.glsl.find("if (gl_Position.w > 8.0)")==std::string::npos);
+            check(ui.glsl.find("gl_Position += khSfsProjection.eyeTranslation[gl_ViewIndex];")!=std::string::npos);
+        }
         if(i==2){
             const auto fov=ui.glsl.find("gl_Position = khSfsProjection.clipFromCenter[gl_ViewIndex] * gl_Position;");
             const auto ipd=ui.glsl.find("if (gl_Position.w > 8.0) gl_Position += khSfsProjection.eyeTranslation[gl_ViewIndex];");

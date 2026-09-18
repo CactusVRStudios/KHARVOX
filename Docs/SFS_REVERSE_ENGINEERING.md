@@ -733,3 +733,24 @@ headset visual fix or performance gain is claimed from these automated tests.
 A new simulator run is deliberately omitted while the user's DOOM is running.The final audit compiled 722 modules (647 captured originals and 75 profile
 replacements) without errors, including runtime-equivalent UI options. Six
 original SSDO modules matched the complete reconstruction/projection pair.
+## Test 9: packed world depth incorrectly treated as HUD (2026-09-18)
+
+User clarified the Argent Energy Tower grating becomes black only while standing
+on it, with the dark region moving with the head. This does not establish a
+shadow-map failure; live eye images remain unavailable. Test8 logs confirm the
+SSDO correction installed, so that change alone did not resolve the report.
+
+Found a separate concrete classification error: original shader family
+5d8a0b69a38eb2a0 is packed virtual-textured geometry (vertexxyzscale, in_VmtrTC),
+but exact replacement 37b4725b9f3bfe03 uses a UI vertex layout. The active generic
+variant 673629e185c7ad71 inherited the family-wide screenUi flag and skipped IPD
+below clip-W 8. This can mismatch near world depth against other material passes.
+Classify the compiled source: packed virtual-textured geometry keeps full world
+projection. The real UI replacement keeps the HUD exception; unshifted shadow
+replacement 1613515c70b06cc6 and atlas exclusion remain unchanged.
+
+119/119 tests passed, including a new packed-world compiler regression fixture.
+All 23 affected original/profile UI-family modules compiled; inspected the real
+5d8a generic output (unconditional IPD) and UI replacement (conditional IPD).
+The specific grating scene still requires headset verification; no assertion
+that this explains every black surface, and no measured performance change.

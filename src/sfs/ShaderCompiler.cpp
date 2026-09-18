@@ -130,7 +130,12 @@ CompiledShader compileStereoShader(const std::vector<uint32_t>& original,const S
         source.find("gl_Position = vec4((atlasTilePos * 2.0) - vec2(1.0), 0.0, 1.0);")!=std::string::npos;
     const bool vertexProjection=request.vertexProjection&&!atlasPosition;
     result.vertexProjectionApplied=vertexProjection;
-    result.screenSpaceUiApplied=vertexProjection&&request.screenSpaceUi;
+    // The 5d8a profile family also contains packed, virtual-textured world
+    // geometry. Its near-camera depth pass must retain IPD even below the HUD
+    // clip-W threshold, or depth and material coverage diverge underfoot.
+    const bool packedWorld=source.find(".vertexxyzscale")!=std::string::npos&&
+        source.find("in_VmtrTC")!=std::string::npos;
+    result.screenSpaceUiApplied=vertexProjection&&request.screenSpaceUi&&!packedWorld;
     // Reconstruct the profile's horizontal clip correction in affine form.
     // stereo.z is KHARVOX's intercept. Also correct the two supplied fog variants
     // which subtract stereo.x rather than the convergence field in that term.
@@ -188,7 +193,7 @@ CompiledShader compileStereoShader(const std::vector<uint32_t>& original,const S
             // asymmetric FOV transform. Equal clip coordinates in both eyes
             // are different viewing rays and cause binocular double images.
             source+="gl_Position = khSfsProjection.clipFromCenter[gl_ViewIndex] * gl_Position;\n";
-            if(request.screenSpaceUi)source+="if (gl_Position.w > 8.0) ";
+            if(result.screenSpaceUiApplied)source+="if (gl_Position.w > 8.0) ";
             source+="gl_Position += khSfsProjection.eyeTranslation[gl_ViewIndex];\n";
         }
         source+="}\n";

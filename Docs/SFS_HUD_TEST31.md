@@ -40,3 +40,14 @@ Swap the required owner/scale pairs while preserving the calibrated slot indices
 Bottom and Objective remain excluded. Tests now use these observed tuples.
 The read-only inspection did not patch or stop the running game.
 
+
+## Test 34 - Keep near-camera panels rigidly hand-bound
+The Test31 guard moved the panel forward by its rotation-dependent projected
+half-extents. Hand rotation therefore introduced additional camera-relative
+translation. Remove that translation entirely. Measure nearest corner depth
+without mutating position or axes; hide unsafe panels and restore them after
+a 2 cm recovery margin. Visibility is independent per panel and reset per level.
+Calibration, native-owner filtering and free SFS AA remain unchanged.
+Tests verify immutable centers, tilted corner depth and hide/restore hysteresis.
+123 CTests and launcher self-test passed. Headset confirmation is pending.
+

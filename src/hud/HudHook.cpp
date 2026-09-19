@@ -104,6 +104,7 @@ struct PendingHudSubmission {
     bool active{};
     bool crosshair{};
     bool offhand{};
+    int offhandSurface{-1};
     float offhandWidth{};
     std::array<float,9> offhandAxis{};
     bool offscreen{};
@@ -151,7 +152,7 @@ std::mutex offhandRenderMutex;
 kharvox::OffhandHudRenderFrame offhandRenderFrame;
 std::mutex offhandHudMutex;
 bool offhandCanvasHookReady{};
-struct OffhandCanvasSubmission {const void* entity{};float center[3]{},axis[9]{},width{};};
+struct OffhandCanvasSubmission {const void* entity{};float center[3]{},axis[9]{},width{};int surface{-1};};
 thread_local OffhandCanvasSubmission offhandCanvasSubmission;
 thread_local const void* suppressedOffhandCanvas{};
 
@@ -586,10 +587,26 @@ void __fastcall offhandHudCanvasSize(void* entity,int width,int height,float ext
     suppressedOffhandCanvas=nullptr;
     if(suppressed){originalHudCanvasSize(entity,width,height,0,0);return;}
     if(caller==0xF922A7&&pending.entity==entity&&width==512&&height==300){
-        float eye[3]{},headAxis[9]{};
-        if(!KharvoxCameraGetHudCenterRenderPose(eye,headAxis)
-            ||!kharvox::keepOffhandHudInFront(pending.center,pending.axis,pending.width,
-                float(width)/float(height),eye,headAxis,std::max(10.f,.15f*hudWorldUnitsPerMeter))){
+        float eye[3]{},headAxis[9]{},nearest{};
+        const bool measured=KharvoxCameraGetHudCenterRenderPose(eye,headAxis)
+            &&kharvox::offhandHudNearestDepth(pending.center,pending.axis,pending.width,
+                float(width)/float(height),eye,headAxis,nearest);
+        static std::mutex visibilityMutex;
+        static std::array<bool,2> visible{true,true};
+        static unsigned long long level{};
+        bool show=false;
+        {
+            std::lock_guard<std::mutex> guard(visibilityMutex);
+            const auto currentLevel=KharvoxCameraLevelTransitionGeneration();
+            if(level!=currentLevel){level=currentLevel;visible={true,true};}
+            if(pending.surface>=0&&pending.surface<2){
+                auto& state=visible[pending.surface];
+                state=measured&&kharvox::offhandHudNearVisible(state,nearest,
+                    std::max(10.f,.15f*hudWorldUnitsPerMeter),.02f*hudWorldUnitsPerMeter);
+                show=state;
+            }
+        }
+        if(!show){
             originalHudCanvasSize(entity,width,height,0,0);return;
         }
     }
@@ -3367,6 +3384,7 @@ bool KharvoxHudPrepareOriginTransform(void* intermediateEntity, float* nativeOri
     pending.active = true;
     pending.crosshair = crosshair;
     pending.offhand=offhand;
+    pending.offhandSurface=handSurface;
     pending.offhandWidth=.25f*hudWorldUnitsPerMeter*(offhandScale/.40f);
     std::memcpy(pending.offhandAxis.data(),offhandAxis,sizeof(offhandAxis));
     pending.offscreen = offscreen;
@@ -3459,6 +3477,7 @@ bool KharvoxHudCompleteFinalEntity(
             for(int world=0;world<3;++world)rotated[row*3+world]+=value*matchedPending.offhandAxis[local*3+world];}
         std::memcpy(desiredAxis,rotated,sizeof(rotated));
         offhandCanvasSubmission.entity=entity;
+        offhandCanvasSubmission.surface=matchedPending.offhandSurface;
         offhandCanvasSubmission.width=matchedPending.offhandWidth;
         std::memcpy(offhandCanvasSubmission.center,matchedPending.desiredOrigin.data(),sizeof(offhandCanvasSubmission.center));
         std::memcpy(offhandCanvasSubmission.axis,desiredAxis,sizeof(offhandCanvasSubmission.axis));

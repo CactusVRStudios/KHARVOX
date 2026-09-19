@@ -36,12 +36,10 @@ inline int ownedOffhandHudSurface(uintptr_t ownerVtable,uintptr_t caller,int wid
     return (surface==0&&ownerVtable==0x2240888)
         ||(surface==1&&ownerVtable==0x2240978)?surface:-1;
 }
-// Keep every corner beyond the screen-UI depth switch and camera near plane.
-// Only translate along view-forward, preserving calibrated size/rotation.
-inline bool keepOffhandHudInFront(float* center,const float* axis,float width,float aspect,
-    const float* eye,const float* forward,float minimumDepth){
-    if(!std::isfinite(width)||width<=0||!std::isfinite(aspect)||aspect<=0
-        ||!std::isfinite(minimumDepth)||minimumDepth<=0)return false;
+// Measure the nearest corner without changing the hand-bound transform.
+inline bool offhandHudNearestDepth(const float* center,const float* axis,float width,float aspect,
+    const float* eye,const float* forward,float& nearest){
+    if(!std::isfinite(width)||width<=0||!std::isfinite(aspect)||aspect<=0)return false;
     float depth=0,radius=0,norm=0;
     for(int i=0;i<3;++i){if(!std::isfinite(center[i])||!std::isfinite(eye[i])||!std::isfinite(forward[i]))return false;
         depth+=(center[i]-eye[i])*forward[i];norm+=forward[i]*forward[i];}
@@ -51,9 +49,10 @@ inline bool keepOffhandHudInFront(float* center,const float* axis,float width,fl
         if(length<1e-10f)return false;
         radius+=.5f*(row?width/aspect:width)*std::abs(dot)/std::sqrt(length);
     }
-    const float shift=minimumDepth+radius-depth;
-    if(shift>0)for(int i=0;i<3;++i)center[i]+=forward[i]*shift;
-    return true;
+    nearest=depth-radius;return std::isfinite(nearest);
+}
+inline bool offhandHudNearVisible(bool wasVisible,float nearest,float minimumDepth,float margin){
+    return std::isfinite(nearest)&&nearest>=minimumDepth+(wasVisible?0.f:margin);
 }
 inline bool readOffhandHudConfig(std::istream& stream,OffhandHudConfig& out){
     int version{},enabled{};OffhandHudConfig value;

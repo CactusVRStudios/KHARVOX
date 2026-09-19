@@ -23,17 +23,22 @@ int main() {
         if(ownedOffhandHudSurface(0x2240978,0xbdcf54,512,300,83)!=-1)return 128;
         const float eye[3]{},forward[3]{1,0,0};
         const float axis[9]{0,1,0,0,0,1,1,0,0};float center[3]{5,2,3};
-        if(!keepOffhandHudInFront(center,axis,20,2,eye,forward,10)||!near(center[0],10)
-            ||!near(center[1],2)||!near(center[2],3))return 129;
+        float nearest{};
+        if(!offhandHudNearestDepth(center,axis,20,2,eye,forward,nearest)||!near(nearest,5)
+            ||!near(center[0],5)||!near(center[1],2)||!near(center[2],3))return 129;
         center[0]=40;
-        if(!keepOffhandHudInFront(center,axis,20,2,eye,forward,10)||!near(center[0],40))return 130;
+        if(!offhandHudNearestDepth(center,axis,20,2,eye,forward,nearest)||!near(nearest,40))return 130;
         const float tilted[9]{1,1,0,-1,1,0,0,0,1};center[0]=5;
-        if(!keepOffhandHudInFront(center,tilted,20,2,eye,forward,10))return 131;
-        // All four corners of a tilted panel stay beyond the same depth limit.
-        for(int x:{-1,1})for(int y:{-1,1})
-            if(center[0]+x*10/std::sqrt(2.f)-y*5/std::sqrt(2.f)<9.999f)return 132;
+        if(!offhandHudNearestDepth(center,tilted,20,2,eye,forward,nearest)
+            ||!near(nearest,5-15/std::sqrt(2.f))||!near(center[0],5))return 131;
+        bool visible=true;
+        for(float depth:{9.f,10.1f,11.9f}){
+            visible=offhandHudNearVisible(visible,depth,10,2);if(visible)return 132;
+        }
+        visible=offhandHudNearVisible(visible,12,10,2);if(!visible)return 133;
+        if(!offhandHudNearVisible(visible,10.1f,10,2))return 134;
         const float zero[9]{};
-        if(keepOffhandHudInFront(center,zero,20,2,eye,forward,10))return 133;
+        if(offhandHudNearestDepth(center,zero,20,2,eye,forward,nearest))return 135;
     }
 
     {

@@ -7,7 +7,7 @@ namespace kharvox {
 struct OffhandHudCalibration {
     std::array<float,3> centimeters{8,0,8};
     std::array<float,3> degrees{}; // pitch, yaw, roll
-    float scale{0.10f};
+    float scale{0.40f};
 };
 struct OffhandHudConfig { bool enabled{true};std::array<OffhandHudCalibration,4> modes{}; };
 inline int offhandHudSurface(uintptr_t caller,int width,int height,int scale){
@@ -38,6 +38,18 @@ inline void offhandHudOrigin(const float* grip,const float* hand,const float* pa
     const OffhandHudCalibration& c,int surface,float unitsPerMeter,float* out){
     for(int i=0;i<3;++i){out[i]=grip[i];
         for(int j=0;j<3;++j)out[i]+=hand[j*3+i]*c.centimeters[j]*unitsPerMeter*.01f;
-        out[i]+=panel[3+i]*(surface==0?1.f:-1.f)*7.f*(c.scale/.10f)*unitsPerMeter*.01f;}
+        out[i]+=hand[3+i]*(surface==0?1.f:-1.f)*14.f*unitsPerMeter*.01f;}
 }
+// Final GUI uses local X/Y pixels multiplied by its physical extents. Center
+// the complete canvas after those extents are known, independent of rotation.
+inline bool centeredOffhandHud(const float* center,const float* axis,float width,
+    float aspect,float* origin,float& extentX,float& extentY){
+    float lengths[2]{};
+    for(int row=0;row<2;++row){for(int j=0;j<3;++j){const float v=axis[row*3+j];if(!std::isfinite(v))return false;lengths[row]+=v*v;}lengths[row]=std::sqrt(lengths[row]);}
+    if(!std::isfinite(width)||width<=0||!std::isfinite(aspect)||aspect<=0||lengths[0]<.00001f||lengths[1]<.00001f)return false;
+    extentX=width/lengths[0];extentY=width/aspect/lengths[1];
+    for(int i=0;i<3;++i){if(!std::isfinite(center[i]))return false;origin[i]=center[i]-.5f*(axis[i]*extentX+axis[3+i]*extentY);}
+    return true;
+}
+
 }

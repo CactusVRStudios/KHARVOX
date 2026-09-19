@@ -1018,3 +1018,20 @@ The old shared numeric dialog was removed. Calibration disabled does not remove
 the saved offhand HUD. Tests cover config migration and per-panel independence.
 123 CTests, launcher self-test and debug layout inspection passed. Headset
 validation of key selection and placement remains pending.
+## 0.96 Test 27 - centered metric offhand HUD
+
+The prior panel center incorrectly included a lateral offset rotated by panel
+orientation and multiplied by its scale. Panel placement now uses a fixed
+hand-local separation independent of rotation/size.
+Disassembly of F91D00 establishes that the final GUI size setter at 1590D60
+runs after F9227F axis completion, taking pixel width/height and physical extents.
+A signature-checked hook (14 bytes, complete non-relative instructions) consumes
+only the thread-local matching offhand entity at return RVA F922A7. It sets
+metric extents and offsets the origin by half each transformed canvas axis,
+placing the full 512x300 GUI canvas center at the calibrated hand-local point.
+Other GUI calls pass through unchanged. Failure to install retains standard HUD.
+Default scale is 0.40; at that value each canvas is 25 cm wide. Scale and rotation
+preserve the same center, including the selection pulse. Existing saved scale
+values remain readable, but this package supplies fresh larger defaults.
+Tests verify center invariance under rotation, scale and body movement.
+123 CTests and launcher self-test passed. Headset visual confirmation pending.

@@ -31,7 +31,16 @@ int main() {
         for(int i=0;i<9;++i)if(!near(hand[i],panel[i]))return 104;
         offhandHudOrigin(grip,hand,panel,config.modes[0],0,100,a);
         grip[0]+=5;offhandHudOrigin(grip,hand,panel,config.modes[0],0,100,b);
-        if(!near(b[0]-a[0],5)||!near(a[1],9)||!near(a[2],11))return 105;
+        if(!near(b[0]-a[0],5)||!near(a[1],16)||!near(a[2],11))return 105;
+        // Placement center must not move when panel rotation or scale changes.
+        auto rotatedConfig=config.modes[0];rotatedConfig.degrees={25,70,40};rotatedConfig.scale=.8f;
+        offhandHudBasis(hand,rotatedConfig,panel);
+        float fixed[3]{};grip[0]-=5;offhandHudOrigin(grip,hand,panel,rotatedConfig,0,100,fixed);
+        for(int i=0;i<3;++i)if(!near(fixed[i],a[i]))return 110;
+        for(float width:{10.f,25.f,50.f}){float corner[3]{},sx{},sy{};
+            if(!centeredOffhandHud(fixed,panel,width,512.f/300.f,corner,sx,sy))return 111;
+            for(int i=0;i<3;++i)if(!near(corner[i]+.5f*(panel[i]*sx+panel[3+i]*sy),fixed[i]))return 112;
+        }
         offhandHudBasis(hand,config.modes[1],panel);if(!near(panel[0],0)||!near(panel[1],1))return 106;
     }
 

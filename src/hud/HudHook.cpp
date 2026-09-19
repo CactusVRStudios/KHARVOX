@@ -104,6 +104,7 @@ struct PendingHudSubmission {
     bool active{};
     bool crosshair{};
     bool offhand{};
+    float offhandWidth{};
     std::array<float,9> offhandAxis{};
     bool offscreen{};
     uintptr_t context{};
@@ -147,6 +148,10 @@ struct TrackedHandPose {
 std::array<TrackedHandPose, 2> handPoses{};
 std::mutex handPoseMutex;
 std::mutex offhandHudMutex;
+bool offhandCanvasHookReady{};
+struct OffhandCanvasSubmission {const void* entity{};float center[3]{},axis[9]{},width{};};
+thread_local OffhandCanvasSubmission offhandCanvasSubmission;
+
 kharvox::OffhandHudConfig offhandHudConfig;
 std::atomic<bool> offhandCalibrationActive{};
 std::atomic<int> offhandSelectedSurface{};
@@ -565,6 +570,35 @@ bool installEntryHook(
     DWORD ignored{};
     VirtualProtect(target, signature.size(), oldProtect, &ignored);
     return true;
+}
+
+using HudCanvasSizeFn=void(__fastcall*)(void*,int,int,float,float);
+HudCanvasSizeFn originalHudCanvasSize{};
+void __fastcall offhandHudCanvasSize(void* entity,int width,int height,float extentX,float extentY){
+    const auto image=reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+    const auto caller=reinterpret_cast<uintptr_t>(_ReturnAddress())-image;
+    const auto pending=offhandCanvasSubmission;
+    offhandCanvasSubmission={};
+    float origin[3]{};
+    const bool owned=caller==0xF922A7&&pending.entity==entity&&width==512&&height==300
+        &&kharvox::centeredOffhandHud(pending.center,pending.axis,pending.width,
+            float(width)/float(height),origin,extentX,extentY);
+    originalHudCanvasSize(entity,width,height,extentX,extentY);
+    if(!owned)return;
+    auto bytes=static_cast<unsigned char*>(entity);
+    if((bytes[0x70]&bytes[0x71])==0)std::memcpy(bytes+0xc8,origin,sizeof(origin));
+    std::memcpy(bytes+0x78,origin,sizeof(origin));
+    static std::atomic<bool> noted{};
+    if(!noted.exchange(true))log("[OFFHAND-HUD] centered canvas pivot and metric panel size active");
+}
+bool installOffhandCanvasHook(){
+    auto image=reinterpret_cast<unsigned char*>(GetModuleHandleW(nullptr));
+    // Two complete instructions, no RIP-relative operands.
+    constexpr std::array<unsigned char,14> signature{0xf3,0x0f,0x10,0x54,0x24,0x28,0xf3,0x0f,0x11,0x99,0xcc,0x4e,0,0};
+    if(!image||!readableRange(image+0x1590d60,signature.size())
+        ||std::memcmp(image+0x1590d60,signature.data(),signature.size())){
+        log("[OFFHAND-HUD] canvas signature mismatch; retaining standard HUD");return false;}
+    return installEntryHook(image+0x1590d60,signature,reinterpret_cast<const void*>(&offhandHudCanvasSize),originalHudCanvasSize,"Offhand centered canvas");
 }
 
 using LocalizedTextLookup=const char*(__fastcall*)(const void*);
@@ -3264,7 +3298,7 @@ bool KharvoxHudPrepareOriginTransform(void* intermediateEntity, float* nativeOri
 
     bool offhand=false;float offhandAxis[9]{};float offhandScale=1;
     const int handSurface=kharvox::offhandHudSurface(diagnosticCallerRva,diagnosticWidth,diagnosticHeight,diagnosticScaleMilli);
-    if(!crosshair&&!offscreen&&handSurface>=0){
+    if(offhandCanvasHookReady&&!crosshair&&!offscreen&&handSurface>=0){
         kharvox::OffhandHudConfig config;{std::lock_guard<std::mutex> lock(offhandHudMutex);config=offhandHudConfig;}
         float grip[3]{},handAxis[9]{};
         if((config.enabled||offhandCalibrationActive.load())&&getOffhandHudFrame(grip,handAxis)){
@@ -3288,6 +3322,7 @@ bool KharvoxHudPrepareOriginTransform(void* intermediateEntity, float* nativeOri
     pending.active = true;
     pending.crosshair = crosshair;
     pending.offhand=offhand;
+    pending.offhandWidth=.25f*hudWorldUnitsPerMeter*(offhandScale/.40f);
     std::memcpy(pending.offhandAxis.data(),offhandAxis,sizeof(offhandAxis));
     pending.offscreen = offscreen;
     pending.context = current;
@@ -3370,12 +3405,17 @@ bool KharvoxHudCompleteFinalEntity(
     const auto matchedPending = pendingHudStack[match];
     const bool transformed = desiredOrigin && desiredAxis
         && buildStableHeadlockedAxis(matchedPending, nativeAxis, desiredAxis);
+    offhandCanvasSubmission={};
     if(transformed&&matchedPending.offhand){
         float rotated[9]{};
         for(int row=0;row<3;++row)for(int local=0;local<3;++local){float value=0;
             for(int world=0;world<3;++world)value+=desiredAxis[row*3+world]*matchedPending.headAxis[local*3+world];
             for(int world=0;world<3;++world)rotated[row*3+world]+=value*matchedPending.offhandAxis[local*3+world];}
         std::memcpy(desiredAxis,rotated,sizeof(rotated));
+        offhandCanvasSubmission.entity=entity;
+        offhandCanvasSubmission.width=matchedPending.offhandWidth;
+        std::memcpy(offhandCanvasSubmission.center,matchedPending.desiredOrigin.data(),sizeof(offhandCanvasSubmission.center));
+        std::memcpy(offhandCanvasSubmission.axis,desiredAxis,sizeof(offhandCanvasSubmission.axis));
     }
     if (transformed)
         std::memcpy(desiredOrigin, matchedPending.desiredOrigin.data(), sizeof(float) * 3);
@@ -3407,6 +3447,7 @@ bool KharvoxHudInstallHook() {
     loadHeadlockedHudSettings();
     loadHudIdentity();
     loadGuiProfileCalibrations();
+    offhandCanvasHookReady=installOffhandCanvasHook();
     installHudOriginHook();
     installCrosshairCaptureHook();
     installPauseMenuLifecycleHooks();

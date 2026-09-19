@@ -40,3 +40,40 @@ The existing microbenchmark compares against an older map/function design,
 not this PR's immediate parent; its timings are not evidence of a game speedup.
 Compiler-enabled packaging, live Vulkan validation and headset frametimes
 remain untested.
+
+## P1: Descriptor Restoration Changed Binding Order
+
+SFS cached the last graphics descriptor per set slot, then restored slots in
+numeric order at every render-pass/subpass entry. Bind an older set 1 with
+layout A, then set 0 with an incompatible layout B: set 0 is valid. Replaying
+0 then 1 reverses the relevant commands and disturbs set 0, so a subsequent
+draw can consume undefined descriptors despite the original command sequence
+being valid. Dynamic offsets do not repair a disturbed binding.
+
+Fix: retain the order of the latest bind to each slot and restore in that order
+at multiview subpass entry. Storage and work remain bounded by bound set slots,
+not command history. Descriptor values and per-set dynamic offsets use the
+existing cache. Command-buffer begin clears the ordering alongside that cache.
+
+Do not replay non-pipeline state for mono render passes: Vulkan preserves it.
+Reissuing binds there can itself disturb previously valid bindings. Still bind
+the correct mono/stereo graphics pipeline on every pass transition. This also
+removes redundant descriptor, vertex, dynamic-state and push-constant commands
+from mono passes; no measured GPU or headset speedup is claimed.
+
+Verification: `sfs-descriptor-order` compiles the production SFS implementation
+with shader stubs and checks actual begin/next-subpass restoration order,
+dynamic offsets, mono pipeline rebinding without descriptor replay, and command
+buffer reuse. Its reference model reproduces numeric-order disturbance and
+compares defined descriptor values across 1,000,000 randomized binding and
+multiview-reset transitions, including multi-set writes and incompatible push
+constant ranges. Repeated overwrites retain only the affected slots.
+The descriptor, push-replay, native push-replay and owner-completion tests pass.
+
+Rules checked against Khronos Vulkan specification sections
+[Pipeline Layout Compatibility](https://docs.vulkan.org/spec/latest/chapters/descriptorsets.html#descriptors-compatibility)
+and [Render Pass](https://docs.vulkan.org/spec/latest/chapters/renderpass.html):
+multiview resets non-render-pass state at each subpass; mono does not.
+These tests use dispatch mocks, not a validation-layer GPU workload or a DOOM
+capture. They preserve required defined descriptors, not the exact contents of
+unused descriptor slots that were already undefined in the application.

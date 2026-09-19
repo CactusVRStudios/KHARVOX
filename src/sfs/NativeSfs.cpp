@@ -2,6 +2,7 @@
 #include "NativeDispatch.h"
 #include "SourceRing.h"
 #include "PushReplay.h"
+#include "DescriptorBindOrder.h"
 #include "CommandCpuTiming.h"
 #include "ShaderCompiler.h"
 #include "ShaderProfile.h"
@@ -37,6 +38,7 @@ struct CommandState {
     VkPipeline graphics{};
     struct Descriptor {VkPipelineLayout layout{};VkDescriptorSet set{};std::vector<uint32_t> dynamic;};
     std::vector<Descriptor> descriptors;
+    DescriptorBindOrder descriptorOrder;
     std::map<uint64_t,std::function<void()>> bindings;
     PushReplay pushes;
     std::vector<VkImageMemoryBarrier> imageBarriers;
@@ -276,7 +278,7 @@ VKAPI_ATTR VkResult VKAPI_CALL compute(VkDevice d,VkPipelineCache cache,uint32_t
     }return VK_SUCCESS;
 RESULT_END}
 VKAPI_ATTR void VKAPI_CALL destroyPipeline(VkDevice d,VkPipeline pipeline,const VkAllocationCallbacks* a){auto s=state(d);std::unique_lock<std::shared_mutex> lock(s->mutex);auto it=s->stereoPipelines.find(pipeline);if(it!=s->stereoPipelines.end()){FN(vkDestroyPipeline)(d,it->second,a);s->stereoPipelines.erase(it);}auto indirect=s->indirectPipelines.find(pipeline);if(indirect!=s->indirectPipelines.end()){for(auto eye:indirect->second)FN(vkDestroyPipeline)(d,eye,a);s->indirectPipelines.erase(indirect);}s->computeStereo.erase(pipeline);FN(vkDestroyPipeline)(d,pipeline,a);}
-VKAPI_ATTR VkResult VKAPI_CALL beginCommand(VkCommandBuffer cb,const VkCommandBufferBeginInfo* i){try{auto s=state(cb);std::shared_lock<std::shared_mutex> lock(s->mutex);if(i->pInheritanceInfo&&i->pInheritanceInfo->renderPass)return VK_ERROR_FEATURE_NOT_PRESENT;auto& command=s->commands.at(cb);command.stereo=false;command.compute=VK_NULL_HANDLE;command.graphics=VK_NULL_HANDLE;for(auto& descriptor:command.descriptors)descriptor.set=VK_NULL_HANDLE;command.bindings.clear();command.pushes.clear();return FN(vkBeginCommandBuffer)(cb,i);}catch(const std::exception& e){note(e.what());return VK_ERROR_INITIALIZATION_FAILED;}}
+VKAPI_ATTR VkResult VKAPI_CALL beginCommand(VkCommandBuffer cb,const VkCommandBufferBeginInfo* i){try{auto s=state(cb);std::shared_lock<std::shared_mutex> lock(s->mutex);if(i->pInheritanceInfo&&i->pInheritanceInfo->renderPass)return VK_ERROR_FEATURE_NOT_PRESENT;auto& command=s->commands.at(cb);command.stereo=false;command.compute=VK_NULL_HANDLE;command.graphics=VK_NULL_HANDLE;for(auto& descriptor:command.descriptors)descriptor.set=VK_NULL_HANDLE;command.descriptorOrder.clear();command.bindings.clear();command.pushes.clear();return FN(vkBeginCommandBuffer)(cb,i);}catch(const std::exception& e){note(e.what());return VK_ERROR_INITIALIZATION_FAILED;}}
 VKAPI_ATTR VkResult VKAPI_CALL allocateCommands(VkDevice d,const VkCommandBufferAllocateInfo* i,VkCommandBuffer* out){RESULT_BEGIN
     auto r=FN(vkAllocateCommandBuffers)(d,i,out);if(r==VK_SUCCESS)for(uint32_t j=0;j<i->commandBufferCount;++j){s->commandPools[out[j]]=i->commandPool;s->commands.try_emplace(out[j]);}return r;
 RESULT_END}
@@ -296,7 +298,9 @@ VKAPI_ATTR void VKAPI_CALL bindSets(VkCommandBuffer cb,VkPipelineBindPoint point
     if(point==VK_PIPELINE_BIND_POINT_GRAPHICS&&descriptors.size()<size_t(first)+count)descriptors.resize(size_t(first)+count);
     uint32_t offset=0;for(uint32_t j=0;j<count;++j){auto set=sets[j];const auto n=s->setDynamicCounts.at(set);if(n>dynamicCount-offset)throw std::runtime_error("SFS dynamic descriptor offset mismatch");
         if(point==VK_PIPELINE_BIND_POINT_GRAPHICS){auto& cached=descriptors[first+j];cached.layout=layout;cached.set=set;cached.dynamic.clear();if(n)cached.dynamic.assign(dynamic+offset,dynamic+offset+n);}offset+=n;}
-    if(offset!=dynamicCount)throw std::runtime_error("SFS unexpected dynamic descriptor offsets");FN(vkCmdBindDescriptorSets)(cb,point,layout,first,count,sets,dynamicCount,dynamic);
+    if(offset!=dynamicCount)throw std::runtime_error("SFS unexpected dynamic descriptor offsets");
+    if(point==VK_PIPELINE_BIND_POINT_GRAPHICS)s->commands.at(cb).descriptorOrder.record(first,count);
+    FN(vkCmdBindDescriptorSets)(cb,point,layout,first,count,sets,dynamicCount,dynamic);
 COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL bindVertices(VkCommandBuffer cb,uint32_t first,uint32_t count,const VkBuffer* buffers,const VkDeviceSize* offsets){COMMAND_BEGIN
     for(uint32_t j=0;j<count;++j)s->commands.at(cb).bindings[0x20000ull+first+j]=[s,cb,index=first+j,b= buffers[j],o=offsets[j]]{FN(vkCmdBindVertexBuffers)(cb,index,1,&b,&o);};FN(vkCmdBindVertexBuffers)(cb,first,count,buffers,offsets);
@@ -315,7 +319,8 @@ VKAPI_ATTR void VKAPI_CALL push(VkCommandBuffer cb,VkPipelineLayout layout,VkSha
 COMMAND_END}
 void replayBindings(const std::shared_ptr<State>& s,VkCommandBuffer cb){
     bindGraphics(s,cb);auto& command=s->commands.at(cb);
-    for(uint32_t index=0;index<command.descriptors.size();++index){const auto& binding=command.descriptors[index];if(binding.set)FN(vkCmdBindDescriptorSets)(cb,VK_PIPELINE_BIND_POINT_GRAPHICS,binding.layout,index,1,&binding.set,uint32_t(binding.dynamic.size()),binding.dynamic.data());}
+    if(!command.stereo)return;
+    for(const auto index:command.descriptorOrder.indices()){const auto& binding=command.descriptors[index];if(binding.set)FN(vkCmdBindDescriptorSets)(cb,VK_PIPELINE_BIND_POINT_GRAPHICS,binding.layout,index,1,&binding.set,uint32_t(binding.dynamic.size()),binding.dynamic.data());}
     for(const auto& binding:command.bindings)binding.second();
     command.pushes.replay([&](VkPipelineLayout layout,VkShaderStageFlags flags,uint32_t offset,uint32_t size,const void* values){FN(vkCmdPushConstants)(cb,layout,flags,offset,size,values);});
 }

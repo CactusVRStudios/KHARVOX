@@ -79,7 +79,7 @@ bool initializePauseBindings(const std::vector<int64_t>& formats) {
         if (!initializeSwapchainImages(pauseBindings)) break;
         XrSwapchainImageAcquireInfo acquire{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
         uint32_t index{};
-        if (XR_FAILED(s.acquireImage(pauseBindings.handle, &acquire, &index))
+        if (XR_FAILED(acquireSwapchainImage(pauseBindings.handle, &acquire, &index))
             || index >= pauseBindings.images.size()) break;
         XrSwapchainImageWaitInfo wait{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
         wait.timeout = XR_INFINITE_DURATION;
@@ -118,7 +118,7 @@ bool initializePauseBindings(const std::vector<int64_t>& formats) {
             if (vk.queueWaitIdle(s.queue) != VK_SUCCESS) break;
         }
         XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
-        ok = XR_SUCCEEDED(s.releaseImage(pauseBindings.handle, &release));
+        ok = XR_SUCCEEDED(releaseSwapchainImage(pauseBindings.handle, &release));
     } while (false);
     if (pool) vk.destroyCommandPool(s.device, pool, nullptr);
     if (buffer) vk.destroyBuffer(s.device, buffer, nullptr);

@@ -305,6 +305,10 @@ struct QueueAccessScope {
     QueueAccessScope(){if(queueAccessLockCallback)queueAccessLockCallback();}
     ~QueueAccessScope(){if(queueAccessUnlockCallback)queueAccessUnlockCallback();}
 };
+XrResult acquireSwapchainImage(XrSwapchain swapchain,const XrSwapchainImageAcquireInfo*info,uint32_t*index){QueueAccessScope queueAccess;return s.acquireImage(swapchain,info,index);}
+XrResult releaseSwapchainImage(XrSwapchain swapchain,const XrSwapchainImageReleaseInfo*info){QueueAccessScope queueAccess;return s.releaseImage(swapchain,info);}
+XrResult beginFrame(const XrFrameBeginInfo*info){QueueAccessScope queueAccess;return s.beginFrame(s.session,info);}
+XrResult endFrame(const XrFrameEndInfo*info){QueueAccessScope queueAccess;return s.endFrame(s.session,info);}
 class SteamXrFrameThread {
 public:
     ~SteamXrFrameThread(){
@@ -2932,7 +2936,7 @@ void pollEvents(){
                         empty.displayTime=s.steamPreparedFrame.predictedDisplayTime;
                         empty.environmentBlendMode=XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
                         XrResult endResult{XR_ERROR_RUNTIME_FAILURE};
-                        const DWORD frameThread=steamXrFrameThread.invoke([&]{endResult=s.endFrame(s.session,&empty);});
+                        const DWORD frameThread=steamXrFrameThread.invoke([&]{endResult=endFrame(&empty);});
                         ++s.steamEndCalls;
                         if(XR_FAILED(endResult))++s.steamEndFailures;
                         log("[STEAM-XR-SPLIT] pending acquire frame ended empty before xrEndSession result="+result(endResult)+" lifecycleThread="+std::to_string(frameThread));
@@ -3556,7 +3560,7 @@ void KharvoxXRPrepareFrame(VkSwapchainKHR swapchain){
         if(XR_SUCCEEDED(waitResult)){
             XrFrameBeginInfo beginInfo{XR_TYPE_FRAME_BEGIN_INFO};
             beginAttempted=true;
-            beginResult=s.beginFrame(s.session,&beginInfo);
+            beginResult=beginFrame(&beginInfo);
         }
     });
     const double waitMs=performanceMilliseconds(waitStart,waitEnd);
@@ -3644,7 +3648,7 @@ void KharvoxXRSwapchainDestroyed(VkSwapchainKHR sc){
         empty.displayTime=s.steamPreparedFrame.predictedDisplayTime;
         empty.environmentBlendMode=XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
         XrResult endResult{XR_ERROR_RUNTIME_FAILURE};
-        const DWORD frameThread=steamXrFrameThread.invoke([&]{endResult=s.endFrame(s.session,&empty);});
+        const DWORD frameThread=steamXrFrameThread.invoke([&]{endResult=endFrame(&empty);});
         ++s.steamEndCalls;
         if(XR_FAILED(endResult))++s.steamEndFailures;
         s.steamFramePrepared=false;
@@ -3708,7 +3712,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
             empty.displayTime=s.steamPreparedFrame.predictedDisplayTime;
             empty.environmentBlendMode=XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
             XrResult ended{XR_ERROR_RUNTIME_FAILURE};
-            steamXrFrameThread.invoke([&]{ended=s.endFrame(s.session,&empty);});
+            steamXrFrameThread.invoke([&]{ended=endFrame(&empty);});
             ++s.steamEndCalls;
             if(XR_FAILED(ended))++s.steamEndFailures;
             s.steamFramePrepared=false;s.steamFrameBegun=false;
@@ -3771,7 +3775,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
                 waitResult=s.waitFrame(s.session,&wi,&frame);
                 if(XR_SUCCEEDED(waitResult)){
                     XrFrameBeginInfo bi{XR_TYPE_FRAME_BEGIN_INFO};
-                    beginResult=s.beginFrame(s.session,&bi);
+                    beginResult=beginFrame(&bi);
                 }
             });
         }else {kharvox::native::cpu::Scope profile(kharvox::native::cpu::XrWaitFrame);waitResult=s.waitFrame(s.session,&wi,&frame);}
@@ -3786,7 +3790,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
             log("[STEAM-XR-ORDER] xrWaitFrame "+result(waitResult)+" lifecycleThread="+std::to_string(lifecycleThread)+" callerThread="+std::to_string(GetCurrentThreadId())+" wait/begin/end="+std::to_string(s.steamWaitCalls)+"/"+std::to_string(s.steamBeginCalls)+"/"+std::to_string(s.steamEndCalls));
             return;
         }
-        if(!steamRuntime){XrFrameBeginInfo bi{XR_TYPE_FRAME_BEGIN_INFO};beginResult=s.beginFrame(s.session,&bi);}
+        if(!steamRuntime){XrFrameBeginInfo bi{XR_TYPE_FRAME_BEGIN_INFO};beginResult=beginFrame(&bi);}
         if(steamRuntime)++s.steamBeginCalls;
         if(XR_FAILED(beginResult)){
             log("[STEAM-XR-ORDER] xrBeginFrame "+result(beginResult)+" after wait="+result(waitResult)+" lifecycleThread="+std::to_string(lifecycleThread)+" callerThread="+std::to_string(GetCurrentThreadId())+" wait/begin/end="+std::to_string(s.steamWaitCalls)+"/"+std::to_string(s.steamBeginCalls)+"/"+std::to_string(s.steamEndCalls));
@@ -3803,12 +3807,10 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
         XrResult endResult{XR_ERROR_RUNTIME_FAILURE};
         kharvox::pose_trace::Event traceEnd{};traceEnd.kind=kharvox::pose_trace::EndBegin;traceEnd.frame=s.frame;traceEnd.displayTime=endInfo.displayTime;traceEnd.flags=poseTraceFlags();traceEnd.source=endInfo.layerCount;kharvox::pose_trace::record(traceEnd);
         DWORD lifecycleThread=GetCurrentThreadId();
-        if(steamRuntime){kharvox::native::cpu::Scope profile(kharvox::native::cpu::XrEndFrame);lifecycleThread=steamXrFrameThread.invoke([&]{endResult=s.endFrame(s.session,&endInfo);});}
+        if(steamRuntime){kharvox::native::cpu::Scope profile(kharvox::native::cpu::XrEndFrame);lifecycleThread=steamXrFrameThread.invoke([&]{endResult=endFrame(&endInfo);});}
         else {
             kharvox::native::cpu::Scope profile(kharvox::native::cpu::XrEndFrame);
-            if(s.runtimeKind==kharvox::OpenXRRuntimeKind::VirtualDesktop){
-                QueueAccessScope queueAccess;endResult=s.endFrame(s.session,&endInfo);
-            }else endResult=s.endFrame(s.session,&endInfo);
+            endResult=endFrame(&endInfo);
         }
         traceEnd.kind=kharvox::pose_trace::EndReturn;traceEnd.status=endResult;kharvox::pose_trace::record(traceEnd);
         if(steamRuntime){
@@ -3874,7 +3876,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
         auto& handshakeEye=s.eyes[0];
         uint32_t handshakeImageIndex{};
         XrSwapchainImageAcquireInfo acquire{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
-        XrResult handshakeResult=s.acquireImage(handshakeEye.handle,&acquire,
+        XrResult handshakeResult=acquireSwapchainImage(handshakeEye.handle,&acquire,
             &handshakeImageIndex);
         bool handshakeImageAcquired=XR_SUCCEEDED(handshakeResult);
         if(handshakeImageAcquired){
@@ -3884,7 +3886,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
         }
         if(handshakeImageAcquired){
             XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
-            const XrResult releaseResult=s.releaseImage(handshakeEye.handle,&release);
+            const XrResult releaseResult=releaseSwapchainImage(handshakeEye.handle,&release);
             if(XR_SUCCEEDED(handshakeResult))handshakeResult=releaseResult;
         }
         if(XR_SUCCEEDED(handshakeResult)){
@@ -4542,9 +4544,8 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
     std::array<uint32_t,2> xi{};
     std::array<bool,2> eyeImageAcquired{};
     auto releaseImageChecked=[&](XrSwapchain swapchain){
-        QueueAccessScope queueAccess;
         XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
-        const XrResult released=s.releaseImage(swapchain,&ri);
+        const XrResult released=releaseSwapchainImage(swapchain,&ri);
         if(nativeFrameValid&&XR_FAILED(released))kharvox::native::fail("Native XR image release failed; resources retained");
     };
     auto releaseAcquiredEyeImages=[&](){
@@ -4556,7 +4557,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
     if(updateEyeSwapchains){
         for(int e=0;e<2;e++){
             XrSwapchainImageAcquireInfo ai{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
-            r=s.acquireImage(s.eyes[e].handle,&ai,&xi[e]);
+            r=acquireSwapchainImage(s.eyes[e].handle,&ai,&xi[e]);
             if(XR_FAILED(r)){
                 releaseAcquiredEyeImages();
                 log("acquire eye "+result(r));
@@ -4575,7 +4576,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
     }
     if(hudQuadRequested){
         XrSwapchainImageAcquireInfo acquire{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
-        r=s.acquireImage(s.hudQuad.handle,&acquire,&hudImageIndex);
+        r=acquireSwapchainImage(s.hudQuad.handle,&acquire,&hudImageIndex);
         if(XR_SUCCEEDED(r)&&hudImageIndex<s.hudQuad.images.size()){
             hudImageAcquired=true;
             XrSwapchainImageWaitInfo wait{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
@@ -4583,7 +4584,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
             r=s.waitImage(s.hudQuad.handle,&wait);
             if(XR_FAILED(r)){
                 XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
-                s.releaseImage(s.hudQuad.handle,&release);
+                releaseSwapchainImage(s.hudQuad.handle,&release);
                 hudImageAcquired=false;
             }
         }
@@ -5240,7 +5241,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
         if(nativeFrameValid)kharvox::native::fail("owner native copy submission failed; restart required");
         s.handRenderer.finishSceneIntegratedFrame();
         releaseAcquiredEyeImages();
-        if(hudImageAcquired){XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};s.releaseImage(s.hudQuad.handle,&ri);}
+        if(hudImageAcquired){XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};releaseSwapchainImage(s.hudQuad.handle,&ri);}
         log("copy submit failed "+std::to_string(submitResult));endEmptyFrame("copy-submit-failed");return;
     }
     if(steamRuntime){QueryPerformanceCounter(&copyWaitEnd);steamCopyWaitMs=performanceMilliseconds(copyWaitStart,copyWaitEnd);}
@@ -5250,7 +5251,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
         if(freshAerHands)s.freshHandsWorldValid=false;
         if(nativeFrameValid)kharvox::native::fail("owner native copy completion failed; restart required");
         releaseAcquiredEyeImages();
-        if(hudImageAcquired){XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};s.releaseImage(s.hudQuad.handle,&ri);}
+        if(hudImageAcquired){XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};releaseSwapchainImage(s.hudQuad.handle,&ri);}
         log(std::string(copyCompletion?"copy fence wait failed ":"copy queue wait failed ")+std::to_string(completionResult));endEmptyFrame("copy-completion-failed");return;
     }
     if(!earlyRelease){

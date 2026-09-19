@@ -2960,6 +2960,7 @@ void pollEvents(){
                 s.running=false;
                 resetCinewindowAnchorState();
                 if(s.queue&&s.vk.queueWaitIdle){QueueAccessScope queueAccess;s.vk.queueWaitIdle(s.queue);}
+                if(c.state==XR_SESSION_STATE_EXITING)s.sessionReadiness.exitRequested();
                 destroySessionResources();
             }
         }else if(e.type==XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED){
@@ -3566,6 +3567,7 @@ bool KharvoxXRStartSessionIfReady(){
     std::unique_lock<std::mutex>l(mutex);
     const bool steamRuntime=kharvox::isSteamBackedOpenXRRuntime(s.runtimeKind);
     if(steamRuntime&&steamSessionCreationInProgress)return false;
+    if(!s.sessionReadiness.canCreate())return false;
     if(s.sessionReadiness.usable())return true;
     if(s.session)destroySessionResources();
     if(GetFileAttributesW(kharvox::runtimePath(L"enable_xr_session").c_str())==INVALID_FILE_ATTRIBUTES)return false;

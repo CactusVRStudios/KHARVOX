@@ -14,4 +14,11 @@ int main(){
     assert(session.usable());
     session.reset();
     assert(!session.usable());
+    session.created();
+    session.completed();
+    session.exitRequested();
+    assert(!session.usable());
+    assert(!session.canCreate());
+    session.reset();
+    assert(!session.canCreate());
 }

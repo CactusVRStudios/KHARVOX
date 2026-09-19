@@ -24,6 +24,7 @@
 #include "NativeStartupControls.h"
 #include "NativeStorageBindingSet.h"
 #include "NativeResourceRetirement.h"
+#include "NativeQueueCompletion.h"
 #include "NativeStorageMirrorBudget.h"
 #include "NativeFramebufferRetirement.h"
 #include "NativeQualityTransition.h"
@@ -46,6 +47,7 @@ namespace kharvox::native {void recordDescriptorPoolAllocation(VkDescriptorPool,
 namespace kharvox::native {VkResult allocateRedirectedDescriptor(VkDevice,VkDescriptorSetLayout,VkDescriptorSet*);}
 namespace kharvox::native {void logDescriptorArenaStats();}
 namespace kharvox::native {void waitForMirrorRetirement(VkDevice);}
+namespace kharvox::native {static VkResult waitForDeviceCompletion(VkDevice);}
 namespace kharvox::native {void indexSourceBuffer(VkBuffer,bool);void unindexSourceBuffer(VkBuffer);}
 namespace kharvox::native {static void finishShadowHistory();}
 namespace kharvox::native {static void finishGpuTiming();}
@@ -108,6 +110,7 @@ static bool preservedAttachmentInputs{};
 static void(*nativeQueueLock)(){};
 static void(*nativeQueueUnlock)(){};
 void setQueueAccessCallbacks(void(*lock)(),void(*unlock)()){nativeQueueLock=lock;nativeQueueUnlock=unlock;}
+static VkResult waitForDeviceCompletion(VkDevice device){return waitForDeviceIdle(device,real_device_wait_idle,nativeQueueLock,nativeQueueUnlock);}
 static uint32_t warmFrames{};
 static std::atomic_bool outstanding{};
 static NativeRetirementQueue resourceRetirements;
@@ -424,7 +427,7 @@ void completed(){
  if(recordingOutstanding)fail("native recording still open at owner Present");
  // Call only at the owner Present after a successful copy fence. Conservative
  // whole-device completion also covers engine submissions on other queues.
- auto&v=kharvoxnative::vulkan_state();{cpu::Scope profile(cpu::DeviceIdle);if(!real_device_wait_idle||real_device_wait_idle(v.device)!=VK_SUCCESS){fail("GPU completion failed");return;}}
+ auto&v=kharvoxnative::vulkan_state();{cpu::Scope profile(cpu::DeviceIdle);if(waitForDeviceCompletion(v.device)!=VK_SUCCESS){fail("GPU completion failed");return;}}
  if(!canRetire(true,true,recordingOutstanding))fail("descriptor retirement before recording finished");
  if(lastReadyFrame!=renderingPose.serial&&phase()==Phase::Ready)enterPhase(Phase::Warming);
  {std::scoped_lock lock(read_redirect_mutex);
@@ -599,9 +602,7 @@ namespace kharvox::native {
 // have no outstanding stereo root and therefore no completed() device drain.
 void waitForMirrorRetirement(VkDevice device){
  beforeDestroy("mirror retirement",reinterpret_cast<uintptr_t>(device));
- if(nativeQueueLock)nativeQueueLock();
- const auto result=real_device_wait_idle?real_device_wait_idle(device):VK_ERROR_INITIALIZATION_FAILED;
- if(nativeQueueUnlock)nativeQueueUnlock();
+ const auto result=waitForDeviceCompletion(device);
  if(result!=VK_SUCCESS)fail("GPU completion failed before mirror resource retirement");
 }
 void beginQualityChange(){

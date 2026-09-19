@@ -30,6 +30,6 @@ static void freeRetiredRedirectedDescriptors(){
 static void destroyRedirectedArena(VkDevice device){
  std::scoped_lock l(redirectedArenaMutex);
  if(!redirectedArena.pageCount())return;
- if(!real_device_wait_idle||real_device_wait_idle(device)!=VK_SUCCESS)fail("native descriptor arena teardown completion failed");
+ if(waitForDeviceCompletion(device)!=VK_SUCCESS)fail("native descriptor arena teardown completion failed");
  if(redirectedArena.destroyCompleted(true)!=VK_SUCCESS)fail("native descriptor arena teardown failed");
 }

@@ -325,14 +325,7 @@ static void record(VkCommandBuffer cb,uint64_t key,const Command& fn,bool state=
  if(!replayPreparationEnabled()){fn();return;}
  recordReplayCommand(replayStates[cb],key,fn,state);
 }
-static void guardLoadingCommandReuse(VkCommandBuffer cb){if(loadingDrain.active()&&loadingDrain.command()==reinterpret_cast<uintptr_t>(cb))fail("loading command reused before owner completion");}
-static VkResult VKAPI_CALL replayBeginCommand(VkCommandBuffer cb,const VkCommandBufferBeginInfo* info){std::scoped_lock lock(replayMutex);guardLoadingCommandReuse(cb);replayStates.erase(cb);resetStorageSnapshotBindings(cb);auto result=nextBeginCommand(cb,info);replayStates[cb].recording=result==VK_SUCCESS;return result;}
-static PFN_vkResetCommandBuffer nextResetCommand{};
-static VkResult VKAPI_CALL replayResetCommand(VkCommandBuffer cb,VkCommandBufferResetFlags flags){std::scoped_lock lock(replayMutex);guardLoadingCommandReuse(cb);auto result=nextResetCommand(cb,flags);if(result==VK_SUCCESS){replayStates.erase(cb);resetStorageSnapshotBindings(cb);}return result;}
-static PFN_vkResetCommandPool nextResetCommandPool{};
-static VkResult VKAPI_CALL replayResetCommandPool(VkDevice device,VkCommandPool pool,VkCommandPoolResetFlags flags){std::scoped_lock lock(replayMutex);if(loadingDrain.active())fail("command pool reset overlaps loading drain");snapshotBatchCache.clear();return nextResetCommandPool(device,pool,flags);}
-static PFN_vkFreeCommandBuffers nextFreeCommands{};
-static void VKAPI_CALL replayFreeCommands(VkDevice device,VkCommandPool pool,uint32_t count,const VkCommandBuffer* commands){std::scoped_lock lock(replayMutex);for(uint32_t i=0;i<count;++i)guardLoadingCommandReuse(commands[i]);nextFreeCommands(device,pool,count,commands);for(uint32_t i=0;i<count;++i){snapshotBatchCache.invalidate(commands[i]);replayStates.erase(commands[i]);boundStorageSnapshots.erase(commands[i]);}}
+#include "NativeCommandLifetime.inc"
 static void preserveStorageAttachmentInputs(VkCommandBuffer cb,const VkRenderPassBeginInfo& begin){
  if(!mirrorPreparationEnabled())return;
  // A color attachment may later become a readable/writable storage image.
@@ -623,6 +616,8 @@ PFN_vkVoidFunction wrapRecorded(const char* name,PFN_vkVoidFunction next){
  REPLAY(vkCmdSetDepthBounds,replayDepthBounds,nextDepthBounds)
  REPLAY(vkCmdSetLineWidth,replayLineWidth,nextLineWidth)
  REPLAY(vkCmdSetStencilWriteMask,replayStencilWrite,nextStencilWrite)
+ REPLAY(vkAllocateCommandBuffers,replayAllocateCommands,real_allocate_command_buffers)
+ REPLAY(vkDestroyCommandPool,replayDestroyCommandPool,real_destroy_command_pool)
  REPLAY(vkBeginCommandBuffer,replayBeginCommand,nextBeginCommand)
  REPLAY(vkResetCommandBuffer,replayResetCommand,nextResetCommand)
  REPLAY(vkResetCommandPool,replayResetCommandPool,nextResetCommandPool)

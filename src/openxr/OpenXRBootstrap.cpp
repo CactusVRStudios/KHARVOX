@@ -304,6 +304,7 @@ PFN_vkGetPhysicalDeviceProperties2 bridgeGetPhysicalDeviceProperties2Downstream=
 PFN_vkGetPhysicalDeviceMemoryProperties bridgeGetPhysicalDeviceMemoryPropertiesDownstream=nullptr;
 void log(const std::string& x, bool operational = false);
 bool eyeCaptureEnabled();
+void destroySessionResources();
 KharvoxQueueAccessCallback queueAccessLockCallback{},queueAccessUnlockCallback{};
 struct QueueAccessScope {
     QueueAccessScope(){if(queueAccessLockCallback)queueAccessLockCallback();}
@@ -2957,6 +2958,8 @@ void pollEvents(){
                 releaseMovement();
                 s.running=false;
                 resetCinewindowAnchorState();
+                if(s.queue&&s.vk.queueWaitIdle){QueueAccessScope queueAccess;s.vk.queueWaitIdle(s.queue);}
+                destroySessionResources();
             }
         }else if(e.type==XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED){
             s.interactionProfilesDirty=true;
@@ -3339,7 +3342,36 @@ static void initializeOpenXR(VkInstance instance){std::lock_guard<std::mutex>l(m
     bool graphics=false;if(s.enable2)graphics=load("xrGetVulkanGraphicsRequirements2KHR",s.requirements2)&&load("xrGetVulkanGraphicsDevice2KHR",s.graphicsDevice2)&&load("xrCreateVulkanInstanceKHR",s.createVulkanInstance)&&load("xrCreateVulkanDeviceKHR",s.createVulkanDevice);else graphics=load("xrGetVulkanGraphicsRequirementsKHR",s.requirements1)&&load("xrGetVulkanGraphicsDeviceKHR",s.graphicsDevice1)&&load("xrGetVulkanInstanceExtensionsKHR",s.instanceExtensions)&&load("xrGetVulkanDeviceExtensionsKHR",s.deviceExtensions);log(std::string("Vulkan XR functions ")+(graphics?"ready":"INCOMPLETE"));if(s.enable2){log("XR_KHR_vulkan_enable2 active");log(std::string("xrCreateVulkanInstanceKHR ")+(s.createVulkanInstance?"available":"MISSING"));log(std::string("xrCreateVulkanDeviceKHR ")+(s.createVulkanDevice?"available":"MISSING"));log(std::string("xrGetVulkanGraphicsDevice2KHR ")+(s.graphicsDevice2?"available":"MISSING"));}if(!graphics)return;XrSystemGetInfo gi{XR_TYPE_SYSTEM_GET_INFO};gi.formFactor=XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;log("calling xrGetSystem");r=s.getSystem(s.instance,&gi,&s.system);log("xrGetSystem result="+std::to_string(r)+" system="+std::to_string(s.system));if(XR_SUCCEEDED(r)){XrGraphicsRequirementsVulkanKHR requirements{XR_TYPE_GRAPHICS_REQUIREMENTS_VULKAN_KHR};const XrResult requirementsResult=s.enable2?s.requirements2(s.instance,s.system,&requirements):s.requirements1(s.instance,s.system,&requirements);if(XR_SUCCEEDED(requirementsResult)){s.runtimeMaxVulkanApiVersion=VK_MAKE_API_VERSION(0,XR_VERSION_MAJOR(requirements.maxApiVersionSupported),XR_VERSION_MINOR(requirements.maxApiVersionSupported),XR_VERSION_PATCH(requirements.maxApiVersionSupported));log("Runtime Vulkan API range min="+std::to_string(XR_VERSION_MAJOR(requirements.minApiVersionSupported))+"."+std::to_string(XR_VERSION_MINOR(requirements.minApiVersionSupported))+" max="+std::to_string(XR_VERSION_MAJOR(requirements.maxApiVersionSupported))+"."+std::to_string(XR_VERSION_MINOR(requirements.maxApiVersionSupported)));}else log("Runtime Vulkan requirements query failed "+result(requirementsResult));}if(!s.enable2&&XR_SUCCEEDED(r)){uint32_t size=0;s.instanceExtensions(s.instance,s.system,0,&size,nullptr);std::vector<char>b(size);s.instanceExtensions(s.instance,s.system,size,&size,b.data());log(std::string("Required instance extensions: ")+b.data());size=0;s.deviceExtensions(s.instance,s.system,0,&size,nullptr);b.assign(size,0);s.deviceExtensions(s.instance,s.system,size,&size,b.data());log(std::string("Required device extensions: ")+b.data());}}
 
 void KharvoxXRShutdownHaptics(){clearXInputHapticState();KharvoxPsvr2SubmitTrigger(kharvox::psvr2::offCommand(s.leftHanded,kharvox::psvr2::TriggerOffReason::SessionEnd));KharvoxPsvr2IpcRequestStop();KharvoxBhapticsIpcRequestStop();}
-void KharvoxXRDeviceDestroyed(){std::lock_guard<std::mutex>l(mutex);s.handRenderer.shutdown();if(s.sfsCopyTiming.pool){if(s.vk.queueWaitIdle(s.queue)==VK_SUCCESS)s.sfsCopyTiming.shutdownAfterCompletion();}}
+void KharvoxXRDeviceDestroyed(){
+    std::lock_guard<std::mutex>l(mutex);
+    s.running=false;
+    s.sessionReadiness.reset();
+    VkResult idleResult=VK_SUCCESS;
+    if(s.queue&&s.vk.queueWaitIdle){QueueAccessScope queueAccess;idleResult=s.vk.queueWaitIdle(s.queue);}
+    if(idleResult!=VK_SUCCESS)log("XR device teardown queue idle failed "+std::to_string(idleResult));
+    releaseEyeCapture();
+    for(auto&source:eyeSourceCapture){source.completed=true;releaseEyeSource(source);}
+    s.fsr1.releaseAfterCompletion();
+    s.fsr1InitializationAttempted=false;
+    if(s.sfsCopyTiming.pool)s.sfsCopyTiming.shutdownAfterCompletion();
+    for(int e=0;e<2;++e){
+        if(s.freshHandsWorld[e]&&s.vk.destroyImage)s.vk.destroyImage(s.device,s.freshHandsWorld[e],nullptr);
+        if(s.freshHandsMemory[e]&&s.vk.freeMemory)s.vk.freeMemory(s.device,s.freshHandsMemory[e],nullptr);
+        if(s.stereoCache[e]&&s.vk.destroyImage)s.vk.destroyImage(s.device,s.stereoCache[e],nullptr);
+        if(s.stereoCacheMemory[e]&&s.vk.freeMemory)s.vk.freeMemory(s.device,s.stereoCacheMemory[e],nullptr);
+    }
+    s.freshHandsWorld={};s.freshHandsMemory={};s.freshHandsExtent={};s.freshHandsInitialized=false;s.freshHandsWorldValid=false;
+    s.stereoCache={};s.stereoCacheMemory={};s.stereoCacheExtent={};s.stereoCacheInitialized={};s.stereoCacheRevision={};
+    destroySessionResources();
+    s.doomSwapchains.clear();
+    s.retiredCompatibleDoomSwapchain={};
+    s.retiredCompatibleDoomSwapchainValid=false;
+    s.startupActiveDoomSwapchain=VK_NULL_HANDLE;
+    s.queue=VK_NULL_HANDLE;
+    s.device=VK_NULL_HANDLE;
+    s.physical=VK_NULL_HANDLE;
+    s.vk={};
+}
 
 bool KharvoxXRMediationEnabled(){return GetFileAttributesW(kharvox::runtimePath(L"enable_xr_mediated").c_str())!=INVALID_FILE_ATTRIBUTES;}
 bool KharvoxXRMediationReentry(){return mediationReentry;}

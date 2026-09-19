@@ -843,6 +843,10 @@ VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(VkInstance i,cons
         return dispatch.gipa?dispatch.gipa(i,n):nullptr;
     }
     auto d=instanceState(key(i));if(i&&d.runtimeAuxiliary)return d.gipa?d.gipa(i,n):nullptr; MATCH(vkGetInstanceProcAddr); MATCH(vkGetDeviceProcAddr); MATCH(vkCreateInstance); MATCH(vkDestroyInstance); MATCH(vkCreateDevice); MATCH(vkCreateWin32SurfaceKHR);
+    if(kharvox::sfs::vrEnabled()&&(!std::strcmp(n,"vkQueueSubmit")||!std::strcmp(n,"vkQueueSubmit2")||!std::strcmp(n,"vkQueueSubmit2KHR"))&&d.gipa&&d.gipa(i,n)){
+        MATCH(vkQueueSubmit);MATCH(vkQueueSubmit2);
+        if(!std::strcmp(n,"vkQueueSubmit2KHR"))return reinterpret_cast<PFN_vkVoidFunction>(&vkQueueSubmit2);
+    }
     if(d.independentSurface||d.coreSurface){MATCH(vkGetPhysicalDeviceSurfaceCapabilitiesKHR); if(d.surfaceCaps2){MATCH(vkGetPhysicalDeviceSurfaceCapabilities2KHR);} MATCH(vkDestroySurfaceKHR);}
     return d.gipa?d.gipa(i,n):nullptr;
 }
@@ -854,6 +858,7 @@ static PFN_vkVoidFunction deviceProcBase(VkDevice d,const char* n){
         return dispatch.gdpa?dispatch.gdpa(d,n):nullptr;
     }
     auto s=deviceState(key(d));if(d&&s.runtimeAuxiliary)return s.gdpa?s.gdpa(d,n):nullptr; MATCH(vkGetDeviceProcAddr); MATCH(vkDestroyDevice); MATCH(vkGetDeviceQueue); MATCH(vkGetDeviceQueue2); MATCH(vkCreateSwapchainKHR); MATCH(vkDestroySwapchainKHR); MATCH(vkGetSwapchainImagesKHR); MATCH(vkAcquireNextImageKHR); MATCH(vkAcquireNextImage2KHR); MATCH(vkQueueSubmit); MATCH(vkQueueSubmit2); MATCH(vkQueuePresentKHR); MATCH(vkCmdPushConstants); MATCH(vkCmdUpdateBuffer); MATCH(vkMapMemory); MATCH(vkUnmapMemory); MATCH(vkBindBufferMemory); MATCH(vkUpdateDescriptorSets); MATCH(vkCmdBindDescriptorSets); MATCH(vkCmdBindPipeline); MATCH(vkCmdBindVertexBuffers); MATCH(vkCmdBindIndexBuffer); MATCH(vkCmdDraw); MATCH(vkCmdDrawIndexed); MATCH(vkCmdDrawIndirect); MATCH(vkCmdDrawIndexedIndirect); MATCH(vkCmdSetViewport); MATCH(vkCmdSetScissor); MATCH(vkCreateShaderModule); MATCH(vkDestroyShaderModule); MATCH(vkCreateGraphicsPipelines); MATCH(vkDestroyPipeline); MATCH(vkCmdPipelineBarrier); MATCH(vkCreateImage); MATCH(vkDestroyImage); MATCH(vkCreateImageView); MATCH(vkDestroyImageView); MATCH(vkCreateFramebuffer); MATCH(vkDestroyFramebuffer); MATCH(vkCreateRenderPass); MATCH(vkCreateRenderPass2); MATCH(vkDestroyRenderPass); MATCH(vkCmdBeginRenderPass); MATCH(vkCmdBeginRenderPass2); MATCH(vkCmdNextSubpass); MATCH(vkCmdNextSubpass2); MATCH(vkCmdEndRenderPass); MATCH(vkCmdEndRenderPass2);
+    if(kharvox::sfs::vrEnabled()&&!strcmp(n,"vkQueueSubmit2KHR")&&s.submit2)return reinterpret_cast<PFN_vkVoidFunction>(&vkQueueSubmit2);
     return s.gdpa?s.gdpa(d,n):nullptr;
 }
 // These entry points sit OUTSIDE Native's wrappers so no Native bookkeeping
@@ -1080,6 +1085,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateDevice(VkPhysicalDevice p,const VkDeviceC
       d.xr.getDeviceProcAddr=nextGdpa;
 #define LOAD(field,name) d.field=reinterpret_cast<decltype(d.field)>(kharvox::native::trace::wrap(#name,nextGdpa(*out,#name),true))
       LOAD(destroy,vkDestroyDevice);LOAD(getQueue,vkGetDeviceQueue);LOAD(getQueue2,vkGetDeviceQueue2);LOAD(createSwapchain,vkCreateSwapchainKHR);LOAD(destroySwapchain,vkDestroySwapchainKHR);LOAD(getSwapchainImages,vkGetSwapchainImagesKHR);LOAD(acquire,vkAcquireNextImageKHR);LOAD(acquire2,vkAcquireNextImage2KHR);LOAD(submit,vkQueueSubmit);LOAD(submit2,vkQueueSubmit2);LOAD(present,vkQueuePresentKHR);
+      if(kharvox::sfs::vrEnabled()&&!d.submit2)LOAD(submit2,vkQueueSubmit2KHR);
       LOAD(cmdPushConstants,vkCmdPushConstants);LOAD(cmdUpdateBuffer,vkCmdUpdateBuffer);
       LOAD(mapMemory,vkMapMemory);LOAD(unmapMemory,vkUnmapMemory);LOAD(bindBufferMemory,vkBindBufferMemory);LOAD(updateDescriptorSets,vkUpdateDescriptorSets);LOAD(cmdBindDescriptorSets,vkCmdBindDescriptorSets);LOAD(cmdBindPipeline,vkCmdBindPipeline);LOAD(cmdBindVertexBuffers,vkCmdBindVertexBuffers);LOAD(cmdBindIndexBuffer,vkCmdBindIndexBuffer);LOAD(cmdDraw,vkCmdDraw);LOAD(cmdDrawIndexed,vkCmdDrawIndexed);LOAD(cmdDrawIndirect,vkCmdDrawIndirect);LOAD(cmdDrawIndexedIndirect,vkCmdDrawIndexedIndirect);LOAD(cmdSetViewport,vkCmdSetViewport);LOAD(cmdSetScissor,vkCmdSetScissor);LOAD(createGraphicsPipelines,vkCreateGraphicsPipelines);LOAD(destroyPipeline,vkDestroyPipeline);LOAD(createImage,vkCreateImage);LOAD(destroyImage,vkDestroyImage);LOAD(createImageView,vkCreateImageView);LOAD(destroyImageView,vkDestroyImageView);LOAD(createFramebuffer,vkCreateFramebuffer);LOAD(destroyFramebuffer,vkDestroyFramebuffer);LOAD(createRenderPass,vkCreateRenderPass);LOAD(createRenderPass2,vkCreateRenderPass2);LOAD(destroyRenderPass,vkDestroyRenderPass);LOAD(cmdBeginRenderPass,vkCmdBeginRenderPass);LOAD(cmdBeginRenderPass2,vkCmdBeginRenderPass2);LOAD(cmdNextSubpass,vkCmdNextSubpass);LOAD(cmdNextSubpass2,vkCmdNextSubpass2);LOAD(cmdEndRenderPass,vkCmdEndRenderPass);LOAD(cmdEndRenderPass2,vkCmdEndRenderPass2);
       LOAD(xr.createCommandPool,vkCreateCommandPool);LOAD(xr.destroyCommandPool,vkDestroyCommandPool);LOAD(xr.allocateCommandBuffers,vkAllocateCommandBuffers);LOAD(xr.resetCommandBuffer,vkResetCommandBuffer);LOAD(xr.beginCommandBuffer,vkBeginCommandBuffer);LOAD(xr.endCommandBuffer,vkEndCommandBuffer);LOAD(xr.cmdPipelineBarrier,vkCmdPipelineBarrier);LOAD(xr.cmdBlitImage,vkCmdBlitImage);LOAD(xr.cmdCopyImage,vkCmdCopyImage);LOAD(xr.cmdCopyBufferToImage,vkCmdCopyBufferToImage);LOAD(xr.cmdClearColorImage,vkCmdClearColorImage);LOAD(xr.createImage,vkCreateImage);LOAD(xr.destroyImage,vkDestroyImage);LOAD(xr.getImageMemoryRequirements,vkGetImageMemoryRequirements);LOAD(xr.allocateMemory,vkAllocateMemory);LOAD(xr.freeMemory,vkFreeMemory);LOAD(xr.bindImageMemory,vkBindImageMemory);LOAD(xr.createBuffer,vkCreateBuffer);LOAD(xr.destroyBuffer,vkDestroyBuffer);LOAD(xr.getBufferMemoryRequirements,vkGetBufferMemoryRequirements);LOAD(xr.bindBufferMemory,vkBindBufferMemory);LOAD(xr.mapMemory,vkMapMemory);LOAD(xr.unmapMemory,vkUnmapMemory);
@@ -1095,7 +1101,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateDevice(VkPhysicalDevice p,const VkDeviceC
           memoryProperties(p,&memory);logLine("[SFS] initializing native resource state");
           // Keep HUD, hand-depth and resource-lifetime observers in the chain.
           // deviceProcBase forwards to the driver without re-entering SFS.
-          if(!kharvox::sfs::initialize(*out,p,deviceProcBase,memory))stopVulkanStartup("Native SFS probe initialization failed");
+          if(!kharvox::sfs::initialize(*out,p,deviceProcBase,memory,lockQueueAccess,unlockQueueAccess))stopVulkanStartup("Native SFS probe initialization failed");
           if(kharvox::sfs::sourceRingRequested()){
               VkPhysicalDeviceProperties properties{};physicalDispatch.getPhysicalDeviceProperties(p,&properties);
               if(properties.limits.maxImageArrayLayers<2)stopVulkanStartup("SFS source ring requires two-layer Vulkan images.");
@@ -1246,13 +1252,23 @@ VKAPI_ATTR VkResult VKAPI_CALL vkAcquireNextImage2KHR(VkDevice d,const VkAcquire
 VKAPI_ATTR VkResult VKAPI_CALL vkQueueSubmit(VkQueue q,uint32_t c,const VkSubmitInfo*i,VkFence f){
     kharvox::native::trace::SubmitScope traceSubmit("engine-submit",q,c,i,f);
     auto s=deviceState(key(q));const auto n=++submitCount;LARGE_INTEGER enter{},returned{};QueryPerformanceCounter(&enter);if(logFrame(n)){std::ostringstream x;x<<"[Submit "<<n<<"] batches="<<c;logLine(x.str());}
-    VkResult result=VK_ERROR_DEVICE_LOST;{std::lock_guard<std::recursive_mutex>queueLock(queueAccessMutex);result=s.submit?s.submit(q,c,i,f):VK_ERROR_DEVICE_LOST;kharvox::native::submitted(q,c,i,result);}QueryPerformanceCounter(&returned);
+    VkResult result=VK_ERROR_DEVICE_LOST;{std::lock_guard<std::recursive_mutex>queueLock(queueAccessMutex);result=s.submit?s.submit(q,c,i,f):VK_ERROR_DEVICE_LOST;kharvox::native::submitted(q,c,i,result);
+        if(kharvox::sfs::vrEnabled()&&!s.runtimeAuxiliary){
+            bool commands=false;for(uint32_t n=0;i&&n<c;++n)commands|=i[n].commandBufferCount!=0;
+            if(commands||result!=VK_SUCCESS)kharvox::sfs::submitted(s.device,q,result);
+        }
+    }QueryPerformanceCounter(&returned);
     const double totalMs=elapsedMilliseconds(enter,returned);if(result==VK_ERROR_DEVICE_LOST)logLine("[DEVICE-LOST] vkQueueSubmit returned VK_ERROR_DEVICE_LOST call="+std::to_string(n));if(extendedLoggingEnabled()&&(traceDiagnosticCall(n)||result!=VK_SUCCESS||totalMs>=10.0)){std::ostringstream x;x<<"[SUBMIT] return call="<<n<<" thread="<<GetCurrentThreadId()<<" queue="<<reinterpret_cast<uint64_t>(q)<<" batches="<<c<<" fence="<<reinterpret_cast<uint64_t>(f)<<" result="<<result<<" totalMs="<<totalMs;logExtended(x.str());}traceSubmit.result(result);return result;
 }
 VKAPI_ATTR VkResult VKAPI_CALL vkQueueSubmit2(VkQueue q,uint32_t c,const VkSubmitInfo2*i,VkFence f){
     kharvox::native::trace::SubmitScope traceSubmit("engine-submit2",q,c,i,f);
     auto s=deviceState(key(q));const auto n=++submitCount;LARGE_INTEGER enter{},returned{};QueryPerformanceCounter(&enter);if(logFrame(n)){std::ostringstream x;x<<"[Submit2 "<<n<<"] batches="<<c;logLine(x.str());}
-    VkResult result=VK_ERROR_DEVICE_LOST;{std::lock_guard<std::recursive_mutex>queueLock(queueAccessMutex);result=s.submit2?s.submit2(q,c,i,f):VK_ERROR_DEVICE_LOST;kharvox::native::submitted2(q,c,i,result);}QueryPerformanceCounter(&returned);
+    VkResult result=VK_ERROR_DEVICE_LOST;{std::lock_guard<std::recursive_mutex>queueLock(queueAccessMutex);result=s.submit2?s.submit2(q,c,i,f):VK_ERROR_DEVICE_LOST;kharvox::native::submitted2(q,c,i,result);
+        if(kharvox::sfs::vrEnabled()&&!s.runtimeAuxiliary){
+            bool commands=false;for(uint32_t n=0;i&&n<c;++n)commands|=i[n].commandBufferInfoCount!=0;
+            if(commands||result!=VK_SUCCESS)kharvox::sfs::submitted(s.device,q,result);
+        }
+    }QueryPerformanceCounter(&returned);
     const double totalMs=elapsedMilliseconds(enter,returned);if(result==VK_ERROR_DEVICE_LOST)logLine("[DEVICE-LOST] vkQueueSubmit2 returned VK_ERROR_DEVICE_LOST call="+std::to_string(n));if(extendedLoggingEnabled()&&(traceDiagnosticCall(n)||result!=VK_SUCCESS||totalMs>=10.0)){std::ostringstream x;x<<"[SUBMIT2] return call="<<n<<" thread="<<GetCurrentThreadId()<<" queue="<<reinterpret_cast<uint64_t>(q)<<" batches="<<c<<" fence="<<reinterpret_cast<uint64_t>(f)<<" result="<<result<<" totalMs="<<totalMs;logExtended(x.str());}traceSubmit.result(result);return result;
 }
 VKAPI_ATTR VkResult VKAPI_CALL vkQueuePresentKHR(VkQueue q,const VkPresentInfoKHR*i){

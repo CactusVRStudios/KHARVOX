@@ -98,6 +98,52 @@ python tools/analyze_native_pacing_sequence.py "$env:TEMP/native_pacing_sequence
 
 Compare `withoutKnownDiagnosticNeighbors.fields` median/p95/p99 and `slowestFrames` across matching scenes. These are nested CPU wall spans, not additive GPU timings. Repeat with level loads, quality rebuilds, empty XR frames, and other queue activity before changing retirement dependencies.
 
+## SPS/SFS Owner-Fence Follow-Up
+
+The user narrowed the follow-up to SPS, named SFS in this repository. The
+Native replay backend audited above is separate from SFS and from AER. This
+change targets `src/sfs/NativeSfs.cpp::beginFrame`, not Native replay retirement
+or alternate-eye rendering. The original Native finding 5 remains deferred.
+
+SFS previously called `vkDeviceWaitIdle` before every frame-uniform upload,
+even after the XR owner-copy fence had completed. It now records completion
+evidence containing the device, queue, fence, rendered frame, uniform generation,
+and submission sequence. XR captures it under the queue lock immediately before
+the copy submit, then publishes it only after successful submission and fence
+completion, on both synchronous and early-release paths. `xrEndFrame` success
+does not authorize retirement.
+
+SFS pair generation retains the acquired uniform-frame identity even when source
+qualification selects an older camera pose. Completion checks use that generation,
+not the independently qualified presentation pose.
+
+All game command-buffer submissions are conservatively treated as uniform
+readers. The layer observes `vkQueueSubmit`, `vkQueueSubmit2`, and its KHR alias,
+including instance-proc lookup. Other-queue work, failed or later submissions,
+stale frame/generation identity, swapchain changes, missing callbacks, and paths
+without a valid stereo copy fence retain device-idle retirement. Empty source-ring
+semaphore submissions do not read uniforms and do not invalidate the evidence.
+The completion check, fallback wait, and uniform upload share the queue lock.
+No deferred engine-resource frees or descriptor-pool resets use this evidence.
+
+With `KHARVOX_SFS_PROFILE_TIMING=1`, the existing parameter timing log also reports
+`ownerFenceRetirements` and `deviceDrains` per 120 uploads. The historical
+`deviceIdleMeanMs`/`deviceIdleMaxMs` fields measure the retirement span, including
+queue-lock acquisition; they are not GPU execution times. Compare these counters
+and matching-scene frametimes before claiming a performance improvement.
+
+The new `sfs-owner-completion` regression compiles the production SFS runtime
+with stub Vulkan dispatch and unused shader-compiler stubs. It checks successful
+fence retirement, failed waits/submits, missing/stale identities, delayed queue
+submissions, swapchain invalidation, and exclusion of submissions during upload.
+This is not a live multi-queue GPU or headset validation.
+
+Validation: the Release layer build succeeded with the shader compiler disabled;
+the new test separately compiled and exercised `NativeSfs.cpp`. All 43 selected
+non-GPU CTest cases passed (four SFS and 39 Native). A compiler-enabled production
+SFS package, live Vulkan synchronization validation, and headset frametime
+measurements were not run.
+
 ## Audit-Time Verification And Limits
 
 - Nine existing tests compiled and passed with MinGW g++ in C++20 mode: descriptor arena, deferred memory, resource retirement, storage mirror budget, snapshot batch, eye bindings, source layouts, image plans, and SFS push replay.

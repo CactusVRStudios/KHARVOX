@@ -5194,6 +5194,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
     const bool earlyRelease=kharvox::nativeEarlyXrRelease(earlyReleaseRequested,s.runtimeKind,
         nativePairReady,!s.quadMode,copyCompletion!=VK_NULL_HANDLE,queueSynchronized,readbackRecorded);
     kharvox::NativeXrCopyLifetime copyLifetime(earlyRelease);
+    kharvox::sfs::OwnerCopyCompletion sfsOwnerCopy;
     LARGE_INTEGER nativeSubmitAt{},nativeSubmitDone{},nativeReleaseAt{},nativeReleaseDone{},nativeEndAt{},nativeEndDone{},nativeCompleteAt{};
     LARGE_INTEGER copyWaitStart{},copyWaitEnd{};
     if(steamRuntime)QueryPerformanceCounter(&copyWaitStart);
@@ -5208,6 +5209,8 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
         QueueAccessScope queueAccess;
         kharvox::native::cpu::elapsed(kharvox::native::cpu::XrQueueLock,nativeQueueLockStart);
         kharvox::native::cpu::Scope nativeCopyProfile(kharvox::native::cpu::XrCopyCompletion);
+        if(sfsBackend&&nativePairReady&&!s.quadMode&&queueSynchronized)
+            sfsOwnerCopy=kharvox::sfs::captureOwnerCopy(s.device,q,copyCompletion,nativeFrame.generation);
         if(nativeFrameValid)QueryPerformanceCounter(&nativeSubmitAt);
         {kharvox::native::cpu::Scope submitProfile(kharvox::native::cpu::XrQueueSubmit);kharvox::native::trace::SubmitScope capture("owner-submit",q,1,&submit,copyCompletion);submitResult=s.vk.queueSubmit(q,1,&submit,copyCompletion);capture.result(submitResult);}
         if(nativeFrameValid)QueryPerformanceCounter(&nativeSubmitDone);
@@ -5254,7 +5257,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
         log(std::string(copyCompletion?"copy fence wait failed ":"copy queue wait failed ")+std::to_string(completionResult));endEmptyFrame("copy-completion-failed");return;
     }
     if(!earlyRelease){
-        if(sfsBackend)kharvox::sfs::copyCompleted(s.device);
+        if(sfsBackend)kharvox::sfs::copyCompleted(s.device,sfsOwnerCopy,submitResult,completionResult);
         for(int e=0;e<2;++e)if(rawEyeCaptureRecorded[e])eyeSourceCapture[e].completed=true;
         if(nativeFrameValid)QueryPerformanceCounter(&nativeCompleteAt);
         if(!copyLifetime.canRetireResources())kharvox::native::fail("owner resources retired before copy completion");
@@ -5557,7 +5560,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
         reportNativeDeviceLost("deferredWaitForFences",completionResult);
         copyLifetime.completed(completionResult==VK_SUCCESS);
         if(!copyLifetime.canRetireResources())kharvox::native::fail("early XR release copy completion failed; resources retained");
-        if(sfsBackend)kharvox::sfs::copyCompleted(s.device);
+        if(sfsBackend)kharvox::sfs::copyCompleted(s.device,sfsOwnerCopy,submitResult,completionResult);
         s.handRenderer.finishSceneIntegratedFrame();
     }
     if(nativeFrameValid){

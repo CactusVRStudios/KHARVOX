@@ -330,7 +330,7 @@ int main(int argc,char** argv){try{
     kharvox::sfs::prepare(device,pose,projection);
     kharvox::sfs::beginFrame(device,chain,1); // copy not retired: old uniforms
     check(kharvox::sfs::pair(device,trackedImages[1],{8,8},VK_FORMAT_D32_SFLOAT,captured)&&captured.pose.serial!=2,"Pending pose labeled as rendered");
-    kharvox::sfs::copyCompleted(device);kharvox::sfs::beginFrame(device,chain,1);
+    kharvox::sfs::copyCompleted(device,{},VK_SUCCESS,VK_SUCCESS);kharvox::sfs::beginFrame(device,chain,1);
     check(kharvox::sfs::pair(device,trackedImages[1],{8,8},VK_FORMAT_D32_SFLOAT,captured)&&captured.pose.serial==2&&captured.pose.controllersValid[1]&&captured.pose.controllers[1].position.x==.2f,"Frame controller snapshot lost");
     check(kharvox::sfs::pair(device,image,{8,8},VK_FORMAT_D32_SFLOAT,captured)&&captured.pose.serial!=2,"Other acquired image relabeled by newer prediction");
     kharvox::sfs::swapchainImages(device,chain,2,trackedImages);

@@ -1,6 +1,7 @@
 #pragma once
 #include <vulkan/vulkan.h>
 #include <openxr/openxr.h>
+#include "OwnerCompletion.h"
 namespace kharvox {struct AerSourceObservation;}
 namespace kharvox::native {struct FramePose;struct StereoFrame;}
 namespace kharvox::sfs {
@@ -16,14 +17,16 @@ VkResult presentSource(VkDevice,VkQueue,const VkPresentInfoKHR&,bool);
 void destroySourceSwapchain(VkDevice,VkSwapchainKHR);
 VkImageLayout sourceLayout(VkDevice,VkImage,VkImageLayout);
 bool nativeProbeEnabled();
-bool initialize(VkDevice,VkPhysicalDevice,PFN_vkGetDeviceProcAddr,const VkPhysicalDeviceMemoryProperties&);
+bool initialize(VkDevice,VkPhysicalDevice,PFN_vkGetDeviceProcAddr,const VkPhysicalDeviceMemoryProperties&,void(*)()=nullptr,void(*)()=nullptr);
 void shutdown(VkDevice);
 PFN_vkVoidFunction wrapProc(VkDevice d,const char*,PFN_vkVoidFunction);
 void swapchainImages(VkDevice,VkSwapchainKHR,uint32_t,const VkImage*);
 void swapchainDestroyed(VkDevice,VkSwapchainKHR);
 bool vrEnabled();
 void prepare(VkDevice,const kharvox::native::FramePose&,const XrFovf&);
-void copyCompleted(VkDevice);
+void submitted(VkDevice,VkQueue,VkResult);
+OwnerCopyCompletion captureOwnerCopy(VkDevice,VkQueue,VkFence,uint64_t frame);
+void copyCompleted(VkDevice,const OwnerCopyCompletion&,VkResult submit,VkResult wait);
 void beginFrame(VkDevice,VkSwapchainKHR=VK_NULL_HANDLE,uint32_t imageIndex=0);
 bool pair(VkDevice,VkImage,VkExtent2D,VkFormat,kharvox::native::StereoFrame&,const AerSourceObservation* =nullptr);
 bool eyeAttachmentView(VkDevice,VkImageView,uint32_t,VkImageView&);
@@ -39,14 +42,16 @@ inline VkResult presentSource(VkDevice,VkQueue,const VkPresentInfoKHR&,bool){ret
 inline void destroySourceSwapchain(VkDevice,VkSwapchainKHR){}
 inline VkImageLayout sourceLayout(VkDevice,VkImage,VkImageLayout layout){return layout;}
 inline bool nativeProbeEnabled(){return false;}
-inline bool initialize(VkDevice,VkPhysicalDevice,PFN_vkGetDeviceProcAddr,const VkPhysicalDeviceMemoryProperties&){return true;}
+inline bool initialize(VkDevice,VkPhysicalDevice,PFN_vkGetDeviceProcAddr,const VkPhysicalDeviceMemoryProperties&,void(*)()=nullptr,void(*)()=nullptr){return true;}
 inline void shutdown(VkDevice){}
 inline PFN_vkVoidFunction wrapProc(VkDevice d,const char*,PFN_vkVoidFunction next){return next;}
 inline void swapchainImages(VkDevice,VkSwapchainKHR,uint32_t,const VkImage*){}
 inline void swapchainDestroyed(VkDevice,VkSwapchainKHR){}
 inline bool vrEnabled(){return false;}
 inline void prepare(VkDevice,const kharvox::native::FramePose&,const XrFovf&){}
-inline void copyCompleted(VkDevice){}
+inline void submitted(VkDevice,VkQueue,VkResult){}
+inline OwnerCopyCompletion captureOwnerCopy(VkDevice,VkQueue,VkFence,uint64_t){return {};}
+inline void copyCompleted(VkDevice,const OwnerCopyCompletion&,VkResult,VkResult){}
 inline void beginFrame(VkDevice,VkSwapchainKHR=VK_NULL_HANDLE,uint32_t=0){}
 inline bool pair(VkDevice,VkImage,VkExtent2D,VkFormat,kharvox::native::StereoFrame&,const AerSourceObservation* =nullptr){return false;}
 inline bool eyeAttachmentView(VkDevice,VkImageView,uint32_t,VkImageView&){return false;}

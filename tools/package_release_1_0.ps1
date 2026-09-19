@@ -4,7 +4,10 @@ param(
     [Parameter(Mandatory=$true)][string]$LauncherOutput,
     [Parameter(Mandatory=$true)][string]$OutputRoot,
     [string]$PackageName = 'KHARVOX-1.0',
-    [string]$LauncherFileVersion = '1.0.0.1000'
+    [string]$LauncherFileVersion = '1.0.0.1000',
+    [string]$NativeFileVersion = '1.0.0.1000',
+    [string]$ProductVersion = '1.0.0',
+    [string]$ReleaseNotes = 'Docs/RELEASE_1_0.md'
 )
 $ErrorActionPreference='Stop'
 $source=Split-Path $PSScriptRoot -Parent
@@ -29,11 +32,11 @@ Copy-Item -LiteralPath "$source/README.md" -Destination $package
 $notice=Get-Content -LiteralPath "$source/THIRD_PARTY_NOTICES.md" -Raw
 $profile=(Get-Content -LiteralPath "$source/Docs/THIRD_PARTY_NOTICES.txt" -Raw).Split(@('SFS external shader-profile provenance'),[StringSplitOptions]::None)[1]
 ($notice.TrimEnd()+"`n`nSFS external shader-profile provenance"+$profile) | Set-Content -Encoding utf8 "$package/THIRD_PARTY_NOTICES.md"
-Copy-Item -LiteralPath "$source/Docs/RELEASE_1_0.md" -Destination "$package/RELEASE-NOTES.md"
+Copy-Item -LiteralPath "$source/$ReleaseNotes" -Destination "$package/RELEASE-NOTES.md"
 foreach($name in @('KharvoxLayer.dll','KharvoxLauncher.exe')){
     $info=(Get-Item -LiteralPath "$package/$name").VersionInfo
-    $expectedVersion=if($name -eq 'KharvoxLauncher.exe'){$LauncherFileVersion}else{'1.0.0.1000'}
-    if($info.FileVersion -ne $expectedVersion -or !$info.ProductVersion.StartsWith('1.0.0')){throw "Wrong release version: $name"}
+    $expectedVersion=if($name -eq 'KharvoxLauncher.exe'){$LauncherFileVersion}else{$NativeFileVersion}
+    if($info.FileVersion -ne $expectedVersion -or !$info.ProductVersion.StartsWith($ProductVersion)){throw "Wrong release version: $name"}
 }
 $stamp=Get-Content -LiteralPath "$package/native_sfs_build.txt"
 $hash=(Get-FileHash -LiteralPath "$package/KharvoxLayer.dll" -Algorithm SHA256).Hash

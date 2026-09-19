@@ -4,6 +4,7 @@
 #include "TutorialRenderPolicy.h"
 #include "TutorialBindingText.h"
 #include "HudLayoutPolicy.h"
+#include "WeaponWheelHudPolicy.h"
 #include "HudMenuPolicy.h"
 
 #include "../camera/CameraHook.h"
@@ -104,6 +105,7 @@ struct PendingHudSubmission {
     bool active{};
     bool crosshair{};
     bool offhand{};
+    bool weaponWheel{};
     int offhandSurface{-1};
     float offhandWidth{};
     std::array<float,9> offhandAxis{};
@@ -152,7 +154,7 @@ std::mutex offhandRenderMutex;
 kharvox::OffhandHudRenderFrame offhandRenderFrame;
 std::mutex offhandHudMutex;
 bool offhandCanvasHookReady{};
-struct OffhandCanvasSubmission {const void* entity{};float center[3]{},axis[9]{},width{};int surface{-1};};
+struct OffhandCanvasSubmission {const void* entity{};float center[3]{},axis[9]{},width{};int surface{-1};bool weaponWheel{};};
 thread_local OffhandCanvasSubmission offhandCanvasSubmission;
 thread_local OffhandCanvasSubmission progSource;
 thread_local const void* suppressedOffhandCanvas{};
@@ -613,7 +615,8 @@ void __fastcall offhandHudCanvasSize(void* entity,int width,int height,float ext
         }
     }
     float origin[3]{};
-    const bool owned=caller==0xF922A7&&pending.entity==entity&&width==512&&height==300
+    const bool owned=caller==0xF922A7&&pending.entity==entity
+        &&((pending.weaponWheel&&width>0&&height>0)||(width==512&&height==300))
         &&kharvox::centeredOffhandHud(pending.center,pending.axis,pending.width,
             float(width)/float(height),origin,extentX,extentY);
     originalHudCanvasSize(entity,width,height,extentX,extentY);
@@ -3410,6 +3413,7 @@ bool KharvoxHudPrepareOriginTransform(void* intermediateEntity, float* nativeOri
     int flatProfileIndex{-1};
     int ownedHandSurface{-1};
     HudProfileAdjustment profileAdjustment{};
+    bool weaponWheel=false;
 
     if (!crosshair) {
         void* frames[8]{};
@@ -3445,6 +3449,8 @@ bool KharvoxHudPrepareOriginTransform(void* intermediateEntity, float* nativeOri
         diagnosticHeight = profile.height;
         diagnosticScaleMilli = profile.scaleMilli;
         const auto ownerVtable=*reinterpret_cast<const uintptr_t*>(current);
+        weaponWheel=offhandCanvasHookReady&&ownerVtable>=image
+            &&kharvox::ownedWeaponWheel(ownerVtable-image);
         ownedHandSurface=kharvox::ownedOffhandHudSurface(ownerVtable>=image?ownerVtable-image:0,
             profile.callerRva,profile.width,profile.height,profile.scaleMilli);
         bool managedOffhand=false;
@@ -3534,12 +3540,15 @@ bool KharvoxHudPrepareOriginTransform(void* intermediateEntity, float* nativeOri
     float desiredOrigin[3]{};
     float headAxis[9]{};
     float nativeDepth{};
-    if (!std::isfinite(nativeScale)
-        || !buildHeadlockedOriginTransform(
-            nativeOrigin, crosshair, offscreen,
-            expectedFinalEntity, flatProfileIndex,
-            desiredOrigin, headAxis, &nativeDepth, calibration,
-            profileAdjustment)) return false;
+    if(!std::isfinite(nativeScale))return false;
+    if(weaponWheel&&!offscreen){
+        float eye[3]{};
+        if(!KharvoxCameraGetHudCenterRenderPose(eye,headAxis)
+            ||!kharvox::weaponWheelPose(eye,headAxis,hudWorldUnitsPerMeter,desiredOrigin))return false;
+        profileAdjustment.yawDegrees=0;
+    }else if(!buildHeadlockedOriginTransform(nativeOrigin,crosshair,offscreen,
+        expectedFinalEntity,flatProfileIndex,desiredOrigin,headAxis,&nativeDepth,
+        calibration,profileAdjustment))return false;
 
     bool offhand=false;float offhandAxis[9]{};float offhandScale=1;
     const int handSurface=ownedHandSurface;
@@ -3567,6 +3576,7 @@ bool KharvoxHudPrepareOriginTransform(void* intermediateEntity, float* nativeOri
     pending.active = true;
     pending.crosshair = crosshair;
     pending.offhand=offhand;
+    pending.weaponWheel=weaponWheel&&!offscreen;
     pending.offhandSurface=handSurface;
     pending.offhandWidth=.25f*hudWorldUnitsPerMeter*(offhandScale/.40f);
     std::memcpy(pending.offhandAxis.data(),offhandAxis,sizeof(offhandAxis));
@@ -3651,7 +3661,9 @@ bool KharvoxHudCompleteFinalEntity(
 
     const auto matchedPending = pendingHudStack[match];
     const bool transformed = desiredOrigin && desiredAxis
-        && buildStableHeadlockedAxis(matchedPending, nativeAxis, desiredAxis);
+        && (matchedPending.weaponWheel
+            ? kharvox::flatWeaponWheelAxis(nativeAxis,matchedPending.headAxis.data(),desiredAxis)
+            : buildStableHeadlockedAxis(matchedPending, nativeAxis, desiredAxis));
     offhandCanvasSubmission={};
     if(transformed&&matchedPending.offhand){
         float rotated[9]{};
@@ -3664,6 +3676,15 @@ bool KharvoxHudCompleteFinalEntity(
         offhandCanvasSubmission.width=matchedPending.offhandWidth;
         std::memcpy(offhandCanvasSubmission.center,matchedPending.desiredOrigin.data(),sizeof(offhandCanvasSubmission.center));
         std::memcpy(offhandCanvasSubmission.axis,desiredAxis,sizeof(offhandCanvasSubmission.axis));
+    }
+    if(transformed&&matchedPending.weaponWheel){
+        offhandCanvasSubmission.entity=entity;
+        offhandCanvasSubmission.weaponWheel=true;
+        offhandCanvasSubmission.width=kharvox::weaponWheelWidthMeters*hudWorldUnitsPerMeter;
+        std::memcpy(offhandCanvasSubmission.center,matchedPending.desiredOrigin.data(),sizeof(float)*3);
+        std::memcpy(offhandCanvasSubmission.axis,desiredAxis,sizeof(float)*9);
+        static std::atomic<bool> noted{};
+        if(!noted.exchange(true))log("[WEAPON-WHEEL] owned selection canvas centered at 3m; width=3m; camera-aligned stereo plane");
     }
     if (transformed)
         std::memcpy(desiredOrigin, matchedPending.desiredOrigin.data(), sizeof(float) * 3);

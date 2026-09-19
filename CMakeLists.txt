@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(KHARVOX VERSION 1.0.0 LANGUAGES C CXX)
+project(KHARVOX VERSION 1.0.1 LANGUAGES C CXX)
 
 include(CTest)
 option(KHARVOX_BUILD_SFS_COMPILER "Build the native SFS shader transformer" OFF)

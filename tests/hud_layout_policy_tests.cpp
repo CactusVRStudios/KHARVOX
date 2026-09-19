@@ -1,4 +1,5 @@
 #include "../src/hud/HudLayoutPolicy.h"
+#include "../src/hud/WeaponWheelHudPolicy.h"
 
 #include <cmath>
 #include <sstream>
@@ -14,6 +15,21 @@ bool near(float left, float right) {
 
 int main() {
     using namespace kharvox;
+    {
+        if(!ownedWeaponWheel(0x22456f8)||!ownedWeaponWheel(0x2245608)||ownedWeaponWheel(0x2240978))return 170;
+        const float eye[3]{5,6,7},head[9]{0,1,0,-1,0,0,0,0,1};float center[3]{},out[9]{};
+        if(!weaponWheelPose(eye,head,100,center)||!near(center[0],5)||!near(center[1],306)||!near(center[2],7))return 171;
+        const float native[9]{2,0,0,0,0,-3,0,4,0};
+        if(!flatWeaponWheelAxis(native,head,out))return 172;
+        for(int i=0;i<9;++i)if(!near(native[i],out[i]))return 173;
+        for(int width:{512,1024,2048,4096}){
+            float origin[3]{},x=0,y=0;
+            if(!centeredOffhandHud(center,out,300,float(width)/float(width*9/16),origin,x,y))return 174;
+            for(int i=0;i<3;++i)if(!near(origin[i]+.5f*(out[i]*x+out[3+i]*y),center[i]))return 175;
+            if(!near(x*std::abs(out[0]),300))return 176;
+        }
+    }
+
     {
         // Values read from live campaign objects, not inferred from type names.
         if(ownedOffhandHudSurface(0x2240888,0xbdcf54,512,300,83)!=0)return 125;

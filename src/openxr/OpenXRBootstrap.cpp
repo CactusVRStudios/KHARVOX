@@ -361,10 +361,7 @@ private:
             if(stopping&&!taskPending)break;
             auto current=std::move(task);
             lock.unlock();
-            {
-                QueueAccessScope queueAccess;
-                current();
-            }
+            current();
             lock.lock();
             taskPending=false;
             taskComplete=true;

@@ -1051,3 +1051,14 @@ The next valid gameplay draw restores the hand-bound extents automatically.
 123 regression tests (including sequence/tracking-gap suppression scope) and
 launcher self-test passed. Headset validation of jump/glory-kill transitions
 remains pending.
+## Test 29 - Secondary-fire weapon identity (2026-09-19)
+The live log alternates shotgun and shotgun_secondary_pop_rockets when right
+Grip is pressed/released. Previously every decl pointer change advanced the
+weapon-source epoch, rejecting an otherwise valid queued VR pose (reason 7).
+Track the native owner and its base decl (+0x30), separately from the selected
+fire-mode decl. Retain the epoch only for the same non-null owner/base and
+recognized weapon family. Real owner/base changes and unknown decl transitions
+still invalidate; explicit calibration resets remain unchanged.
+Identity publication is serialized. Regression tests cover repeated fire-mode
+edges, same-family re-equips, owner changes, unknowns and missing base identity.
+123 CTests and launcher self-test passed. Headset R-Grip validation is pending.

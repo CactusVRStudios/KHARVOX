@@ -1,4 +1,5 @@
 #include "../src/weapon/AerWeaponSource.h"
+#include "../src/weapon/WeaponIdentityPolicy.h"
 #include <cstdlib>
 #include <thread>
 #include <cstdio>
@@ -7,6 +8,23 @@ void checked(bool ok,int line){if(!ok){std::fprintf(stderr,"weapon source assert
 bool near(float a,float b){return std::abs(a-b)<.0001f;}
 int main(){
     using namespace kharvox;
+    {
+        const WeaponIdentity primary{10,20,20,1,true}, secondary{10,20,30,1,true};
+        check(weaponIdentityNeedsReset({},primary));
+        auto identity=primary;
+        for(int i=0;i<120;++i){
+            const auto next=i%2?primary:secondary;
+            check(!weaponIdentityNeedsReset(identity,next));identity=next;
+        }
+        check(!weaponIdentityNeedsReset(primary,primary));
+        check(weaponIdentityNeedsReset(primary,{11,20,20,1,true}));
+        check(weaponIdentityNeedsReset(primary,{10,40,40,1,true}));
+        check(weaponIdentityNeedsReset(primary,{10,20,30,2,true}));
+        check(weaponIdentityNeedsReset(primary,{10,20,30,0,false}));
+        check(weaponIdentityNeedsReset({10,20,30,0,false},primary));
+        check(weaponIdentityNeedsReset({10,0,20,1,true},{10,0,30,1,true}));
+        check(weaponIdentityNeedsReset(primary,{}));
+    }
     {
         SfsWeaponDrawBridge bridge;
         AerWeaponFrame old{};old.input.valid=true;old.input.epoch=4;

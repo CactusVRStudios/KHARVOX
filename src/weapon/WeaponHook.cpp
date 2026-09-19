@@ -4,6 +4,7 @@
 #include "../common/DiagnosticLogging.h"
 #include "../common/PoseTrace.h"
 #include "WeaponHook.h"
+#include "WeaponIdentityPolicy.h"
 #include "AerWeaponPairPolicy.h"
 #include "AerWeaponPoseCache.h"
 #include "CollectiblePresentation.h"
@@ -1076,20 +1077,31 @@ bool patchVrSniperPresentation(void* weaponData) {
     return true;
 }
 
-void observeActiveWeaponData(void* weaponData) {
+void observeActiveWeaponData(void* owner, void* weaponData) {
+    static std::mutex identityMutex;
+    static kharvox::WeaponIdentity previous;
+    std::lock_guard lock(identityMutex);
+    uintptr_t baseDecl{};
+    if (owner && readableRange(owner, 0x38))
+        std::memcpy(&baseDecl, static_cast<unsigned char*>(owner) + 0x30, sizeof(baseDecl));
     const auto address = reinterpret_cast<uintptr_t>(weaponData);
-    const bool changed = activeWeaponData.exchange(address, std::memory_order_acq_rel) != address;
+    const bool changed = previous.activeDecl != address
+        || previous.owner != reinterpret_cast<uintptr_t>(owner) || previous.baseDecl != baseDecl;
     if (!changed) {
         if (activeWeaponKind.load(std::memory_order_acquire) != KharvoxWeaponKind::Unknown) return;
         if ((unknownWeaponRescanCalls.fetch_add(1, std::memory_order_relaxed) % 120) != 119) return;
     } else {
         unknownWeaponRescanCalls.store(0, std::memory_order_relaxed);
-        invalidateAerWeaponPairCache();
     }
     if (changed) patchVrSniperPresentation(weaponData);
     std::string matchedText;
     const auto kind = classifyWeaponData(weaponData, matchedText);
+    const kharvox::WeaponIdentity current{reinterpret_cast<uintptr_t>(owner), baseDecl,
+        address, static_cast<int>(kind), kind != KharvoxWeaponKind::Unknown};
+    if (kharvox::weaponIdentityNeedsReset(previous, current)) invalidateAerWeaponPairCache();
+    previous = current;
     activeWeaponKind.store(kind, std::memory_order_release);
+    activeWeaponData.store(address, std::memory_order_release);
     if (!changed && kind == KharvoxWeaponKind::Unknown) return;
     std::ostringstream out;
     out << "active native weapon decl -> " << KharvoxWeaponKindDisplayName(kind)
@@ -1158,7 +1170,7 @@ extern "C" void* __fastcall activeWeaponDataHook(void* owner, int fireMode) {
     if (image && returnAddress >= image && returnAddress - image == 0xD7D6C2) {
         if (activeWeaponData.load(std::memory_order_acquire) != reinterpret_cast<uintptr_t>(result))
             prepareReachableVrSniperDecls(owner, result);
-        observeActiveWeaponData(result);
+        observeActiveWeaponData(owner, result);
     }
     return result;
 }

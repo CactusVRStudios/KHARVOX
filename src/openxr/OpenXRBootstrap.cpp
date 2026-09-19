@@ -4754,6 +4754,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
     const bool skipAlternatingCapture=skipInitialAlternatingCapture
         ||settlingAlternatingPipeline||(aerSourceMode&&!aerSourceQualified);
     auto abortCommandRecording=[&](const char*operation,VkResult failure){
+        s.fsr1.discardRecordedFrame();
         if(freshAerHands)s.freshHandsWorldValid=false;
         for(int e=0;e<2;++e)if(s.eyeImageStates[e].owned()&&xi[e]<s.eyes[e].initialized.size())
             s.eyes[e].initialized[xi[e]]=false;

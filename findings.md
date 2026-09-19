@@ -144,6 +144,18 @@ non-GPU CTest cases passed (four SFS and 39 Native). A compiler-enabled producti
 SFS package, live Vulkan synchronization validation, and headset frametime
 measurements were not run.
 
+## PR Review Follow-Up
+
+### P1: Synchronization2 Alias Dispatch
+
+Confirmed: a Vulkan 1.2 device may return a non-null core `vkQueueSubmit2`
+pointer that the application must not call. The KHR entry point now retains and
+calls its own downstream `vkQueueSubmit2KHR` pointer, without core/KHR fallback.
+Both wrappers share the existing submission tracking and queue lease. The
+`queue-host-dispatch` regression includes the production wrappers and simulates
+a forbidden non-null core pointer alongside a valid KHR pointer, missing aliases,
+submission failure, and empty submissions.
+
 ## Audit-Time Verification And Limits
 
 - Nine existing tests compiled and passed with MinGW g++ in C++20 mode: descriptor arena, deferred memory, resource retirement, storage mirror budget, snapshot batch, eye bindings, source layouts, image plans, and SFS push replay.

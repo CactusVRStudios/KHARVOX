@@ -96,7 +96,7 @@ internal sealed class DevModeForm : Form
         captureEyes ??= new CheckBox {Text="Eye capture: Ctrl+Shift+P (next launch)",AutoSize=true};
         captureEyes.Dock=DockStyle.Fill;
         root.Controls.Add(captureEyes);
-        var liveAmmo = new CheckBox { Text="Live/Ammo calibration",AutoSize=true,Dock=DockStyle.Fill };
+        var liveAmmo = new CheckBox { Text="Life/Ammo/ProgMeter calibration",AutoSize=true,Dock=DockStyle.Fill };
         var liveAmmoMarker=Path.Combine(AppContext.BaseDirectory,"enable_live_ammo_calibration");
         liveAmmo.Checked=File.Exists(liveAmmoMarker);
         liveAmmo.CheckedChanged+=(_,_)=>{
@@ -133,9 +133,9 @@ internal sealed class DevModeForm : Form
                 "  Shift + adjustment fine step (1 degree / 1 mm)\n" +
                 "  Num 5              reset selected hand to defaults\n" +
                 "  Every change is saved automatically.\n\n" +
-                "LIVE / AMMO CALIBRATION (enable checkbox above)\n" +
+                "LIFE / AMMO / PROGMETER CALIBRATION (enable checkbox above)\n" +
                 "  DOOM focused, Num Lock ON. No Alt required.\n" +
-                "  Starts on Life. Num 0 selects Life / Ammo (brief size pulse).\n" +
+                "  Starts on Life. Num 0 selects Life / Ammo / ProgMeter (brief size pulse).\n" +
                 "  Num +: rotation / position. Num 4/6: yaw / left-right.\n" +
                 "  Num 2/8: pitch / down-up. Num 7/9: roll / forward-back.\n" +
                 "  Shift: 2.5 degrees / 2.5 mm. Num * / Num /: size up / down.\n" +

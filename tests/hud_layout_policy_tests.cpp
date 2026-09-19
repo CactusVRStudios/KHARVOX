@@ -86,6 +86,25 @@ int main() {
         offhandHudBasis(hand,config.modes[1],panel);if(!near(panel[0],0)||!near(panel[1],1))return 106;
     }
 
+    // Legacy calibration migration preserves both accepted panels and seeds
+    // an independent ProgMeter pose for each handedness.
+    {
+        OffhandHudConfig c;
+        std::istringstream old("2 1 1 2 3 4 5 6 .4 7 8 9 10 11 12 .5 13 14 15 16 17 18 .6 19 20 21 22 23 24 .7");
+        if(!readOffhandHudConfig(old,c)||!near(c.modes[4].centimeters[1],16)||!near(c.modes[5].centimeters[1],22)
+            ||!near(c.modes[4].degrees[1],5)||!near(c.modes[5].degrees[1],11)||!near(c.modes[3].scale,.7f))return 140;
+        std::ostringstream saved;saved<<"3 1 ";
+        c.modes[4].centimeters[0]=31;c.modes[5].centimeters[0]=-42;
+        for(const auto& mode:c.modes){for(float x:mode.centimeters)saved<<x<<' ';for(float x:mode.degrees)saved<<x<<' ';saved<<mode.scale<<' ';}
+        OffhandHudConfig restored;std::istringstream input(saved.str());
+        if(!readOffhandHudConfig(input,restored)||!near(restored.modes[4].centimeters[0],31)||!near(restored.modes[5].centimeters[0],-42))return 141;
+        std::istringstream truncated("3 1 0 0 0 0 0 0 .4");
+        if(readOffhandHudConfig(truncated,restored)||!near(restored.modes[5].centimeters[0],-42))return 142;
+        float hand[9]{1,0,0,0,1,0,0,0,1},grip[3]{},origin[3]{};
+        offhandHudOrigin(grip,hand,hand,c.modes[4],2,100,origin);
+        if(!near(origin[1],16))return 143;
+    }
+
     // Owned health/ammo never fall back to the native screen during sequences.
     if(suppressOffhandHudFallback(true,true,false,false,false,true))return 113;
     if(!suppressOffhandHudFallback(true,false,false,false,false,true))return 114;

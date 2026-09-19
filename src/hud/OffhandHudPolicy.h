@@ -1,5 +1,6 @@
 #pragma once
 #include <array>
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <istream>
@@ -20,7 +21,8 @@ struct OffhandHudCalibration {
     std::array<float,3> degrees{}; // pitch, yaw, roll
     float scale{0.40f};
 };
-struct OffhandHudConfig { bool enabled{true};std::array<OffhandHudCalibration,4> modes{}; };
+inline const char* offhandHudName(int surface){return surface==0?"Life":surface==1?"Ammo":"ProgMeter";}
+struct OffhandHudConfig { bool enabled{true};std::array<OffhandHudCalibration,6> modes{}; };
 inline bool suppressOffhandHudFallback(bool managed,bool gameplay,bool cinematic,bool ledge,bool syncAttack,bool tracked){
     return managed&&(!gameplay||cinematic||ledge||syncAttack||!tracked);
 }
@@ -56,13 +58,18 @@ inline bool offhandHudNearVisible(bool wasVisible,float nearest,float minimumDep
 }
 inline bool readOffhandHudConfig(std::istream& stream,OffhandHudConfig& out){
     int version{},enabled{};OffhandHudConfig value;
-    if(!(stream>>version>>enabled)||(version!=1&&version!=2)||(enabled!=0&&enabled!=1))return false;
-    for(int i=0;i<(version==1?2:4);++i){auto& mode=value.modes[i];
+    if(!(stream>>version>>enabled)||(version!=1&&version!=2&&version!=3)||(enabled!=0&&enabled!=1))return false;
+    for(int i=0;i<(version==1?2:version==2?4:6);++i){auto& mode=value.modes[i];
         for(auto& v:mode.centimeters)if(!(stream>>v)||!std::isfinite(v)||std::abs(v)>100)return false;
         for(auto& v:mode.degrees)if(!(stream>>v)||!std::isfinite(v)||std::abs(v)>180)return false;
         if(!(stream>>mode.scale)||!std::isfinite(mode.scale)||mode.scale<.02f||mode.scale>2)return false;
     }
     if(version==1){value.modes[2]=value.modes[0];value.modes[3]=value.modes[1];}
+    if(version<3){
+        for(int hand=0;hand<2;++hand){value.modes[4+hand]=value.modes[hand];
+            value.modes[4+hand].centimeters[1]=std::clamp(value.modes[4+hand].centimeters[1]+14.f,-100.f,100.f);
+            value.modes[4+hand].centimeters[2]=std::clamp(value.modes[4+hand].centimeters[2]+8.f,-100.f,100.f);}
+    }
     value.enabled=enabled!=0;out=value;return true;
 }
 inline void offhandHudBasis(const float* hand,const OffhandHudCalibration& c,float* out){
@@ -78,7 +85,7 @@ inline void offhandHudOrigin(const float* grip,const float* hand,const float* pa
     const OffhandHudCalibration& c,int surface,float unitsPerMeter,float* out){
     for(int i=0;i<3;++i){out[i]=grip[i];
         for(int j=0;j<3;++j)out[i]+=hand[j*3+i]*c.centimeters[j]*unitsPerMeter*.01f;
-        out[i]+=hand[3+i]*(surface==0?1.f:-1.f)*14.f*unitsPerMeter*.01f;}
+        out[i]+=hand[3+i]*(surface==0?1.f:surface==1?-1.f:0.f)*14.f*unitsPerMeter*.01f;}
 }
 // Final GUI uses local X/Y pixels multiplied by its physical extents. Center
 // the complete canvas after those extents are known, independent of rotation.

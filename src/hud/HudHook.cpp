@@ -154,6 +154,7 @@ std::mutex offhandHudMutex;
 bool offhandCanvasHookReady{};
 struct OffhandCanvasSubmission {const void* entity{};float center[3]{},axis[9]{},width{};int surface{-1};};
 thread_local OffhandCanvasSubmission offhandCanvasSubmission;
+thread_local OffhandCanvasSubmission progSource;
 thread_local const void* suppressedOffhandCanvas{};
 
 kharvox::OffhandHudConfig offhandHudConfig;
@@ -582,6 +583,7 @@ void __fastcall offhandHudCanvasSize(void* entity,int width,int height,float ext
     const auto image=reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
     const auto caller=reinterpret_cast<uintptr_t>(_ReturnAddress())-image;
     auto pending=offhandCanvasSubmission;
+    if(pending.surface==0)progSource=pending;
     offhandCanvasSubmission={};
     const bool suppressed=caller==0xF922A7&&suppressedOffhandCanvas==entity&&width==512&&height==300;
     suppressedOffhandCanvas=nullptr;
@@ -1863,6 +1865,163 @@ constexpr unsigned int tutorialTextBit = 1u << 2;
 std::atomic<void*> tutorialTextSwf{};
 using TutorialSpriteRender = void(__fastcall*)(void*, void*, void*, void*, int, bool);
 TutorialSpriteRender originalTutorialSpriteRender{};
+// ProgMeter is a subtree of ws_0, not another HUD manager. Render it into an
+// independently owned native GUI/model pair; never move the shared Ammo entity.
+bool getOffhandHudFrame(float origin[3],float axis[9]);
+using ProgFrameFn=void(__fastcall*)(void*,int);
+using ProgAllocFn=void*(__fastcall*)(void*,int,void*,int,void*);
+ProgFrameFn originalProgFrame{};
+ProgAllocFn originalProgAlloc{};
+struct ProgVertices {void* data{};int count{};};
+struct ProgMeterRuntime {
+    void* world{};void* gui{};unsigned long long level{~0ull};
+    bool drawing{},drawn{},overflow{},pivotValid{};
+    float midX{},midY{},pixelWidth{};
+    std::array<ProgVertices,256> blocks{};size_t count{};
+};
+thread_local ProgMeterRuntime progMeter;
+thread_local void* progOwnerSwf{};
+bool progHooksReady{};
+template<class Fn> Fn progNative(uintptr_t rva){return reinterpret_cast<Fn>(reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr))+rva);}
+void* __fastcall progAllocate(void* gui,int vertices,void* indices,int indexCount,void* material){
+    void* result=originalProgAlloc(gui,vertices,indices,indexCount,material);
+    if(progMeter.drawing&&gui==progMeter.gui&&result&&vertices>0){
+        if(progMeter.count<progMeter.blocks.size()&&vertices<=65535)
+            progMeter.blocks[progMeter.count++]={result,vertices};
+        else progMeter.overflow=true;
+    }
+    return result;
+}
+void progResetGeometry(){if(progMeter.gui)progNative<void(__fastcall*)(void*)>(0x158eae0)(progMeter.gui);}
+void progUpdate(bool hide){
+    if(!progMeter.world)return;
+    progNative<void(__fastcall*)(void*)>(0x15d8020)(progMeter.world);
+    static_cast<unsigned char*>(progMeter.world)[0x30]=hide?1:0;
+}
+void progRetire(){
+    // Follow idMenuManager's native deferred-release protocol for both objects.
+    for(void* object:{progMeter.world,progMeter.gui})if(object&&readableRange(object,0x32)){
+        *reinterpret_cast<unsigned short*>(static_cast<unsigned char*>(object)+0x30)=0x101;
+        progNative<void(__fastcall*)(void*)>(0x15d8020)(object);
+    }
+    progMeter={};
+}
+void __fastcall progFrame(void* manager,int time){
+    const auto level=KharvoxCameraLevelTransitionGeneration();
+    if(progMeter.level!=level){
+        // World teardown owns the previous factory objects. Never dereference
+        // their addresses after the level generation changes.
+        progMeter={};progMeter.level=level;
+    }
+    progMeter.drawn=false;progSource={};progResetGeometry();
+    progOwnerSwf=*reinterpret_cast<void**>(static_cast<unsigned char*>(manager)+0x20);
+    originalProgFrame(manager,time);
+    progOwnerSwf=nullptr;
+    progUpdate(!progMeter.drawn);
+}
+bool progCreate(){
+    if(progMeter.gui&&progMeter.world)return true;
+    const auto image=reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+    // Same model declaration and factory as WeaponInfo's native world HUD.
+    auto declaration=progNative<void*(__fastcall*)(int)>(0xf900d0)(3);
+    auto factory=*reinterpret_cast<void**>(image+0x5b0f6d0);
+    if(!declaration||!factory||!readableRange(declaration,16))return false;
+    auto table=*reinterpret_cast<uintptr_t**>(factory);
+    progMeter.world=reinterpret_cast<void*(__fastcall*)(void*,const char*,int)>(table[0xa0/8])(
+        factory,*reinterpret_cast<const char**>(static_cast<unsigned char*>(declaration)+8),0);
+    if(!progMeter.world)return false;
+    alignas(16) std::array<unsigned char,0x48> owner{};
+    progNative<void(__fastcall*)(void*,const char*)>(0xf8f590)(owner.data(),"KHARVOX ProgMeter");
+    progMeter.gui=*reinterpret_cast<void**>(owner.data()+0x30);
+    if(!progMeter.gui){progRetire();return false;}
+    auto world=static_cast<unsigned char*>(progMeter.world);
+    *reinterpret_cast<int*>(world+0x184)=9;world[0x153]|=1;
+    progNative<void(__fastcall*)(void*,void*)>(0x15daf30)(progMeter.world,progMeter.gui);
+    log("[PROGMETER] independent native GUI created");return true;
+}
+bool progIsTarget(void* swf,void* sprite){
+    if(!progHooksReady||swf!=progOwnerSwf||!sprite||!readableRange(sprite,0x38))return false;
+    auto bytes=static_cast<unsigned char*>(sprite);
+    if(*reinterpret_cast<void**>(bytes+0x20)!=swf)return false;
+    auto name=*reinterpret_cast<const char**>(bytes+8);
+    return name&&readableRange(name,11)&&std::memcmp(name,"prog_meter",11)==0;
+}
+bool renderProgMeter(void* swf,void* view,void* sprite,void* state,int time,bool flag){
+    if(!progIsTarget(swf,sprite)||progMeter.drawing||!state||!readableRange(state,24)
+        ||progSource.entity!=view||progSource.surface!=0)return false;
+    kharvox::OffhandHudConfig config;{std::lock_guard<std::mutex> lock(offhandHudMutex);config=offhandHudConfig;}
+    if(!config.enabled&&!offhandCalibrationActive.load())return false;
+    float grip[3]{},hand[9]{};if(!getOffhandHudFrame(grip,hand))return true;
+    if(!progCreate())return false;
+    const int handed=offhandHudLeftMode()?1:0;
+    float sourceBasis[9]{},targetBasis[9]{},axis[9]{},center[3]{};
+    kharvox::offhandHudBasis(hand,config.modes[handed],sourceBasis);
+    const auto& values=config.modes[4+handed];
+    kharvox::offhandHudBasis(hand,values,targetBasis);
+    kharvox::offhandHudOrigin(grip,hand,targetBasis,values,2,hudWorldUnitsPerMeter,center);
+    for(int row=0;row<3;++row)for(int local=0;local<3;++local){float dot=0;
+        for(int j=0;j<3;++j)dot+=progSource.axis[row*3+j]*sourceBasis[local*3+j];
+        for(int j=0;j<3;++j)axis[row*3+j]+=dot*targetBasis[local*3+j];}
+    auto gui=static_cast<unsigned char*>(progMeter.gui);
+    auto source=static_cast<unsigned char*>(view);
+    gui[0x151]=source[0x151];gui[0x152]=source[0x152];
+    originalHudCanvasSize(progMeter.gui,512,300,
+        *reinterpret_cast<float*>(source+0x4ecc),*reinterpret_cast<float*>(source+0x4ed0));
+    // Preserve native materials/animations. Only geometry ownership changes.
+    progMeter.count=0;progMeter.overflow=false;progMeter.drawing=true;
+    originalTutorialSpriteRender(swf,progMeter.gui,sprite,state,time,flag);
+    progMeter.drawing=false;
+    _mm_sfence(); // Native SWF writes vertices with streaming stores.
+    float minX=1e20f,minY=1e20f,maxX=-1e20f,maxY=-1e20f;
+    for(size_t b=0;b<progMeter.count&&!progMeter.overflow;++b){const auto block=progMeter.blocks[b];
+        if(!readableRange(block.data,size_t(block.count)*48)){progMeter.overflow=true;break;}
+        for(int v=0;v<block.count;++v){auto xy=reinterpret_cast<const float*>(static_cast<const unsigned char*>(block.data)+v*48);
+            if(!std::isfinite(xy[0])||!std::isfinite(xy[1])){progMeter.overflow=true;break;}
+            minX=std::min(minX,xy[0]);maxX=std::max(maxX,xy[0]);minY=std::min(minY,xy[1]);maxY=std::max(maxY,xy[1]);}}
+    if(progMeter.overflow){progResetGeometry();return false;}
+    if(maxX<=minX||maxY<=minY)return true;
+    if(!progMeter.pivotValid){progMeter.midX=(minX+maxX)*.5f;progMeter.midY=(minY+maxY)*.5f;
+        progMeter.pixelWidth=maxX-minX;progMeter.pivotValid=true;}
+    float width=.20f*hudWorldUnitsPerMeter*(values.scale/.4f);
+    if(offhandCalibrationActive.load()&&offhandSelectedSurface.load()==2&&GetTickCount64()<offhandSelectionUntil.load())width*=1.15f;
+    const float aspect=progMeter.pixelWidth/std::max(1.f,maxY-minY);
+    float eye[3]{},head[9]{},nearest{};
+    if(!KharvoxCameraGetHudCenterRenderPose(eye,head)||!kharvox::offhandHudNearestDepth(center,axis,width,aspect,eye,head,nearest)
+        ||nearest<.04f*hudWorldUnitsPerMeter){progResetGeometry();return true;}
+    float origin[3]{},ex{},ey{};
+    if(!kharvox::centeredOffhandHud(center,axis,width,512.f/300.f,origin,ex,ey)){progResetGeometry();return false;}
+    ex*=512.f/progMeter.pixelWidth;ey*=512.f/progMeter.pixelWidth;
+    for(int j=0;j<3;++j)origin[j]=center[j]-axis[j]*ex*(progMeter.midX/512.f)-axis[3+j]*ey*(progMeter.midY/300.f);
+    originalHudCanvasSize(progMeter.gui,512,300,ex,ey);
+    auto setOrigin=progNative<void(__fastcall*)(void*,const float*)>(0x3b7500);
+    auto setAxis=progNative<void(__fastcall*)(void*,const float*)>(0x3b5400);
+    setOrigin(progMeter.gui,origin);setAxis(progMeter.gui,axis);
+    setOrigin(progMeter.world,origin);setAxis(progMeter.world,axis);
+    progMeter.drawn=true;
+    static bool noted{};if(!noted){noted=true;log("[PROGMETER] five-circle subtree detached; independent position/rotation/scale active");}
+    return true;
+}
+bool installProgMeterHooks(){
+    auto image=reinterpret_cast<unsigned char*>(GetModuleHandleW(nullptr));
+    constexpr std::array<unsigned char,15> allocation{0x48,0x89,0x5c,0x24,0x10,0x48,0x89,0x74,0x24,0x18,0x48,0x89,0x7c,0x24,0x20};
+    struct Signature {uintptr_t rva;std::array<unsigned char,8> bytes;};
+    constexpr Signature native[]{{0xf900d0,{0x48,0x83,0xec,0x28,0x83,0xf9,0x4,0x75}},
+        {0xf8f590,{0x40,0x57,0x48,0x83,0xec,0x30,0x48,0xc7}},
+        {0x15daf30,{0x48,0x89,0x5c,0x24,0x10,0x57,0x48,0x83}},
+        {0x15d8020,{0x40,0x53,0x48,0x83,0xec,0x20,0x48,0x8b}},
+        {0x158eae0,{0xc7,0x81,0xa8,0xe,0,0,0,0}}};
+    for(const auto& signature:native)if(!readableRange(image+signature.rva,signature.bytes.size())
+        ||std::memcmp(image+signature.rva,signature.bytes.data(),signature.bytes.size()))return false;
+    auto slot=reinterpret_cast<uintptr_t*>(image+0x2240888+0x48);
+    if(!readableRange(slot,8)||*slot!=reinterpret_cast<uintptr_t>(image+0xf91d00)
+        ||std::memcmp(image+0x158e6b0,allocation.data(),allocation.size()))return false;
+    if(!installEntryHook(image+0x158e6b0,allocation,reinterpret_cast<const void*>(&progAllocate),originalProgAlloc,"ProgMeter geometry capture"))return false;
+    DWORD old{};if(!VirtualProtect(slot,8,PAGE_READWRITE,&old))return false;
+    originalProgFrame=reinterpret_cast<ProgFrameFn>(*slot);*slot=reinterpret_cast<uintptr_t>(&progFrame);
+    DWORD unused{};VirtualProtect(slot,8,old,&unused);progHooksReady=true;
+    log("[PROGMETER] owned WeaponInfo frame and geometry hooks installed");return true;
+}
+
 std::atomic<unsigned long long> tutorialRenderGeneration{0};
 std::atomic<unsigned long long> tutorialRenderLogged{0};
 
@@ -1971,6 +2130,7 @@ void __fastcall runeCounterUpdateHook(void* screen) {
 
 void __fastcall tutorialSpriteRenderHook(
     void* swf, void* view, void* sprite, void* state, int time, bool flag) {
+    if(renderProgMeter(swf,view,sprite,state,time,flag))return;
     struct CanvasScope {void* swf;std::array<float,6> matrix;
         ~CanvasScope(){runeCanvasSwf=swf;runeCanvasMatrix=matrix;}
     } canvasScope{runeCanvasSwf,runeCanvasMatrix};
@@ -2089,9 +2249,11 @@ bool installTutorialRenderHook() {
         log("[TUTORIAL-RENDER] signature mismatch; native placement retained");
         return false;
     }
-    return installEntryHook(image + 0x1621000, signature,
+    const bool ready=installEntryHook(image + 0x1621000, signature,
         reinterpret_cast<const void*>(&tutorialSpriteRenderHook),
         originalTutorialSpriteRender, "Tutorial owned SWF root translation");
+    if(ready&&!installProgMeterHooks())log("[PROGMETER] hooks unavailable; native Ammo grouping retained");
+    return ready;
 }
 
 void beginTutorialScreenActivity(
@@ -2341,9 +2503,9 @@ void pollOffhandHudHotkeys(){
     const bool toggleNow=active&&toggle&&!toggleWasDown;
     plusWasDown=plus;resetWasDown=reset;toggleWasDown=toggle;
     if(!active){nextStep=0;return;}
-    if(toggleNow){const int selected=1-offhandSelectedSurface.load();offhandSelectedSurface.store(selected);
+    if(toggleNow){const int selected=(offhandSelectedSurface.load()+1)%3;offhandSelectedSurface.store(selected);
         offhandSelectionUntil.store(GetTickCount64()+1200);
-        log(std::string("[OFFHAND-HUD] selected=")+(selected?"Ammo":"Life"));}
+        log(std::string("[OFFHAND-HUD] selected=")+kharvox::offhandHudName(selected));}
     if(switchMode){rotate=!rotate;log(std::string("[OFFHAND-HUD] calibration mode=")+(rotate?"rotation":"position"));}
     const auto now=GetTickCount64();if(now<nextStep&&!resetNow&&!toggleNow)return;
     auto down=[](int key){return (GetAsyncKeyState(key)&0x8000)!=0;};
@@ -2376,7 +2538,7 @@ void pollOffhandHudHotkeys(){
     }
     const auto path=kharvox::runtimePathA("offhand_hud.cfg"),temp=path+".hotkeys.tmp";
     std::ofstream output(temp,std::ios::trunc);output.imbue(std::locale::classic());
-    output<<"2 "<<int(config.enabled)<<'\n';
+    output<<"3 "<<int(config.enabled)<<'\n';
     for(const auto& mode:config.modes){for(float v:mode.centimeters)output<<v<<' ';for(float v:mode.degrees)output<<v<<' ';output<<mode.scale<<'\n';}
     output.close();
     if(!output||!MoveFileExA(temp.c_str(),path.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)){
@@ -2385,7 +2547,7 @@ void pollOffhandHudHotkeys(){
     {std::lock_guard<std::mutex> lock(offhandHudMutex);offhandHudConfig=config;}
     nextStep=now+100;
     std::ostringstream status;status<<"[OFFHAND-HUD] SAVED "<<(offhandHudLeftMode()?"left-mode/right-hand":"normal/left-hand")
-        <<" target="<<(offhandSelectedSurface.load()?"Ammo":"Life")<<" mode="<<(rotate?"rotation":"position")<<" enabled="<<config.enabled;
+        <<" target="<<kharvox::offhandHudName(offhandSelectedSurface.load())<<" mode="<<(rotate?"rotation":"position")<<" enabled="<<config.enabled;
     for(float v:c.centimeters)status<<" pos="<<v;for(float v:c.degrees)status<<" deg="<<v;
     status<<" size="<<c.scale;log(status.str());
 }

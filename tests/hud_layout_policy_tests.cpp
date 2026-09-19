@@ -15,11 +15,12 @@ bool near(float left, float right) {
 int main() {
     using namespace kharvox;
     {
-        if(ownedOffhandHudSurface(0x2240978,0xbdcf54,512,300,83)!=0)return 125;
-        if(ownedOffhandHudSurface(0x2240888,0xbdcf54,512,300,100)!=1)return 126;
+        // Values read from live campaign objects, not inferred from type names.
+        if(ownedOffhandHudSurface(0x2240888,0xbdcf54,512,300,83)!=0)return 125;
+        if(ownedOffhandHudSurface(0x2240978,0xbdcf54,512,300,100)!=1)return 126;
         for(auto owner:{uintptr_t(0),uintptr_t(0x22425d0),uintptr_t(0x2240a68),uintptr_t(0x22412e0)})
             for(int scale:{83,100})if(ownedOffhandHudSurface(owner,0xbdcf54,512,300,scale)!=-1)return 127;
-        if(ownedOffhandHudSurface(0x2240978,0xbdcf54,512,300,100)!=-1)return 128;
+        if(ownedOffhandHudSurface(0x2240978,0xbdcf54,512,300,83)!=-1)return 128;
         const float eye[3]{},forward[3]{1,0,0};
         const float axis[9]{0,1,0,0,0,1,1,0,0};float center[3]{5,2,3};
         if(!keepOffhandHudInFront(center,axis,20,2,eye,forward,10)||!near(center[0],10)

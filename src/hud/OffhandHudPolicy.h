@@ -30,10 +30,11 @@ inline int offhandHudSurface(uintptr_t caller,int width,int height,int scale){
 }
 inline int ownedOffhandHudSurface(uintptr_t ownerVtable,uintptr_t caller,int width,int height,int scale){
     const int surface=offhandHudSurface(caller,width,height,scale);
-    // Exact native managers: Hud_BottomLeft and Hud_WeaponInfo. Objective
-    // and challenge managers can share canvas dimensions and scale.
-    return (surface==0&&ownerVtable==0x2240978)
-        ||(surface==1&&ownerVtable==0x2240888)?surface:-1;
+    // Live SP objects: WeaponInfo uses .083; BottomLeft uses .100.
+    // Preserve the existing calibration slots, rather than inferring their
+    // identities from manager names. Bottom also uses .100 but is not owned.
+    return (surface==0&&ownerVtable==0x2240888)
+        ||(surface==1&&ownerVtable==0x2240978)?surface:-1;
 }
 // Keep every corner beyond the screen-UI depth switch and camera near plane.
 // Only translate along view-forward, preserving calibrated size/rotation.

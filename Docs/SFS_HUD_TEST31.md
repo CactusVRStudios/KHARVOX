@@ -28,3 +28,15 @@ Explicit Debug AA-off remains effective; AER keeps its spatial SMAA default.
 SSDO temporal history is separate and remains disabled. Both HUD fixes above
 are included unchanged. Native CVar forwarding and launcher argument tests pass.
 
+
+## Test 33 correction from live campaign objects
+Test31/32 incorrectly paired the manager types with the opposite scales.
+ReadProcessMemory inspection of the user's running Test32 found:
+- vtable 2240888 (WeaponInfo): 512x300, scale 0.08299999684.
+- vtable 2240978 (BottomLeft): 512x300, scale 0.10000000149.
+- vtable 2240A68 (Bottom): 512x300, scale 0.10000000149.
+Both desired surfaces were rejected; the cinematic gate had already released.
+Swap the required owner/scale pairs while preserving the calibrated slot indices.
+Bottom and Objective remain excluded. Tests now use these observed tuples.
+The read-only inspection did not patch or stop the running game.
+

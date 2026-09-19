@@ -60,3 +60,27 @@ every logically stale allocation, or serialize engine updates. The native
 hook's original player/view call retains its engine-owned lifetime contract.
 Non-MSVC builds retain their existing lack of SEH protection. Live level-load
 stress is still required; this is not a claim of complete game-memory safety.
+
+## Finding 3: Cached physics publication mixed positions and owners
+
+Severity: P1, pose consistency and level-transition stability.
+
+The native capture hook published physics XYZ, player owner, capture Present
+and validity separately. Body-anchor calibration, XR room-scale movement and
+weapon positioning could observe a mixture of consecutive captures. A capture
+already running at invalidation could also republish its old owner as valid.
+
+Fix: extend the camera pose state with a complete physics snapshot, sharing the
+body snapshot's generation and short mutex. Read that tuple once per consumer.
+Reject captures that began before invalidation and reject a live physics query
+from a different generation than its body anchor. Invalidate calibration under
+the existing stance mutex, which prevents a stale calibration from surviving
+the reset. Neither mutex is held across native physics callbacks.
+
+Validation: extend `body-camera-snapshot` with four concurrent physics readers,
+100,000 coherent captures and 1,000 invalidations. Check owner/Present/XYZ
+consistency, rejection of stale body and physics publications, and atomic
+reset of both snapshots to the same generation. Release layer and all five
+camera CTests pass. Runtime locks cover copies only, except for the existing
+stance-calibration lock; no GPU waits are changed. Headset timing and native
+engine lifetime guarantees remain outside these regression tests.

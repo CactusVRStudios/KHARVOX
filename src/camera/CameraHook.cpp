@@ -639,24 +639,7 @@ bool executableMemory(const void* address) {
         || protection == PAGE_EXECUTE_READWRITE || protection == PAGE_EXECUTE_WRITECOPY;
 }
 
-bool invokePhysicsGetOriginSafely(PhysicsGetOriginFn getOrigin, void* physics, float origin[3]) {
-    if (!getOrigin || !physics || !origin) return false;
-    const float* current{};
-#if defined(_MSC_VER)
-    __try {
-        current = getOrigin(physics, 0);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
-#else
-    current = getOrigin(physics, 0);
-#endif
-    if (!readableMemory(current, 3 * sizeof(float))
-        || !std::isfinite(current[0]) || !std::isfinite(current[1]) || !std::isfinite(current[2]))
-        return false;
-    for (int axis = 0; axis < 3; ++axis) origin[axis] = current[axis];
-    return true;
-}
+#include "PhysicsOrigin.inc"
 
 void invalidateLevelReferences() {
     const bool hadPlayer = playerPhysicsOriginValid.exchange(false, std::memory_order_acq_rel);
@@ -685,13 +668,7 @@ bool readLivePlayerPhysicsOrigin(float origin[3], uintptr_t* ownerOut = nullptr)
     const uintptr_t owner = playerPhysicsOwner.load(std::memory_order_acquire);
     if (!owner || owner > UINTPTR_MAX - 0x14E58) return false;
     auto physics = reinterpret_cast<unsigned char*>(owner + 0x14E58);
-    if (!readableMemory(physics, sizeof(void*))) return false;
-    auto physicsVtable = *reinterpret_cast<void***>(physics);
-    constexpr size_t getOriginSlot = 0x80 / sizeof(void*);
-    if (!readableMemory(physicsVtable, (getOriginSlot + 1) * sizeof(void*))) return false;
-    auto getOrigin = reinterpret_cast<PhysicsGetOriginFn>(physicsVtable[getOriginSlot]);
-    if (!executableMemory(reinterpret_cast<const void*>(getOrigin))) return false;
-    if (!invokePhysicsGetOriginSafely(getOrigin, physics, origin)) return false;
+    if (!readPhysicsOriginSafely(physics, origin)) return false;
     if (!playerPhysicsOriginValid.load(std::memory_order_acquire)
         || playerPhysicsOwner.load(std::memory_order_acquire) != owner) return false;
     if (ownerOut) *ownerOut = owner;
@@ -820,20 +797,14 @@ extern "C" const float* __fastcall capturePlayerPhysicsOrigin(void* player) {
     if (!originalViewOrigin) return nullptr;
 
     auto physics = static_cast<unsigned char*>(player) + 0x14E58;
-    auto physicsVtable = *reinterpret_cast<void***>(physics);
-    if (physicsVtable) {
-        auto getOrigin = reinterpret_cast<PhysicsGetOriginFn>(physicsVtable[0x80 / sizeof(void*)]);
-        if (getOrigin) {
-            float origin[3]{};
-            if (invokePhysicsGetOriginSafely(getOrigin, physics, origin)) {
-                for (int axis = 0; axis < 3; ++axis)
-                    playerPhysicsOrigin[axis].store(origin[axis], std::memory_order_relaxed);
-                playerPhysicsOwner.store(reinterpret_cast<uintptr_t>(player), std::memory_order_relaxed);
-                playerPhysicsCapturePresent.store(
-                    cameraPresentSerial.load(std::memory_order_relaxed), std::memory_order_relaxed);
-                playerPhysicsOriginValid.store(true, std::memory_order_release);
-            }
-        }
+    float origin[3]{};
+    if (readPhysicsOriginSafely(physics, origin)) {
+        for (int axis = 0; axis < 3; ++axis)
+            playerPhysicsOrigin[axis].store(origin[axis], std::memory_order_relaxed);
+        playerPhysicsOwner.store(reinterpret_cast<uintptr_t>(player), std::memory_order_relaxed);
+        playerPhysicsCapturePresent.store(
+            cameraPresentSerial.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        playerPhysicsOriginValid.store(true, std::memory_order_release);
     }
     KharvoxWeaponCaptureAmmoSnapshot(player);
     return originalViewOrigin(player);

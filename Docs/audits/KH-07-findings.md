@@ -30,3 +30,33 @@ This fixes the body-pose publication boundary, not every atomic camera input.
 The cached physics tuple and native pointer lifetime are reviewed separately.
 No headset frame-time improvement is claimed; live game validation remains
 necessary for level transitions, crouching and weapon/HUD alignment.
+
+## Finding 2: Optional physics reads could fault outside their guard
+
+Severity: P1, level-transition crash risk.
+
+`readLivePlayerPhysicsOrigin` retained a player address across updates. Its
+VirtualQuery checks did not keep the physics object or vtable alive between
+validation and dereference. The existing exception handler covered only the
+virtual call, leaving vtable lookup and all reads of the returned coordinates
+unguarded. The native capture hook duplicated the unguarded physics lookup.
+
+Fix: both paths use one guarded resolve/call/copy operation. Preserve the
+existing memory and executable-page checks, copy coordinates into a local
+candidate once, validate that candidate, and only then publish the output.
+MSVC structured exception handling covers the complete optional probe. Failure
+keeps the body-camera fallback; no retry loop, wait or allocation is added.
+
+Validation: `physics-origin` compiles the production helper and tests valid
+results, nulls, NaN/infinity in each component, an explicitly faulting callback,
+and inaccessible object/vtable/code/result pages. A partial result straddling
+a readable and inaccessible page verifies that failure leaves output untouched.
+Test memory predicates intentionally accept non-null addresses, reproducing
+memory revoked after validation rather than merely exercising a precheck.
+All five camera CTests and the Release layer build pass.
+
+The exception handler does not establish ownership of game objects, detect
+every logically stale allocation, or serialize engine updates. The native
+hook's original player/view call retains its engine-owned lifetime contract.
+Non-MSVC builds retain their existing lack of SEH protection. Live level-load
+stress is still required; this is not a claim of complete game-memory safety.

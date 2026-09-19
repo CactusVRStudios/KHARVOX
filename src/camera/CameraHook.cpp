@@ -9,6 +9,7 @@
 #include "BodyPoseRebase.h"
 #include "BodyStanceHeight.h"
 #include "BodyAnchorPolicy.h"
+#include "BodyCameraSnapshot.h"
 #include "../common/PoseTrace.h"
 #include "../native/NativeStereo.h"
 #include "CameraHook.h"
@@ -62,9 +63,7 @@ std::atomic<float> headUp{};
 std::atomic<bool> headValid{};
 std::atomic<bool> worldCameraActive{};
 std::atomic<bool> animatedSequenceActive{};
-std::array<std::atomic<float>, 3> bodyCameraOrigin{};
-std::array<std::atomic<float>, 9> bodyCameraAxis{};
-std::atomic<bool> bodyCameraValid{};
+kharvox::BodyCameraState bodyCamera;
 std::array<std::atomic<float>, 9> preCinematicGameplayAxis{};
 std::atomic<bool> preCinematicGameplayAxisValid{};
 std::array<std::atomic<float>, 3> playerPhysicsOrigin{};
@@ -667,7 +666,7 @@ void invalidateLevelReferences() {
     playerPhysicsCapturePresent.store(0, std::memory_order_release);
     stableBodyViewOffsetValid.store(false, std::memory_order_release);
     stableBodyViewOffsetOwner.store(0, std::memory_order_release);
-    bodyCameraValid.store(false, std::memory_order_release);
+    bodyCamera.invalidate();
     preCinematicGameplayAxisValid.store(false, std::memory_order_release);
     if (hadPlayer) {
         const auto generation = levelTransitionGeneration.fetch_add(
@@ -1530,6 +1529,7 @@ bool installCutsceneFovHook() {
 
 extern "C" void __fastcall patchCamera(void* rawContext, void* rawReturnAddress) {
     if (!rawContext) return;
+    const auto previousBody=bodyCamera.read();
     auto camera = static_cast<float*>(rawContext);
     const uintptr_t context = reinterpret_cast<uintptr_t>(rawContext);
     const uintptr_t returnAddress = reinterpret_cast<uintptr_t>(rawReturnAddress);
@@ -1559,12 +1559,12 @@ extern "C" void __fastcall patchCamera(void* rawContext, void* rawReturnAddress)
         // top of the gameplay body basis held at cinematic entry. HMD
         // translation remains disabled so the animation still owns position.
         const bool wasCutscene = cutsceneActive.exchange(true, std::memory_order_acq_rel);
-        if (!wasCutscene && bodyCameraValid.load(std::memory_order_acquire)) {
+        if (!wasCutscene && previousBody.valid) {
             preCinematicGameplayAxisValid.store(false, std::memory_order_release);
             float entryBasis[9]{};
             float levelEntryBasis[9]{};
             for (int index = 0; index < 9; ++index)
-                entryBasis[index] = bodyCameraAxis[index].load(std::memory_order_relaxed);
+                entryBasis[index] = previousBody.axis[index];
             const float* heldBasis = entryBasis;
             if (kharvox::makeGravityLevelBodyBasis(
                     entryBasis, nullptr, levelEntryBasis))
@@ -1710,9 +1710,9 @@ extern "C" void __fastcall patchCamera(void* rawContext, void* rawReturnAddress)
     // native motion; HMD pitch/roll is applied below after this body basis.
     float fallbackBasis[9]{};
     const float* fallback = nullptr;
-    if (bodyCameraValid.load(std::memory_order_acquire)) {
+    if (previousBody.valid) {
         for (int index = 0; index < 9; ++index)
-            fallbackBasis[index] = bodyCameraAxis[index].load(std::memory_order_relaxed);
+            fallbackBasis[index] = previousBody.axis[index];
         fallback = fallbackBasis;
     } else if (preCinematicGameplayAxisValid.load(std::memory_order_acquire)) {
         for (int index = 0; index < 9; ++index)
@@ -1728,6 +1728,8 @@ extern "C" void __fastcall patchCamera(void* rawContext, void* rawReturnAddress)
         std::memcpy(unmodifiedBasis, bodyBasis, sizeof(bodyBasis));
     }
     float stableBodyOrigin[3]{unmodifiedPosition[0], unmodifiedPosition[1], unmodifiedPosition[2]};
+    kharvox::BodyCameraSnapshot bodyPose;
+    bodyPose.generation=previousBody.generation;
     // Preserve the actual source view before physics reconstruction and before
     // room-scale/HMD translation modifies the camera storage in place.
     const float sourceViewBodyOrigin[3]{unmodifiedPosition[0],unmodifiedPosition[1],unmodifiedPosition[2]};
@@ -1785,6 +1787,7 @@ extern "C" void __fastcall patchCamera(void* rawContext, void* rawReturnAddress)
             physicsOrigin[0]*bodyBasis[6]+physicsOrigin[1]*bodyBasis[7]+physicsOrigin[2]*bodyBasis[8]);
         if (viewOffsetLocal[2] != previousUp)
             stableBodyViewOffsetLocal[2].store(viewOffsetLocal[2], std::memory_order_relaxed);
+        if(offsetValid||mayCalibrateAnchor){bodyPose.viewOffset=viewOffsetLocal;bodyPose.anchorOwner=owner;}
         for (int axis = 0; axis < 3; ++axis)
             stableBodyOrigin[axis] = physicsOrigin[axis]
                 + bodyBasis[axis] * viewOffsetLocal[0]
@@ -1799,10 +1802,11 @@ extern "C" void __fastcall patchCamera(void* rawContext, void* rawReturnAddress)
         callerRva ^ (uintptr_t{1} << (sizeof(uintptr_t) * 8 - 1)),
         stableBodyOrigin, bodyBasis);
     for (int index = 0; index < 3; ++index)
-        bodyCameraOrigin[index].store(stableBodyOrigin[index], std::memory_order_relaxed);
+        bodyPose.origin[index]=stableBodyOrigin[index];
     for (int index = 0; index < 9; ++index)
-        bodyCameraAxis[index].store(bodyBasis[index], std::memory_order_relaxed);
-    bodyCameraValid.store(true, std::memory_order_release);
+        bodyPose.axis[index]=bodyBasis[index];
+    bodyPose.valid=true;
+    bodyCamera.publish(bodyPose);
     // OpenXR yaw has the opposite sign from this DOOM render-basis axis.
     // Apply physical HMD rotation first, then translate to the eye along that
     // head-relative lateral axis, and apply the static optical-center rotation
@@ -2508,18 +2512,16 @@ bool KharvoxCameraPlayerWeaponControlActive() {
 }
 
 bool KharvoxCameraGetBodyPose(float origin[3], float axis[9]) {
-    if (!origin || !axis || !bodyCameraValid.load(std::memory_order_acquire)) return false;
+    if(!origin||!axis)return false;
+    const auto bodyPose=bodyCamera.read();
+    if(!bodyPose.valid)return false;
     for (int index = 0; index < 9; ++index)
-        axis[index] = bodyCameraAxis[index].load(std::memory_order_relaxed);
+        axis[index]=bodyPose.axis[index];
     uintptr_t liveOwner{};
     float livePhysicsOrigin[3]{};
-    const bool liveOffsetValid = stableBodyViewOffsetValid.load(std::memory_order_acquire);
-    const uintptr_t offsetOwner = stableBodyViewOffsetOwner.load(std::memory_order_relaxed);
-    if (liveOffsetValid && readLivePlayerPhysicsOrigin(livePhysicsOrigin, &liveOwner)
-        && liveOwner == offsetOwner) {
-        float viewOffsetLocal[3]{};
-        for (int index = 0; index < 3; ++index)
-            viewOffsetLocal[index] = stableBodyViewOffsetLocal[index].load(std::memory_order_relaxed);
+    if (bodyPose.anchorOwner && readLivePlayerPhysicsOrigin(livePhysicsOrigin, &liveOwner)
+        && liveOwner == bodyPose.anchorOwner) {
+        const auto& viewOffsetLocal=bodyPose.viewOffset;
         for (int worldAxis = 0; worldAxis < 3; ++worldAxis)
             origin[worldAxis] = livePhysicsOrigin[worldAxis]
                 + axis[worldAxis] * viewOffsetLocal[0]
@@ -2528,7 +2530,7 @@ bool KharvoxCameraGetBodyPose(float origin[3], float axis[9]) {
         return true;
     }
     for (int index = 0; index < 3; ++index)
-        origin[index] = bodyCameraOrigin[index].load(std::memory_order_relaxed);
+        origin[index]=bodyPose.origin[index];
     return true;
 }
 

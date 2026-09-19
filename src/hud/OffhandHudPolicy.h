@@ -23,6 +23,12 @@ struct OffhandHudCalibration {
 };
 inline const char* offhandHudName(int surface){return surface==0?"Life":surface==1?"Ammo":"ProgMeter";}
 struct OffhandHudConfig { bool enabled{true};std::array<OffhandHudCalibration,6> modes{}; };
+// This one SWF must finish inside its owner Frame: ProgMeter extraction uses
+// that frame's pose and geometry scope. All unrelated SWFs retain native jobs.
+inline bool drawProgMeterInline(bool enabled,uintptr_t ownerSwf,uintptr_t drawSwf,
+    uintptr_t ownerGui,uintptr_t drawGui,int surface){
+    return enabled&&ownerSwf&&ownerSwf==drawSwf&&ownerGui&&ownerGui==drawGui&&surface==0;
+}
 inline bool suppressOffhandHudFallback(bool managed,bool gameplay,bool cinematic,bool ledge,bool syncAttack,bool tracked){
     return managed&&(!gameplay||cinematic||ledge||syncAttack||!tracked);
 }

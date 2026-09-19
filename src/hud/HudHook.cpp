@@ -1882,6 +1882,22 @@ struct ProgMeterRuntime {
 thread_local ProgMeterRuntime progMeter;
 thread_local void* progOwnerSwf{};
 bool progHooksReady{};
+using ProgQueueFn=bool(__fastcall*)(void*,void*,void*,int,const float*,const float*);
+ProgQueueFn originalProgQueue{};
+bool __fastcall progQueue(void* queue,void* swf,void* gui,int time,const float* viewport,const float* extents){
+    bool enabled=false;
+    if(progHooksReady&&swf==progOwnerSwf){std::lock_guard<std::mutex> lock(offhandHudMutex);
+        enabled=offhandHudConfig.enabled||offhandCalibrationActive.load();}
+    if(kharvox::drawProgMeterInline(enabled,reinterpret_cast<uintptr_t>(progOwnerSwf),reinterpret_cast<uintptr_t>(swf),
+        reinterpret_cast<uintptr_t>(progSource.entity),reinterpret_cast<uintptr_t>(gui),progSource.surface)){
+        // Native caller 161CE86 falls through to synchronous 161F0F0 when
+        // enqueue declines. No SWF update/animation is executed a second time.
+        static std::atomic<bool> noted{};
+        if(!noted.exchange(true))log("[PROGMETER] owned SWF drawn inline; native deferred queue bypassed for extraction");
+        return false;
+    }
+    return originalProgQueue(queue,swf,gui,time,viewport,extents);
+}
 template<class Fn> Fn progNative(uintptr_t rva){return reinterpret_cast<Fn>(reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr))+rva);}
 void* __fastcall progAllocate(void* gui,int vertices,void* indices,int indexCount,void* material){
     void* result=originalProgAlloc(gui,vertices,indices,indexCount,material);
@@ -1940,11 +1956,11 @@ bool progCreate(){
     log("[PROGMETER] independent native GUI created");return true;
 }
 bool progIsTarget(void* swf,void* sprite){
-    if(!progHooksReady||swf!=progOwnerSwf||!sprite||!readableRange(sprite,0x38))return false;
+    if(!progHooksReady||swf!=progOwnerSwf||!sprite)return false;
     auto bytes=static_cast<unsigned char*>(sprite);
     if(*reinterpret_cast<void**>(bytes+0x20)!=swf)return false;
     auto name=*reinterpret_cast<const char**>(bytes+8);
-    return name&&readableRange(name,11)&&std::memcmp(name,"prog_meter",11)==0;
+    return name&&std::strcmp(name,"prog_meter")==0;
 }
 bool renderProgMeter(void* swf,void* view,void* sprite,void* state,int time,bool flag){
     if(!progIsTarget(swf,sprite)||progMeter.drawing||!state||!readableRange(state,24)
@@ -2016,10 +2032,15 @@ bool installProgMeterHooks(){
     if(!readableRange(slot,8)||*slot!=reinterpret_cast<uintptr_t>(image+0xf91d00)
         ||std::memcmp(image+0x158e6b0,allocation.data(),allocation.size()))return false;
     if(!installEntryHook(image+0x158e6b0,allocation,reinterpret_cast<const void*>(&progAllocate),originalProgAlloc,"ProgMeter geometry capture"))return false;
+    constexpr std::array<unsigned char,16> queueSignature{
+        0x48,0x89,0x74,0x24,0x18,0x48,0x89,0x7c,0x24,0x20,0x41,0x56,0x48,0x83,0xec,0x50};
+    if(!readableRange(image+0x161b660,queueSignature.size())
+        ||std::memcmp(image+0x161b660,queueSignature.data(),queueSignature.size()))return false;
+    if(!installEntryHook(image+0x161b660,queueSignature,reinterpret_cast<const void*>(&progQueue),originalProgQueue,"ProgMeter owned SWF queue"))return false;
     DWORD old{};if(!VirtualProtect(slot,8,PAGE_READWRITE,&old))return false;
     originalProgFrame=reinterpret_cast<ProgFrameFn>(*slot);*slot=reinterpret_cast<uintptr_t>(&progFrame);
     DWORD unused{};VirtualProtect(slot,8,old,&unused);progHooksReady=true;
-    log("[PROGMETER] owned WeaponInfo frame and geometry hooks installed");return true;
+    log("[PROGMETER] owned WeaponInfo frame, geometry and scoped queue hooks installed");return true;
 }
 
 std::atomic<unsigned long long> tutorialRenderGeneration{0};

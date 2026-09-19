@@ -105,6 +105,17 @@ int main() {
         if(!near(origin[1],16))return 143;
     }
 
+    // Deferred submission loses the thread-local extraction scope. Decline
+    // jobs only for the exact owned SWF/GUI pair with an active hand surface.
+    if(!drawProgMeterInline(true,10,10,20,20,0))return 144;
+    if(drawProgMeterInline(false,10,10,20,20,0))return 145;
+    if(drawProgMeterInline(true,0,0,20,20,0))return 146;
+    if(drawProgMeterInline(true,10,11,20,20,0))return 147;
+    if(drawProgMeterInline(true,10,10,20,21,0))return 148;
+    if(drawProgMeterInline(true,10,10,0,0,0))return 149;
+    if(drawProgMeterInline(true,10,10,20,20,-1))return 150;
+    if(drawProgMeterInline(true,10,10,20,20,1))return 151;
+
     // Owned health/ammo never fall back to the native screen during sequences.
     if(suppressOffhandHudFallback(true,true,false,false,false,true))return 113;
     if(!suppressOffhandHudFallback(true,false,false,false,false,true))return 114;

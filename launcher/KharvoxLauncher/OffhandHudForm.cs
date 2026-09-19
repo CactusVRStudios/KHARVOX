@@ -13,12 +13,12 @@ internal sealed class OffhandHudForm : Form
         path = Path.Combine(runtime ?? AppContext.BaseDirectory, "offhand_hud.cfg");
         Text = "Offhand HUD calibration (Test)";
         AutoScaleMode = AutoScaleMode.Dpi;
-        ClientSize = new Size(600,460); MinimumSize = new Size(610,490);
+        ClientSize = new Size(650,570); MinimumSize = new Size(660,600);
         StartPosition = FormStartPosition.CenterParent;
         var root = new TableLayoutPanel { Dock=DockStyle.Fill, Padding=new Padding(14), ColumnCount=1, RowCount=5 };
         root.RowStyles.Add(new RowStyle(SizeType.Absolute,32));
         root.RowStyles.Add(new RowStyle(SizeType.Percent,100));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute,60));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute,140));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute,40));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute,36));
         Controls.Add(root);root.Controls.Add(enabled);
@@ -39,7 +39,7 @@ internal sealed class OffhandHudForm : Form
             }
         }
         root.Controls.Add(grid);
-        root.Controls.Add(new Label { Dock=DockStyle.Fill,Text="Position is relative to the physical grip. Rotation turns both panels together.\nEach handedness keeps its own calibration. If tracking is lost, the regular HUD returns." });
+        root.Controls.Add(new Label { Dock=DockStyle.Fill,Text="INGAME: Hold ALT for all HUD calibration keys (Num Lock ON).\nNum +: switch rotation / position (starts in rotation).\n4/6: yaw or left/right; 2/8: pitch or down/up; 7/9: roll or forward/back.\nShift: fine steps. Num * / Num /: size up/down. Num 5: reset active handedness.\nNum 0: toggle offhand HUD. Every change is saved automatically.\nNormal mode and Left Mode retain separate calibration." });
         var buttons=new FlowLayoutPanel { Dock=DockStyle.Fill };
         var apply=new Button { Text="Apply live",AutoSize=true };apply.Click+=(_,_)=>Save();buttons.Controls.Add(apply);
         var reset=new Button { Text="Reset both",AutoSize=true };reset.Click+=(_,_)=>{for(int m=0;m<2;++m)for(int r=0;r<7;++r)fields[m,r].Value=defaults[r];};buttons.Controls.Add(reset);

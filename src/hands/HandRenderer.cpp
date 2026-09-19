@@ -597,10 +597,12 @@ void HandRenderer::Impl::pollCalibration(const HandGameplayState&gameplay){
     DWORD foregroundProcess{};
     GetWindowThreadProcessId(GetForegroundWindow(),&foregroundProcess);
     const bool focused=foregroundProcess==GetCurrentProcessId();
+    // Modified numpad belongs to HUD calibration, not hand/weapon calibration.
+    const bool hudModifier=(GetAsyncKeyState(VK_MENU)&0x8000)||(GetAsyncKeyState(VK_CONTROL)&0x8000);
     const bool plusDown=(GetAsyncKeyState(VK_ADD)&0x8000)!=0;
     const bool handDown=(GetAsyncKeyState(VK_NUMPAD0)&0x8000)!=0;
     const bool resetDown=(GetAsyncKeyState(VK_NUMPAD5)&0x8000)!=0;
-    if(!focused){
+    if(!focused||hudModifier){
         calibrationPlusWasDown=plusDown;calibrationHandWasDown=handDown;
         calibrationResetWasDown=resetDown;return;
     }

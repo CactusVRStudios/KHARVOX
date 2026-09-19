@@ -2251,6 +2251,61 @@ bool getOffhandHudFrame(float origin[3],float axis[9]) {
     if(!valid)return false;std::memcpy(origin,position,sizeof(position));std::memcpy(axis,basis,sizeof(basis));return true;
 }
 
+void pollOffhandHudHotkeys(){
+    static bool rotate=true,plusWasDown=false,resetWasDown=false,toggleWasDown=false;
+    static unsigned long long nextStep{};
+    DWORD process{};GetWindowThreadProcessId(GetForegroundWindow(),&process);
+    const bool active=process==GetCurrentProcessId()&&KharvoxCameraWorldActive()
+        &&(GetAsyncKeyState(VK_MENU)&0x8000)&&!(GetAsyncKeyState(VK_CONTROL)&0x8000);
+    const bool plus=(GetAsyncKeyState(VK_ADD)&0x8000)!=0;
+    const bool reset=(GetAsyncKeyState(VK_NUMPAD5)&0x8000)!=0;
+    const bool toggle=(GetAsyncKeyState(VK_NUMPAD0)&0x8000)!=0;
+    const bool switchMode=active&&plus&&!plusWasDown;
+    const bool resetNow=active&&reset&&!resetWasDown;
+    const bool toggleNow=active&&toggle&&!toggleWasDown;
+    plusWasDown=plus;resetWasDown=reset;toggleWasDown=toggle;
+    if(!active){nextStep=0;return;}
+    if(switchMode){rotate=!rotate;log(std::string("[OFFHAND-HUD] calibration mode=")+(rotate?"rotation":"position"));}
+    const auto now=GetTickCount64();if(now<nextStep&&!resetNow&&!toggleNow)return;
+    auto down=[](int key){return (GetAsyncKeyState(key)&0x8000)!=0;};
+    const int x=int(down(VK_NUMPAD6))-int(down(VK_NUMPAD4));
+    const int y=int(down(VK_NUMPAD8))-int(down(VK_NUMPAD2));
+    const int z=int(down(VK_NUMPAD9))-int(down(VK_NUMPAD7));
+    const int size=int(down(VK_MULTIPLY))-int(down(VK_DIVIDE));
+    if(!x&&!y&&!z&&!size&&!resetNow&&!toggleNow){nextStep=0;return;}
+    const bool fine=down(VK_SHIFT);kharvox::OffhandHudConfig config;
+    {std::lock_guard<std::mutex> lock(offhandHudMutex);config=offhandHudConfig;}
+    auto& c=config.modes[offhandHudLeftMode()?1:0];
+    if(toggleNow)config.enabled=!config.enabled;
+    if(resetNow)c={};
+    else {
+        if(rotate){const float step=fine?1.f:5.f;
+            c.degrees[0]=std::remainder(c.degrees[0]+y*step,360.f);
+            c.degrees[1]=std::remainder(c.degrees[1]+x*step,360.f);
+            c.degrees[2]=std::remainder(c.degrees[2]+z*step,360.f);
+        }else{const float step=fine?.1f:.5f;
+            c.centimeters[0]=std::clamp(c.centimeters[0]-z*step,-100.f,100.f);
+            c.centimeters[1]=std::clamp(c.centimeters[1]-x*step,-100.f,100.f);
+            c.centimeters[2]=std::clamp(c.centimeters[2]+y*step,-100.f,100.f);
+        }
+        c.scale=std::clamp(c.scale+size*(fine?.001f:.01f),.02f,2.f);
+    }
+    const auto path=kharvox::runtimePathA("offhand_hud.cfg"),temp=path+".hotkeys.tmp";
+    std::ofstream output(temp,std::ios::trunc);output.imbue(std::locale::classic());
+    output<<"1 "<<int(config.enabled)<<'\n';
+    for(const auto& mode:config.modes){for(float v:mode.centimeters)output<<v<<' ';for(float v:mode.degrees)output<<v<<' ';output<<mode.scale<<'\n';}
+    output.close();
+    if(!output||!MoveFileExA(temp.c_str(),path.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)){
+        log("[OFFHAND-HUD] calibration save failed; keeping previous values");nextStep=now+1000;return;
+    }
+    {std::lock_guard<std::mutex> lock(offhandHudMutex);offhandHudConfig=config;}
+    nextStep=now+100;
+    std::ostringstream status;status<<"[OFFHAND-HUD] SAVED "<<(offhandHudLeftMode()?"left-mode/right-hand":"normal/left-hand")
+        <<" mode="<<(rotate?"rotation":"position")<<" enabled="<<config.enabled;
+    for(float v:c.centimeters)status<<" pos="<<v;for(float v:c.degrees)status<<" deg="<<v;
+    status<<" size="<<c.scale;log(status.str());
+}
+
 bool getAnchorPose(KharvoxHudAnchor anchor, float origin[3], float axis[9]) {
     if (anchor == KharvoxHudAnchor::RightHand) return getHandWorldPose(true, origin, axis);
     if (anchor == KharvoxHudAnchor::LeftHand) return getHandWorldPose(false, origin, axis);
@@ -3379,6 +3434,7 @@ bool KharvoxHudInstallHook() {
 
 void KharvoxHudPollQuadControls() {
     reloadOffhandHud();
+    pollOffhandHudHotkeys();
     static bool addWasDown{};
     static bool subtractWasDown{};
     static bool fartherWasDown{};

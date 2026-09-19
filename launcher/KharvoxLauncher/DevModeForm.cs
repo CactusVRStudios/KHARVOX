@@ -123,6 +123,13 @@ internal sealed class DevModeForm : Form
                 "  Shift + adjustment fine step (1 degree / 1 mm)\n" +
                 "  Num 5              reset selected hand to defaults\n" +
                 "  Every change is saved automatically.\n\n" +
+                "OFFHAND LIFE / AMMO (no debug mode needed)\n" +
+                "  Hold Alt for all keys; keep DOOM focused, Num Lock ON.\n" +
+                "  Num +: rotation / position. Num 4/6: yaw / left-right.\n" +
+                "  Num 2/8: pitch / down-up. Num 7/9: roll / forward-back.\n" +
+                "  Shift: fine. Num * / Num /: size up / down.\n" +
+                "  Num 5: reset current handedness. Num 0: enable / disable.\n" +
+                "  Auto-saved separately for Normal and Left Mode.\n\n" +
                 "Enable HUD debugging / calibration before launching DOOM.\n\n" +
                 "GLOBAL HUD\n" +
                 "  Num 7 / 9          farther / closer\n" +

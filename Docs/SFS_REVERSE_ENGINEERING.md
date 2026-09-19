@@ -993,3 +993,14 @@ calibration persistence, translation and rotation. 123 CTests and launcher
 self-test passed; launcher and calibration dialog previews inspected.
 No headset confirmation of panel placement/readability yet. The existing SFS
 near-screen UI projection rule is unchanged; close-to-face stereo needs testing.
+## 0.96 Test 25 - in-game offhand HUD calibration
+
+Hold Alt while DOOM is focused. Num + switches rotation/position (initially
+rotation); Num 4/6 yaw or left/right, 2/8 pitch or down/up, 7/9 roll or
+forward/back; Shift enables fine steps. Num */divide adjusts scale, Num 5
+resets the current handedness, Num 0 toggles offhand HUD. No HUD debug setting
+is required. Every adjustment is atomically saved to offhand_hud.cfg; only the
+active handedness values change. Keyboard repetition is limited to 10 Hz.
+Hand calibration now ignores Alt/Ctrl modified numpad input to prevent dual
+adjustment. Native/launcher builds and 123 regression tests pass. Dialog with
+hotkey instructions rendered and inspected; headset hotkey test still pending.

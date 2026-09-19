@@ -20,6 +20,11 @@ int main() {
         if(offhandHudSurface(0xbdcf54,512,301,100)!=-1||offhandHudSurface(0xbdcf55,512,300,100)!=-1)return 101;
         OffhandHudConfig config;std::istringstream saved("1 1 8 0 8 0 0 0 .1 4 2 6 0 90 0 .2");
         if(!readOffhandHudConfig(saved,config)||!near(config.modes[1].centimeters[0],4)||!near(config.modes[0].scale,.1f))return 102;
+        if(!near(config.modes[2].centimeters[0],config.modes[0].centimeters[0])||!near(config.modes[3].scale,config.modes[1].scale))return 107;
+        OffhandHudConfig separate;std::istringstream v2("2 1 8 0 8 0 0 0 .1 4 2 6 0 90 0 .2 15 3 2 10 20 30 .3 1 2 3 4 5 6 .4");
+        if(!readOffhandHudConfig(v2,separate)||!near(separate.modes[2].centimeters[0],15)||!near(separate.modes[0].centimeters[0],8)||!near(separate.modes[3].scale,.4f))return 108;
+        separate.modes[2].centimeters[0]+=1;
+        if(!near(separate.modes[0].centimeters[0],8)||!near(separate.modes[1].centimeters[0],4)||!near(separate.modes[3].centimeters[0],1))return 109;
         std::istringstream invalid("1 1 999 0 0 0 0 0 .1");if(readOffhandHudConfig(invalid,config))return 103;
         float hand[9]{1,0,0,0,1,0,0,0,1},panel[9]{},grip[3]{1,2,3},a[3]{},b[3]{};
         offhandHudBasis(hand,config.modes[0],panel);

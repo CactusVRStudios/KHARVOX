@@ -76,3 +76,5 @@ std::size_t KharvoxHudCopyDiagnosticEvents(
 
 // Native HUD movie playback, independent of immersive 3D cinematics.
 bool KharvoxHudMovieActive();
+
+bool KharvoxHudOffhandCalibrationActive();

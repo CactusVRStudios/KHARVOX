@@ -148,9 +148,14 @@ std::array<TrackedHandPose, 2> handPoses{};
 std::mutex handPoseMutex;
 std::mutex offhandHudMutex;
 kharvox::OffhandHudConfig offhandHudConfig;
+std::atomic<bool> offhandCalibrationActive{};
+std::atomic<int> offhandSelectedSurface{};
+std::atomic<unsigned long long> offhandSelectionUntil{};
 bool offhandHudLeftMode(){static const bool value=[](){char text[16]{};return GetEnvironmentVariableA("KHARVOX_LEFT_HANDED",text,sizeof(text))&&std::strcmp(text,"0");}();return value;}
 void reloadOffhandHud(){
     static unsigned long long last{};const auto now=GetTickCount64();if(last&&now-last<500)return;last=now;
+    const auto attributes=GetFileAttributesA(kharvox::runtimePathA("enable_live_ammo_calibration").c_str());
+    offhandCalibrationActive.store(attributes!=INVALID_FILE_ATTRIBUTES&&!(attributes&FILE_ATTRIBUTE_DIRECTORY),std::memory_order_release);
     std::ifstream file(kharvox::runtimePathA("offhand_hud.cfg"));kharvox::OffhandHudConfig next;
     if(kharvox::readOffhandHudConfig(file,next)){std::lock_guard<std::mutex> lock(offhandHudMutex);offhandHudConfig=next;}
 }
@@ -2256,7 +2261,8 @@ void pollOffhandHudHotkeys(){
     static unsigned long long nextStep{};
     DWORD process{};GetWindowThreadProcessId(GetForegroundWindow(),&process);
     const bool active=process==GetCurrentProcessId()&&KharvoxCameraWorldActive()
-        &&(GetAsyncKeyState(VK_MENU)&0x8000)&&!(GetAsyncKeyState(VK_CONTROL)&0x8000);
+        &&offhandCalibrationActive.load(std::memory_order_acquire)
+        &&!(GetAsyncKeyState(VK_MENU)&0x8000)&&!(GetAsyncKeyState(VK_CONTROL)&0x8000);
     const bool plus=(GetAsyncKeyState(VK_ADD)&0x8000)!=0;
     const bool reset=(GetAsyncKeyState(VK_NUMPAD5)&0x8000)!=0;
     const bool toggle=(GetAsyncKeyState(VK_NUMPAD0)&0x8000)!=0;
@@ -2265,6 +2271,9 @@ void pollOffhandHudHotkeys(){
     const bool toggleNow=active&&toggle&&!toggleWasDown;
     plusWasDown=plus;resetWasDown=reset;toggleWasDown=toggle;
     if(!active){nextStep=0;return;}
+    if(toggleNow){const int selected=1-offhandSelectedSurface.load();offhandSelectedSurface.store(selected);
+        offhandSelectionUntil.store(GetTickCount64()+1200);
+        log(std::string("[OFFHAND-HUD] selected=")+(selected?"Ammo":"Life"));}
     if(switchMode){rotate=!rotate;log(std::string("[OFFHAND-HUD] calibration mode=")+(rotate?"rotation":"position"));}
     const auto now=GetTickCount64();if(now<nextStep&&!resetNow&&!toggleNow)return;
     auto down=[](int key){return (GetAsyncKeyState(key)&0x8000)!=0;};
@@ -2272,11 +2281,11 @@ void pollOffhandHudHotkeys(){
     const int y=int(down(VK_NUMPAD8))-int(down(VK_NUMPAD2));
     const int z=int(down(VK_NUMPAD9))-int(down(VK_NUMPAD7));
     const int size=int(down(VK_MULTIPLY))-int(down(VK_DIVIDE));
-    if(!x&&!y&&!z&&!size&&!resetNow&&!toggleNow){nextStep=0;return;}
+    if(!x&&!y&&!z&&!size&&!resetNow){nextStep=0;return;}
     const bool fine=down(VK_SHIFT);kharvox::OffhandHudConfig config;
     {std::lock_guard<std::mutex> lock(offhandHudMutex);config=offhandHudConfig;}
-    auto& c=config.modes[offhandHudLeftMode()?1:0];
-    if(toggleNow)config.enabled=!config.enabled;
+    auto& c=config.modes[offhandSelectedSurface.load()*2+(offhandHudLeftMode()?1:0)];
+    config.enabled=true;
     if(resetNow)c={};
     else {
         if(rotate){const float step=fine?1.f:5.f;
@@ -2292,7 +2301,7 @@ void pollOffhandHudHotkeys(){
     }
     const auto path=kharvox::runtimePathA("offhand_hud.cfg"),temp=path+".hotkeys.tmp";
     std::ofstream output(temp,std::ios::trunc);output.imbue(std::locale::classic());
-    output<<"1 "<<int(config.enabled)<<'\n';
+    output<<"2 "<<int(config.enabled)<<'\n';
     for(const auto& mode:config.modes){for(float v:mode.centimeters)output<<v<<' ';for(float v:mode.degrees)output<<v<<' ';output<<mode.scale<<'\n';}
     output.close();
     if(!output||!MoveFileExA(temp.c_str(),path.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)){
@@ -2301,7 +2310,7 @@ void pollOffhandHudHotkeys(){
     {std::lock_guard<std::mutex> lock(offhandHudMutex);offhandHudConfig=config;}
     nextStep=now+100;
     std::ostringstream status;status<<"[OFFHAND-HUD] SAVED "<<(offhandHudLeftMode()?"left-mode/right-hand":"normal/left-hand")
-        <<" mode="<<(rotate?"rotation":"position")<<" enabled="<<config.enabled;
+        <<" target="<<(offhandSelectedSurface.load()?"Ammo":"Life")<<" mode="<<(rotate?"rotation":"position")<<" enabled="<<config.enabled;
     for(float v:c.centimeters)status<<" pos="<<v;for(float v:c.degrees)status<<" deg="<<v;
     status<<" size="<<c.scale;log(status.str());
 }
@@ -2829,6 +2838,7 @@ void selectNextGuiProfile(int direction) {
 }
 
 void pollIdentityKeys() {
+    if(offhandCalibrationActive.load())return;
     static bool leftWasDown{}, rightWasDown{}, upWasDown{}, downWasDown{};
     static bool fartherWasDown{}, closerWasDown{}, yawLeftWasDown{}, yawRightWasDown{};
     static bool resetWasDown{};
@@ -3040,6 +3050,7 @@ void saveCalibration() {
 }
 
 void pollCalibrationKeys() {
+    if(offhandCalibrationActive.load())return;
     static std::array<bool, 10> wasDown{};
     const std::array<int, 10> keys{
         VK_NUMPAD0, VK_NUMPAD4, VK_NUMPAD6, VK_NUMPAD8, VK_NUMPAD2,
@@ -3256,11 +3267,13 @@ bool KharvoxHudPrepareOriginTransform(void* intermediateEntity, float* nativeOri
     if(!crosshair&&!offscreen&&handSurface>=0){
         kharvox::OffhandHudConfig config;{std::lock_guard<std::mutex> lock(offhandHudMutex);config=offhandHudConfig;}
         float grip[3]{},handAxis[9]{};
-        if(config.enabled&&getOffhandHudFrame(grip,handAxis)){
-            const auto& values=config.modes[offhandHudLeftMode()?1:0];
+        if((config.enabled||offhandCalibrationActive.load())&&getOffhandHudFrame(grip,handAxis)){
+            const auto& values=config.modes[handSurface*2+(offhandHudLeftMode()?1:0)];
             kharvox::offhandHudBasis(handAxis,values,offhandAxis);
             kharvox::offhandHudOrigin(grip,handAxis,offhandAxis,values,handSurface,hudWorldUnitsPerMeter,desiredOrigin);
-            offhand=true;offhandScale=values.scale;profileAdjustment.yawDegrees=0;
+            offhand=true;offhandScale=values.scale;
+            if(offhandCalibrationActive.load()&&offhandSelectedSurface.load()==handSurface&&GetTickCount64()<offhandSelectionUntil.load())offhandScale*=1.15f;
+            profileAdjustment.yawDegrees=0;
             static std::atomic<unsigned> seen{};const auto bit=1u<<handSurface;
             if(!(seen.fetch_or(bit)&bit))log("[OFFHAND-HUD] surface="+std::to_string(handSurface)+" hand="+(offhandHudLeftMode()?"right":"left"));
         }
@@ -3435,6 +3448,7 @@ bool KharvoxHudInstallHook() {
 void KharvoxHudPollQuadControls() {
     reloadOffhandHud();
     pollOffhandHudHotkeys();
+    if(offhandCalibrationActive.load())return;
     static bool addWasDown{};
     static bool subtractWasDown{};
     static bool fartherWasDown{};
@@ -4044,3 +4058,5 @@ bool KharvoxHudMovieActive(){
     const auto until=hudMovieUntil.load(std::memory_order_acquire);
     return until && GetTickCount64()<until;
 }
+
+bool KharvoxHudOffhandCalibrationActive(){return offhandCalibrationActive.load(std::memory_order_acquire);}

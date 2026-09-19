@@ -1,4 +1,5 @@
 #include "HandRenderer.h"
+#include "../hud/HudHook.h"
 #include "HandSceneDepthCopy.h"
 #include "HandCalibrationPolicy.h"
 #include "../openxr/OpenXRBootstrap.h"
@@ -602,7 +603,7 @@ void HandRenderer::Impl::pollCalibration(const HandGameplayState&gameplay){
     const bool plusDown=(GetAsyncKeyState(VK_ADD)&0x8000)!=0;
     const bool handDown=(GetAsyncKeyState(VK_NUMPAD0)&0x8000)!=0;
     const bool resetDown=(GetAsyncKeyState(VK_NUMPAD5)&0x8000)!=0;
-    if(!focused||hudModifier){
+    if(!focused||hudModifier||KharvoxHudOffhandCalibrationActive()){
         calibrationPlusWasDown=plusDown;calibrationHandWasDown=handDown;
         calibrationResetWasDown=resetDown;return;
     }

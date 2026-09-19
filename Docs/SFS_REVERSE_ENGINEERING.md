@@ -1004,3 +1004,17 @@ active handedness values change. Keyboard repetition is limited to 10 Hz.
 Hand calibration now ignores Alt/Ctrl modified numpad input to prevent dual
 adjustment. Native/launcher builds and 123 regression tests pass. Dialog with
 hotkey instructions rendered and inspected; headset hotkey test still pending.
+## 0.96 Test 26 - independent Life/Ammo in-game calibration
+
+Dev Mode checkbox "Live/Ammo calibration" owns the numpad while active; no Alt
+is required. Its persistent runtime marker is polled twice per second. Hand
+and legacy HUD calibration are blocked while it is selected. Num 0 selects
+Life/Ammo, with a brief size pulse on the selected surface. Num + toggles
+rotation/position; movement keys and size/reset affect only the selected panel.
+Four calibration records now store Life normal, Life left-handed, Ammo normal,
+and Ammo left-handed independently. Config version 1 migrates shared values to
+both panels without losing the handedness settings; new saves use version 2.
+The old shared numeric dialog was removed. Calibration disabled does not remove
+the saved offhand HUD. Tests cover config migration and per-panel independence.
+123 CTests, launcher self-test and debug layout inspection passed. Headset
+validation of key selection and placement remains pending.

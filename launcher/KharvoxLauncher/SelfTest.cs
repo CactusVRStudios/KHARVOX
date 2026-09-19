@@ -1030,23 +1030,6 @@ internal static class SelfTest
             visibleBitmap.Save(Path.Combine(previewDirectory, "launcher-hands.png"));
             form.Hide();
         }
-        using (var offhand = new OffhandHudForm(testRoot)) {
-            var fieldInfo=typeof(OffhandHudForm).GetField("fields",BindingFlags.Instance|BindingFlags.NonPublic)!;
-            var controls=(NumericUpDown[,])fieldInfo.GetValue(offhand)!;
-            controls[0,0].Value=12;controls[1,0].Value=-4;controls[1,4].Value=35;
-            typeof(OffhandHudForm).GetMethod("Save",BindingFlags.Instance|BindingFlags.NonPublic)!.Invoke(offhand,null);
-            using var restored=new OffhandHudForm(testRoot);
-            var restoredFields=(NumericUpDown[,])fieldInfo.GetValue(restored)!;
-            Require(restoredFields[0,0].Value==12&&restoredFields[1,0].Value==-4&&restoredFields[1,4].Value==35,
-                "offhand HUD calibration retains separate position and rotation for both handedness modes");
-            if(!string.IsNullOrWhiteSpace(previewDirectory)) {
-                offhand.ShowInTaskbar=false;offhand.StartPosition=FormStartPosition.Manual;offhand.Location=new Point(-32000,-32000);
-                offhand.Show();offhand.PerformLayout();Application.DoEvents();offhand.Refresh();
-                using var preview=new Bitmap(offhand.Width,offhand.Height);
-                offhand.DrawToBitmap(preview,new Rectangle(Point.Empty,offhand.Size));
-                preview.Save(Path.Combine(previewDirectory,"offhand-hud.png"));offhand.Hide();
-            }
-        }
         using var dev = new DevModeForm(new ComboBox(), new ComboBox(), new ComboBox(),
             new CheckBox(), new CheckBox(), new CheckBox(), new Label(),
             disableAa, captureEyes);

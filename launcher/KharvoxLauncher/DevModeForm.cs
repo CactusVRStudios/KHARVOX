@@ -29,12 +29,13 @@ internal sealed class DevModeForm : Form
         {
             Dock = DockStyle.Fill,
             Padding = new Padding(14),
-            RowCount = 5,
+            RowCount = 6,
             ColumnCount = 1
         };
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 360));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         Controls.Add(root);
@@ -95,6 +96,15 @@ internal sealed class DevModeForm : Form
         captureEyes ??= new CheckBox {Text="Eye capture: Ctrl+Shift+P (next launch)",AutoSize=true};
         captureEyes.Dock=DockStyle.Fill;
         root.Controls.Add(captureEyes);
+        var liveAmmo = new CheckBox { Text="Live/Ammo calibration",AutoSize=true,Dock=DockStyle.Fill };
+        var liveAmmoMarker=Path.Combine(AppContext.BaseDirectory,"enable_live_ammo_calibration");
+        liveAmmo.Checked=File.Exists(liveAmmoMarker);
+        liveAmmo.CheckedChanged+=(_,_)=>{
+            try{if(liveAmmo.Checked)File.WriteAllText(liveAmmoMarker,"");else File.Delete(liveAmmoMarker);}
+            catch(Exception ex){MessageBox.Show(this,ex.Message,"Calibration setting",MessageBoxButtons.OK,MessageBoxIcon.Error);}
+        };
+        root.Controls.Add(liveAmmo);
+
         root.Controls.Add(new Label { Text="Pose trace: Ctrl+Shift+T in game, 20 seconds (requires Extended Logging)", Dock=DockStyle.Fill, AutoSize=true });
 
 
@@ -123,13 +133,15 @@ internal sealed class DevModeForm : Form
                 "  Shift + adjustment fine step (1 degree / 1 mm)\n" +
                 "  Num 5              reset selected hand to defaults\n" +
                 "  Every change is saved automatically.\n\n" +
-                "OFFHAND LIFE / AMMO (no debug mode needed)\n" +
-                "  Hold Alt for all keys; keep DOOM focused, Num Lock ON.\n" +
+                "LIVE / AMMO CALIBRATION (enable checkbox above)\n" +
+                "  DOOM focused, Num Lock ON. No Alt required.\n" +
+                "  Starts on Life. Num 0 selects Life / Ammo (brief size pulse).\n" +
                 "  Num +: rotation / position. Num 4/6: yaw / left-right.\n" +
                 "  Num 2/8: pitch / down-up. Num 7/9: roll / forward-back.\n" +
-                "  Shift: fine. Num * / Num /: size up / down.\n" +
-                "  Num 5: reset current handedness. Num 0: enable / disable.\n" +
-                "  Auto-saved separately for Normal and Left Mode.\n\n" +
+                "  Shift: fine. Num * / Num /: selected size up / down.\n" +
+                "  Num 5: reset selected element for current handedness.\n" +
+                "  Auto-saved per element AND Normal/Left Mode.\n" +
+                "  Hand and other HUD calibration are blocked while checked.\n\n" +
                 "Enable HUD debugging / calibration before launching DOOM.\n\n" +
                 "GLOBAL HUD\n" +
                 "  Num 7 / 9          farther / closer\n" +

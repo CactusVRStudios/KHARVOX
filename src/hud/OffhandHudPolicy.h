@@ -9,19 +9,20 @@ struct OffhandHudCalibration {
     std::array<float,3> degrees{}; // pitch, yaw, roll
     float scale{0.10f};
 };
-struct OffhandHudConfig { bool enabled{true};std::array<OffhandHudCalibration,2> modes{}; };
+struct OffhandHudConfig { bool enabled{true};std::array<OffhandHudCalibration,4> modes{}; };
 inline int offhandHudSurface(uintptr_t caller,int width,int height,int scale){
     if(caller!=0xbdcf54||width!=512||height!=300)return -1;
     return scale==83?0:scale==100?1:-1;
 }
 inline bool readOffhandHudConfig(std::istream& stream,OffhandHudConfig& out){
     int version{},enabled{};OffhandHudConfig value;
-    if(!(stream>>version>>enabled)||version!=1||(enabled!=0&&enabled!=1))return false;
-    for(auto& mode:value.modes){
+    if(!(stream>>version>>enabled)||(version!=1&&version!=2)||(enabled!=0&&enabled!=1))return false;
+    for(int i=0;i<(version==1?2:4);++i){auto& mode=value.modes[i];
         for(auto& v:mode.centimeters)if(!(stream>>v)||!std::isfinite(v)||std::abs(v)>100)return false;
         for(auto& v:mode.degrees)if(!(stream>>v)||!std::isfinite(v)||std::abs(v)>180)return false;
         if(!(stream>>mode.scale)||!std::isfinite(mode.scale)||mode.scale<.02f||mode.scale>2)return false;
     }
+    if(version==1){value.modes[2]=value.modes[0];value.modes[3]=value.modes[1];}
     value.enabled=enabled!=0;out=value;return true;
 }
 inline void offhandHudBasis(const float* hand,const OffhandHudCalibration& c,float* out){

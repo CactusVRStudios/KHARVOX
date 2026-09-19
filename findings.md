@@ -127,8 +127,8 @@ The completion check, fallback wait, and uniform upload share the queue lock.
 No deferred engine-resource frees or descriptor-pool resets use this evidence.
 
 With `KHARVOX_SFS_PROFILE_TIMING=1`, the existing parameter timing log also reports
-`ownerFenceRetirements` and `deviceDrains` per 120 uploads. The historical
-`deviceIdleMeanMs`/`deviceIdleMaxMs` fields measure the retirement span, including
+`ownerFenceRetirements` and `deviceDrains` per 120 uploads. The
+`retirementMeanMs`/`retirementMaxMs` fields measure the retirement span, including
 queue-lock acquisition; they are not GPU execution times. Compare these counters
 and matching-scene frametimes before claiming a performance improvement.
 
@@ -170,6 +170,22 @@ Sparse binds conservatively invalidate SFS completion evidence. The production
 wrapper regression checks lock exclusion from another thread, result propagation,
 proc mapping, and sparse-bind invalidation. This closes application entry-point
 gaps; it is not live Vulkan synchronization validation.
+
+### P3: Retirement Timing Labels
+
+Confirmed: the old device-idle timing labels included fence qualification and
+queue-lock acquisition, not just device-idle calls. They are now
+`retirementMeanMs` and `retirementMaxMs`; existing path counters still distinguish
+owner-fence retirements from device drains. No timing calculation changed, and
+no repository parser consumes the old labels.
+
+Review-fix validation: a clean detached checkout built the Release layer with
+MSVC and the SFS shader compiler disabled. All seven selected CTest cases passed:
+queue-host dispatch, foreign-process isolation, Native queue completion, and four
+SFS tests. All six pacing-analyzer Python tests also passed. This is local
+validation, not GitHub CI. Compiler-enabled SFS packaging, live synchronization
+validation, and headset profiling remain untested. PR #2 is still open; rebasing
+and re-auditing its overlapping XR changes remain a post-merge step.
 
 ## Audit-Time Verification And Limits
 

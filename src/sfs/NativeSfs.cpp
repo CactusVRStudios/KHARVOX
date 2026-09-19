@@ -458,8 +458,8 @@ void beginFrame(VkDevice d,VkSwapchainKHR chain,uint32_t imageIndex){
                 +" sampledLookupLockMeanUs="+std::to_string(double(wait)/double(samples)/1000.0)
                 +" sampledHookBodyMeanUs="+std::to_string(double(body)/double(samples)/1000.0)
                 +" estimatedAggregateHookMsPerFrame="+std::to_string(double(wait+body)*64.0/120000000.0));
-            note("parameter timing frames=120 deviceIdleMeanMs="+std::to_string(double(s->retireNs)/120000000.0)
-                +" deviceIdleMaxMs="+std::to_string(double(s->maxRetireNs)/1000000.0)
+            note("parameter timing frames=120 retirementMeanMs="+std::to_string(double(s->retireNs)/120000000.0)
+                +" retirementMaxMs="+std::to_string(double(s->maxRetireNs)/1000000.0)
                 +" uploadMeanMs="+std::to_string(double(s->uploadNs)/120000000.0)
                 +" ownerFenceRetirements="+std::to_string(s->ownerFenceRetirements)+" deviceDrains="+std::to_string(s->deviceDrains));
             s->profiledFrames=s->retireNs=s->uploadNs=s->maxRetireNs=s->ownerFenceRetirements=s->deviceDrains=0;

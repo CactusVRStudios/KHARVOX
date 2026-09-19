@@ -2504,8 +2504,8 @@ void updateGameplayActions(XrTime displayTime){
         const XrVector3f grip{-current.position.z*s.worldScale,-current.position.x*s.worldScale,current.position.y*s.worldScale};
         KharvoxHudSetHandPose(rightHand,grip.x,grip.y,grip.z,current.orientation.x,current.orientation.y,current.orientation.z,current.orientation.w,true);
     };
-    publishHudHandPose(true,s.rightController);
-    publishHudHandPose(false,s.leftController);
+    publishHudHandPose(true,s.rightGripController);
+    publishHudHandPose(false,s.leftGripController);
     updateWeapon6Dof();
 }
 bool createGameplayActions(){

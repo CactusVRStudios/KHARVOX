@@ -1,5 +1,6 @@
 #include "../common/DiagnosticLogging.h"
 #include "HudHook.h"
+#include "OffhandHudPolicy.h"
 #include "TutorialRenderPolicy.h"
 #include "TutorialBindingText.h"
 #include "HudLayoutPolicy.h"
@@ -102,6 +103,8 @@ HudCalibrationSnapshot hudFrameCalibration{};
 struct PendingHudSubmission {
     bool active{};
     bool crosshair{};
+    bool offhand{};
+    std::array<float,9> offhandAxis{};
     bool offscreen{};
     uintptr_t context{};
     void* expectedFinalEntity{};
@@ -142,6 +145,16 @@ struct TrackedHandPose {
 };
 
 std::array<TrackedHandPose, 2> handPoses{};
+std::mutex handPoseMutex;
+std::mutex offhandHudMutex;
+kharvox::OffhandHudConfig offhandHudConfig;
+bool offhandHudLeftMode(){static const bool value=[](){char text[16]{};return GetEnvironmentVariableA("KHARVOX_LEFT_HANDED",text,sizeof(text))&&std::strcmp(text,"0");}();return value;}
+void reloadOffhandHud(){
+    static unsigned long long last{};const auto now=GetTickCount64();if(last&&now-last<500)return;last=now;
+    std::ifstream file(kharvox::runtimePathA("offhand_hud.cfg"));kharvox::OffhandHudConfig next;
+    if(kharvox::readOffhandHudConfig(file,next)){std::lock_guard<std::mutex> lock(offhandHudMutex);offhandHudConfig=next;}
+}
+
 
 struct GuiProfile {
     uintptr_t callerRva{};
@@ -2200,6 +2213,7 @@ std::array<float, 3> bodyVectorToWorld(
 }
 
 bool getHandWorldPose(bool rightHand, float origin[3], float axis[9]) {
+    std::lock_guard<std::mutex> poseGuard(handPoseMutex);
     auto& hand = handPoses[rightHand ? 0 : 1];
     if (!hand.valid.load(std::memory_order_acquire)) return false;
     float bodyOrigin[3]{}, bodyAxis[9]{};
@@ -2227,6 +2241,14 @@ bool getHandWorldPose(bool rightHand, float origin[3], float axis[9]) {
             axis[row * 3 + component] = worldRow[component];
     }
     return finiteValues(origin, 3) && finiteValues(axis, 9);
+}
+
+bool getOffhandHudFrame(float origin[3],float axis[9]) {
+    static std::mutex mutex;std::lock_guard<std::mutex> guard(mutex);
+    static unsigned long long present=~0ull;static bool valid{};static float position[3]{},basis[9]{};
+    const auto now=KharvoxCameraCurrentPresentSerial();
+    if(now!=present){present=now;valid=getHandWorldPose(offhandHudLeftMode(),position,basis);}
+    if(!valid)return false;std::memcpy(origin,position,sizeof(position));std::memcpy(axis,basis,sizeof(basis));return true;
 }
 
 bool getAnchorPose(KharvoxHudAnchor anchor, float origin[3], float axis[9]) {
@@ -3174,6 +3196,21 @@ bool KharvoxHudPrepareOriginTransform(void* intermediateEntity, float* nativeOri
             desiredOrigin, headAxis, &nativeDepth, calibration,
             profileAdjustment)) return false;
 
+    bool offhand=false;float offhandAxis[9]{};float offhandScale=1;
+    const int handSurface=kharvox::offhandHudSurface(diagnosticCallerRva,diagnosticWidth,diagnosticHeight,diagnosticScaleMilli);
+    if(!crosshair&&!offscreen&&handSurface>=0){
+        kharvox::OffhandHudConfig config;{std::lock_guard<std::mutex> lock(offhandHudMutex);config=offhandHudConfig;}
+        float grip[3]{},handAxis[9]{};
+        if(config.enabled&&getOffhandHudFrame(grip,handAxis)){
+            const auto& values=config.modes[offhandHudLeftMode()?1:0];
+            kharvox::offhandHudBasis(handAxis,values,offhandAxis);
+            kharvox::offhandHudOrigin(grip,handAxis,offhandAxis,values,handSurface,hudWorldUnitsPerMeter,desiredOrigin);
+            offhand=true;offhandScale=values.scale;profileAdjustment.yawDegrees=0;
+            static std::atomic<unsigned> seen{};const auto bit=1u<<handSurface;
+            if(!(seen.fetch_or(bit)&bit))log("[OFFHAND-HUD] surface="+std::to_string(handSurface)+" hand="+(offhandHudLeftMode()?"right":"left"));
+        }
+    }
+
     if (pendingHudDepth == maximumPendingHudDepth) {
         log("transient HUD stack overflow; restoring all contexts before continuing");
         restoreAllPendingHudSubmissions();
@@ -3182,6 +3219,8 @@ bool KharvoxHudPrepareOriginTransform(void* intermediateEntity, float* nativeOri
     PendingHudSubmission pending{};
     pending.active = true;
     pending.crosshair = crosshair;
+    pending.offhand=offhand;
+    std::memcpy(pending.offhandAxis.data(),offhandAxis,sizeof(offhandAxis));
     pending.offscreen = offscreen;
     pending.context = current;
     pending.expectedFinalEntity = expectedFinalEntity;
@@ -3193,7 +3232,7 @@ bool KharvoxHudPrepareOriginTransform(void* intermediateEntity, float* nativeOri
     std::memcpy(pending.headAxis.data(), headAxis, sizeof(headAxis));
 
     std::memcpy(reinterpret_cast<void*>(current + 0x60), desiredOrigin, sizeof(desiredOrigin));
-    const float desiredScale = offscreen ? nativeScale : nativeScale * std::clamp(
+    const float desiredScale = offscreen ? nativeScale : offhand ? nativeScale*offhandScale : nativeScale * std::clamp(
         calibration.elementScale / hudReferenceUserScale
             * calibration.headsetFitScale,
         minimumHudLayoutScale, maximumHudLayoutScale);
@@ -3263,6 +3302,13 @@ bool KharvoxHudCompleteFinalEntity(
     const auto matchedPending = pendingHudStack[match];
     const bool transformed = desiredOrigin && desiredAxis
         && buildStableHeadlockedAxis(matchedPending, nativeAxis, desiredAxis);
+    if(transformed&&matchedPending.offhand){
+        float rotated[9]{};
+        for(int row=0;row<3;++row)for(int local=0;local<3;++local){float value=0;
+            for(int world=0;world<3;++world)value+=desiredAxis[row*3+world]*matchedPending.headAxis[local*3+world];
+            for(int world=0;world<3;++world)rotated[row*3+world]+=value*matchedPending.offhandAxis[local*3+world];}
+        std::memcpy(desiredAxis,rotated,sizeof(rotated));
+    }
     if (transformed)
         std::memcpy(desiredOrigin, matchedPending.desiredOrigin.data(), sizeof(float) * 3);
 
@@ -3332,6 +3378,7 @@ bool KharvoxHudInstallHook() {
 }
 
 void KharvoxHudPollQuadControls() {
+    reloadOffhandHud();
     static bool addWasDown{};
     static bool subtractWasDown{};
     static bool fartherWasDown{};
@@ -3926,6 +3973,7 @@ void KharvoxHudSetHandPose(
     float gripForward, float gripLateral, float gripUp,
     float quaternionX, float quaternionY, float quaternionZ, float quaternionW,
     bool valid) {
+    std::lock_guard<std::mutex> poseGuard(handPoseMutex);
     auto& hand = handPoses[rightHand ? 0 : 1];
     const float grip[]{gripForward, gripLateral, gripUp};
     const float quaternion[]{quaternionX, quaternionY, quaternionZ, quaternionW};

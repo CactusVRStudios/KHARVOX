@@ -201,7 +201,13 @@ public sealed class MainForm : Form
         renderScale.ValueChanged += OptionChanged;
         var renderingInputWidth = (TextRenderer.MeasureText("Vulkan SFS Source Ring (Test)", Font).Width
             + SystemInformation.VerticalScrollBarWidth + 4) / 2;
-        AddField(optionGrid, 0, "Renderer", MakeFixedWidth(rendererMode, renderingInputWidth));
+        var rendererRow = (TableLayoutPanel)MakeFixedWidth(rendererMode, renderingInputWidth);
+        AddField(optionGrid, 0, "Renderer", rendererRow);
+        optionGrid.SetColumnSpan(rendererRow, 2);
+        var offhandHudButton = new Button { Text="Offhand HUD...", Dock=DockStyle.Left, Width=140, Margin=new Padding(8,0,0,0), FlatStyle=FlatStyle.Flat };
+        offhandHudButton.Click += (_,_) => { using var dialog=new OffhandHudForm();dialog.ShowDialog(this); };
+        rendererRow.Controls.Add(offhandHudButton,1,0);
+
         optionGrid.Controls.Add(new Label
         {
             Text = "RenderScale (%)",

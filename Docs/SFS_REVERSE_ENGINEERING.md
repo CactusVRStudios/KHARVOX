@@ -975,3 +975,21 @@ The last confirmed animation-local placement can persist briefly during the gap;
 newly confirmed animation replaces it immediately. No new GPU work is added.
 [SFS-WEAPON-GAP] logs identify actual recovery. Test21 lens flare suppression
 remains active. Headset confirmation at the doorway is still required.
+## 0.96 Test 24 - offhand health/ammo HUD prototype
+
+Moves the two existing BDCF54 512x300 gameplay HUD profiles (native scale 83
+and 100) to the physical offhand grip. Existing native-depth eligibility,
+menu/cinematic exclusions, ledge hiding and original profile-axis extraction
+remain in force. All other surfaces keep their existing placement.
+Normal mode uses left grip; left-handed mode uses right grip. Hand snapshots
+are coherent under a mutex and latched per present for the two panels.
+Invalid tracking falls back to the existing headlocked HUD.
+Launcher Offhand HUD dialog persists offhand_hud.cfg version 1 with separate
+normal/left-mode position centimeters, pitch/yaw/roll degrees and geometry scale.
+Apply live uses atomic file replacement. Runtime validates a complete config
+before publishing it; reload is limited to twice per second outside draw hooks.
+Tests cover exact surface scope, invalid config rejection, independent handed
+calibration persistence, translation and rotation. 123 CTests and launcher
+self-test passed; launcher and calibration dialog previews inspected.
+No headset confirmation of panel placement/readability yet. The existing SFS
+near-screen UI projection rule is unchanged; close-to-face stereo needs testing.

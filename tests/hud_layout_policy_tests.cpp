@@ -1,6 +1,8 @@
 #include "../src/hud/HudLayoutPolicy.h"
 
 #include <cmath>
+#include <sstream>
+#include "../src/hud/OffhandHudPolicy.h"
 
 namespace {
 
@@ -12,6 +14,21 @@ bool near(float left, float right) {
 
 int main() {
     using namespace kharvox;
+
+    {
+        if(offhandHudSurface(0xbdcf54,512,300,83)!=0||offhandHudSurface(0xbdcf54,512,300,100)!=1)return 100;
+        if(offhandHudSurface(0xbdcf54,512,301,100)!=-1||offhandHudSurface(0xbdcf55,512,300,100)!=-1)return 101;
+        OffhandHudConfig config;std::istringstream saved("1 1 8 0 8 0 0 0 .1 4 2 6 0 90 0 .2");
+        if(!readOffhandHudConfig(saved,config)||!near(config.modes[1].centimeters[0],4)||!near(config.modes[0].scale,.1f))return 102;
+        std::istringstream invalid("1 1 999 0 0 0 0 0 .1");if(readOffhandHudConfig(invalid,config))return 103;
+        float hand[9]{1,0,0,0,1,0,0,0,1},panel[9]{},grip[3]{1,2,3},a[3]{},b[3]{};
+        offhandHudBasis(hand,config.modes[0],panel);
+        for(int i=0;i<9;++i)if(!near(hand[i],panel[i]))return 104;
+        offhandHudOrigin(grip,hand,panel,config.modes[0],0,100,a);
+        grip[0]+=5;offhandHudOrigin(grip,hand,panel,config.modes[0],0,100,b);
+        if(!near(b[0]-a[0],5)||!near(a[1],9)||!near(a[2],11))return 105;
+        offhandHudBasis(hand,config.modes[1],panel);if(!near(panel[0],0)||!near(panel[1],1))return 106;
+    }
 
     // The physically reviewed Meta/VDXR projection remains the reference.
     if (!near(selectHudLayoutFit(0.83909965f, 0.966f), calibratedHudLayoutFit)) return 1;

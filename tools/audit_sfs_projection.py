@@ -22,7 +22,7 @@ def run(job):
  if p.stem.split('_')[0] in ui:args+=['ui']
  r=subprocess.run(args,capture_output=True,text=True)
  s=Path(str(out)+'.glsl').read_text() if r.returncode==0 else ''
- return dict(file=str(p),mode=mode,stage=stage(p),code=r.returncode,error=r.stderr[:1500],projection='gl_Position = khSfsProjection.clipFromCenter' in s,ui='if (gl_Position.w > 8.0)' in s,stereo_residual=[x.strip() for x in s.splitlines() if '.stereo.' in x],position=[x.strip() for x in s.splitlines() if 'gl_Position' in x],source=str(out)+'.glsl')
+ return dict(file=str(p),mode=mode,stage=stage(p),code=r.returncode,error=r.stderr[:1500],projection='gl_Position = khSfsProjection.clipFromCenter' in s,ui='gl_Position.w > 8.0)' in s,stereo_residual=[x.strip() for x in s.splitlines() if '.stereo.' in x],position=[x.strip() for x in s.splitlines() if 'gl_Position' in x],source=str(out)+'.glsl')
 jobs=[]
 for p in args.originals.glob('*.spv'):
  jobs.append((p,'generic'))

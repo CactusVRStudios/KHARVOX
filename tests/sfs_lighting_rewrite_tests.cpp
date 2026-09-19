@@ -7,10 +7,20 @@
 using namespace kharvox::sfs;
 static void check(bool b){if(!b)throw std::runtime_error("Lighting rewrite regression");}
 int main(int argc,char** argv){try{
-    check(argc==5);
-    for(int i=1;i<5;++i){
+    check(argc==6);
+    for(int i=1;i<6;++i){
         std::ifstream file(argv[i],std::ios::binary|std::ios::ate);check(bool(file));const auto size=file.tellg();check(size>=20&&size%4==0);
         std::vector<uint32_t> words(size_t(size)/4);file.seekg(0);check(bool(file.read(reinterpret_cast<char*>(words.data()),size)));
+        if(i==5){
+            ShaderCompileOptions options;options.vertexProjection=true;
+            check(!options.screenSpaceUi); // Unknown hash: no external hint.
+            const auto ui=compileStereoShader(words,options);
+            check(ui.screenSpaceUiApplied&&ui.vertexProjectionApplied);
+            check(ui.glsl.find(".xyz) > 0.00000001 || gl_Position.w > 8.0)")!=std::string::npos);
+            options.monoscopicView=true;
+            check(!compileStereoShader(words,options).screenSpaceUiApplied);
+            continue;
+        }
         if(i==4){
             check(!needsStereoProjection(words,false));
             check(!needsHeadsetProjection(words,true,false));

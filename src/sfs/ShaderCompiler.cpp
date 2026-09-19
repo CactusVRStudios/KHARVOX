@@ -119,6 +119,29 @@ CompiledShader compileStereoShader(const std::vector<uint32_t>& original,const S
     if(request.computeStereo!=(model==spv::ExecutionModelGLCompute)&&request.computeStereo)
         throw std::runtime_error("SFS: compute transformation requested for graphics shader");
     auto resources=compiler.get_shader_resources();CompiledShader result;
+    // Driver-specific modules have different byte hashes. Recognize the
+    // constrained DOOM UI vertex layout through reflected inputs/constants.
+    bool uiPosition=false,uiInputs=true,uiMatrix=false;
+    for(const auto& in:resources.stage_inputs){
+        const auto location=compiler.get_decoration(in.id,spv::DecorationLocation);
+        const auto& type=compiler.get_type(in.type_id);
+        if(location==0)uiPosition=type.basetype==SPIRType::Float&&type.vecsize==4;
+        else if(!((location==1&&type.vecsize==2)||(location==3&&type.vecsize==4)
+            ||(location==9&&type.vecsize==4)))uiInputs=false;
+    }
+    for(const auto& buffer:resources.uniform_buffers){
+        if(compiler.get_decoration(buffer.id,spv::DecorationDescriptorSet)!=0
+            ||compiler.get_decoration(buffer.id,spv::DecorationBinding)!=0)continue;
+        const auto& type=compiler.get_type(buffer.base_type_id);
+        if(type.member_types.size()!=4&&type.member_types.size()!=5)continue;
+        const char* names[]{"mvpmatrixx","mvpmatrixy","mvpmatrixz","mvpmatrixw","fontfxdegamma"};
+        bool matches=true;
+        for(uint32_t i=0;i<type.member_types.size();++i){const auto& field=compiler.get_type(type.member_types[i]);
+            matches&=compiler.get_member_name(buffer.base_type_id,i)==names[i]
+                &&field.basetype==SPIRType::Float&&field.vecsize==4&&field.columns==1&&field.array.empty();}
+        uiMatrix|=matches;
+    }
+    const bool semanticUi=model==spv::ExecutionModelVertex&&uiPosition&&uiInputs&&uiMatrix;
     auto bindings=[&](const auto& list,bool storage){for(const auto& resource:list){const auto& type=compiler.get_type(resource.type_id);
         if(type.image.dim==spv::Dim2D&&!type.image.arrayed)result.arrayBindings.push_back({compiler.get_decoration(resource.id,spv::DecorationDescriptorSet),compiler.get_decoration(resource.id,spv::DecorationBinding),storage,type.image.depth});}};
     bindings(resources.sampled_images,false);bindings(resources.separate_images,false);bindings(resources.storage_images,true);
@@ -135,7 +158,7 @@ CompiledShader compileStereoShader(const std::vector<uint32_t>& original,const S
     // clip-W threshold, or depth and material coverage diverge underfoot.
     const bool packedWorld=source.find(".vertexxyzscale")!=std::string::npos&&
         source.find("in_VmtrTC")!=std::string::npos;
-    result.screenSpaceUiApplied=vertexProjection&&request.screenSpaceUi&&!packedWorld;
+    result.screenSpaceUiApplied=vertexProjection&&(request.screenSpaceUi||semanticUi)&&!packedWorld;
     // Reconstruct the profile's horizontal clip correction in affine form.
     // stereo.z is KHARVOX's intercept. Also correct the two supplied fog variants
     // which subtract stereo.x rather than the convergence field in that term.

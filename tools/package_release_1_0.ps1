@@ -2,12 +2,14 @@ param(
     [Parameter(Mandatory=$true)][string]$BaselineArchive,
     [Parameter(Mandatory=$true)][string]$NativeOutput,
     [Parameter(Mandatory=$true)][string]$LauncherOutput,
-    [Parameter(Mandatory=$true)][string]$OutputRoot
+    [Parameter(Mandatory=$true)][string]$OutputRoot,
+    [string]$PackageName = 'KHARVOX-1.0',
+    [string]$LauncherFileVersion = '1.0.0.1000'
 )
 $ErrorActionPreference='Stop'
 $source=Split-Path $PSScriptRoot -Parent
-$package=Join-Path $OutputRoot 'KHARVOX-1.0'
-$archive=Join-Path $OutputRoot 'KHARVOX-1.0.zip'
+$package=Join-Path $OutputRoot $PackageName
+$archive=Join-Path $OutputRoot ($PackageName+'.zip')
 if((Test-Path -LiteralPath $package) -or (Test-Path -LiteralPath $archive)){throw 'Release output already exists; do not overwrite a delivered package.'}
 Expand-Archive -LiteralPath $BaselineArchive -DestinationPath $package
 # Inherit the verified integration binaries, never SDK stubs from test builds.
@@ -30,7 +32,8 @@ $profile=(Get-Content -LiteralPath "$source/Docs/THIRD_PARTY_NOTICES.txt" -Raw).
 Copy-Item -LiteralPath "$source/Docs/RELEASE_1_0.md" -Destination "$package/RELEASE-NOTES.md"
 foreach($name in @('KharvoxLayer.dll','KharvoxLauncher.exe')){
     $info=(Get-Item -LiteralPath "$package/$name").VersionInfo
-    if($info.FileVersion -ne '1.0.0.1000' -or !$info.ProductVersion.StartsWith('1.0.0')){throw "Wrong release version: $name"}
+    $expectedVersion=if($name -eq 'KharvoxLauncher.exe'){$LauncherFileVersion}else{'1.0.0.1000'}
+    if($info.FileVersion -ne $expectedVersion -or !$info.ProductVersion.StartsWith('1.0.0')){throw "Wrong release version: $name"}
 }
 $stamp=Get-Content -LiteralPath "$package/native_sfs_build.txt"
 $hash=(Get-FileHash -LiteralPath "$package/KharvoxLayer.dll" -Algorithm SHA256).Hash
@@ -42,6 +45,6 @@ foreach($name in @('hand_models_calibration_default.cfg','offhand_hud_default.cf
 $self=Start-Process -FilePath "$package/KharvoxLauncher.exe" -ArgumentList '--self-test' -WindowStyle Hidden -Wait -PassThru
 if($self.ExitCode -ne 0){throw 'Packaged launcher self-test failed'}
 $revision=git -C $source rev-parse HEAD
-@('KHARVOX 1.0',"Source commit: $revision",'Based on Test38 with accepted Normal/Left HUD and hand calibration defaults.',"KharvoxLayer.dll SHA256: $hash",'Release versions, default configuration hashes, launcher self-test and bundled integrations verified.','Local release; not uploaded.') | Set-Content -Encoding utf8 "$package/BUILD.txt"
+@($PackageName,"Source commit: $revision",'Based on Test38 with accepted Normal/Left HUD and hand calibration defaults.',"KharvoxLayer.dll SHA256: $hash",'Release versions, default configuration hashes, launcher self-test and bundled integrations verified.','Local release; not uploaded.') | Set-Content -Encoding utf8 "$package/BUILD.txt"
 Compress-Archive -Path "$package/*" -DestinationPath $archive -CompressionLevel Optimal
 Write-Output "Release: $archive"

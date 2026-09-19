@@ -146,12 +146,30 @@ internal static class SelfTest
             Require(!LauncherPresetPolicy.TryGet(1, out _)
                 && !LauncherPresetPolicy.TryGet(3, out _),
                 "Comfort and Custom retain their independent handling");
+            var previousRuntime = Environment.GetEnvironmentVariable("XR_RUNTIME_JSON");
+            try
+            {
+                Environment.SetEnvironmentVariable("XR_RUNTIME_JSON", @"C:\SteamVR\steamxr_win64.json");
+                using var runtimeForm = new MainForm(Path.Combine(testRoot, "runtime-scale-settings.json"));
+                var scaleControl = (NumericUpDown)typeof(MainForm).GetField("renderScale", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(runtimeForm)!;
+                var tooltip = (ToolTip)typeof(MainForm).GetField("statusToolTip", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(runtimeForm)!;
+                Require(!scaleControl.Enabled, "SteamVR disables render scale at startup");
+                Require(tooltip.GetToolTip(scaleControl.Parent) == "Renderscale only works from within SteamVR", "disabled scale tooltip available on enabled host");
+                scaleControl.Value = 80m;
+                Environment.SetEnvironmentVariable("XR_RUNTIME_JSON", @"C:\VDXRirtualdesktop-openxr.json");
+                runtimeForm.RefreshRenderScaleAvailability();
+                Require(scaleControl.Enabled && scaleControl.Value == 80m, "runtime switch restores scale without losing saved preference");
+                Environment.SetEnvironmentVariable("XR_RUNTIME_JSON", @"C:\SteamVR\steamxr_win64.json");
+                runtimeForm.RefreshRenderScaleAvailability();
+                Require(!scaleControl.Enabled && scaleControl.Value == 80m, "SteamVR preserves stored scale while disabling input");
+            }
+            finally { Environment.SetEnvironmentVariable("XR_RUNTIME_JSON", previousRuntime); }
             VerifyHandsMainPage(testRoot);
             VerifyScrollableWindow(testRoot);
             foreach (var steam in new[]{false,true}) {
-                Require(KharvoxRunner.EffectiveRenderScale(80m,steam)==80m
-                    && KharvoxRunner.EffectiveRenderScale(1000m,steam)==1000m,
-                    "all runtimes preserve selected source supersampling");
+                Require(KharvoxRunner.EffectiveRenderScale(80m,steam)==(steam ? 100m : 80m)
+                    && KharvoxRunner.EffectiveRenderScale(1000m,steam)==(steam ? 100m : 1000m),
+                    "SteamVR uses neutral scale; other runtimes preserve selected supersampling");
                 Require(KharvoxRunner.SteamNativeResolutionScale(80m,steam)==100m,
                     "no second engine scale on SteamVR");
             }

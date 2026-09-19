@@ -141,7 +141,7 @@ internal sealed class KharvoxLaunchOptions
 
 internal static class KharvoxRunner
 {
-    internal const string BuildId = "2026.09.19-launcher-v1.0";
+    internal const string BuildId = "2026.09.19-launcher-v1.0-rc";
     private const string LayerName = "VK_LAYER_KHARVOX_OPENXR";
     private const string RegistryPath = @"SOFTWARE\Khronos\Vulkan\ImplicitLayers";
     private static readonly CultureInfo Invariant = CultureInfo.InvariantCulture;
@@ -351,7 +351,7 @@ internal static class KharvoxRunner
             var sfsEnabled = RendererSelection.IsSfs(options.RendererMode);
             RendererSelection.ClearObsoleteMarkers(runtimeDir);
             File.Delete(Path.Combine(runtimeDir, "fsr1_status.txt"));
-            var fsr1Enabled = options.UseFsrUpscaling && options.RenderScale < 100m;
+            var fsr1Enabled = options.UseFsrUpscaling && effectiveRenderScale < 100m;
             var steamNativeSourceScale = SteamNativeResolutionScale(
                 options.RenderScale, steamVrLayerIsolation && !RendererSelection.IsNative(options.RendererMode));
             var nvidiaAfwMarker = Path.Combine(runtimeDir, "enable_nvidia_afw");
@@ -1560,7 +1560,7 @@ internal static class KharvoxRunner
     [DllImport("user32.dll")] private static extern bool ShowWindowAsync(IntPtr window, int command);
 
     internal static decimal EffectiveRenderScale(decimal selectedRenderScale,
-        bool steamVrRuntime) => Math.Max(50m, selectedRenderScale);
+        bool steamVrRuntime) => steamVrRuntime ? 100m : Math.Max(50m, selectedRenderScale);
 
     internal static decimal SteamNativeResolutionScale(decimal selectedRenderScale,
         bool steamVrRuntime) => 100m; // Carrier already scales on every runtime.
@@ -1746,7 +1746,7 @@ internal static class KharvoxRunner
         catch { return false; }
     }
 
-    private static bool UsesSteamVrRuntime()
+    internal static bool UsesSteamVrRuntime()
     {
         var manifest = ActiveRuntimeManifest();
         if (manifest is null) return false;

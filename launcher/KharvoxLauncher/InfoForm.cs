@@ -916,9 +916,9 @@ internal sealed class InfoForm : Form
         AddParagraph(page, "SFS is the default renderer. If SFS causes problems, select AER as a fallback. Resolution changes require restarting the game.");
         AddHeading(page, "RenderScale");
         AddParagraph(page,
-            "Render scale adjusts the resolution used to render the game. Higher values can improve clarity but demand more GPU power; lower values can improve performance at the cost of detail. The maximum supported resolution depends on your graphics card and VR runtime. Restart the game after changing this setting.");
+            "With SteamVR, adjust resolution within SteamVR; the launcher RenderScale control is disabled. With other runtimes, render scale adjusts the resolution used to render the game. Higher values can improve clarity but demand more GPU power; lower values can improve performance at the cost of detail. The maximum supported resolution depends on your graphics card and VR runtime. Restart the game after changing this setting.");
         AddHeading(page, "FSR Upscaling");
-        AddBullet(page, "With Meta XR, VDXR or SteamVR, select SFS or AER, choose a RenderScale below 100%, and enable Use FSR Upscaling beside it.");
+        AddBullet(page, "With Meta XR or VDXR, select SFS or AER, choose a RenderScale below 100%, and enable Use FSR Upscaling beside it.");
         AddBullet(page, "Start at 80%. Lower values reduce more source-pixel work but also lose fine detail.");
         AddBullet(page, "FSR remains inactive at 100% or higher. When enabled below 100%, verify FSR1 active in the launcher status line.");
         AddColumnBreak(page);

@@ -75,6 +75,7 @@ public sealed class MainForm : Form
     private readonly Label physicalGlorykillSpeedValue = MakeSliderValueLabel();
     private readonly Label status = new() { AutoSize = false, TextAlign = ContentAlignment.MiddleCenter, ForeColor = Color.Silver };
     private readonly ToolTip statusToolTip = new();
+    private readonly Panel renderScaleHost = new() { Dock = DockStyle.Fill, Margin = Padding.Empty };
     private readonly Button launchButton = new();
     private DevModeForm? devModeForm;
     private CracktroForm? cracktroForm;
@@ -224,7 +225,9 @@ public sealed class MainForm : Form
         renderScale.Dock = DockStyle.Fill;
         useFsrUpscaling.Dock = DockStyle.Fill;
         useFsrUpscaling.CheckedChanged += OptionChanged;
-        renderScaleRow.Controls.Add(renderScale, 0, 0);
+        renderScaleHost.Margin = renderScale.Margin;
+        renderScaleHost.Controls.Add(renderScale);
+        renderScaleRow.Controls.Add(renderScaleHost, 0, 0);
         renderScaleRow.Controls.Add(useFsrUpscaling, 1, 0);
         optionGrid.Controls.Add(renderScaleRow, 1, 1);
         optionGrid.SetColumnSpan(renderScaleRow, 2);
@@ -449,7 +452,7 @@ public sealed class MainForm : Form
             .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "";
         footer.Controls.Add(new Label {
             Text = releaseVersion.ToString(releaseVersion.Build == 0 ? 2 : 3)
-                + (releaseInfo.Contains("-test") ? " Test" : releaseInfo.Contains("-beta") ? " Beta" : ""),
+                + (releaseInfo.Contains("-test") ? " Test" : releaseInfo.Contains("-beta") ? " Beta" : releaseInfo.Contains("-rc") ? " RC" : ""),
             Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft,
             ForeColor = Color.Gray
         }, 0, 0);
@@ -457,6 +460,7 @@ public sealed class MainForm : Form
         root.Controls.Add(footer);
         LayoutViewport();
         LoadSettings();
+        RefreshRenderScaleAvailability();
         if (string.IsNullOrWhiteSpace(doomPath.Text) || !File.Exists(Path.Combine(doomPath.Text, "DOOMx64vk.exe")))
             doomPath.Text = KharvoxRunner.FindDoomInstall() ?? string.Empty;
         RefreshDoomProcessState();
@@ -534,8 +538,19 @@ public sealed class MainForm : Form
             status.Text = "Game running, FSR1 active";
     }
 
+    internal void RefreshRenderScaleAvailability()
+    {
+        var steamVr = KharvoxRunner.UsesSteamVrRuntime();
+        renderScale.Enabled = !steamVr;
+        var tip = steamVr ? "Renderscale only works from within SteamVR"
+            : "Scales scene and XR resolution in both renderers. 100% scene: 3840 x 2160. No application upper limit; GPU/runtime limits apply. Restart required.";
+        statusToolTip.SetToolTip(renderScale, tip);
+        statusToolTip.SetToolTip(renderScaleHost, tip);
+    }
+
     private void RefreshRuntimeStatus()
     {
+        RefreshRenderScaleAvailability();
         disableVrIntro.Visible = VrGameIntroSession.HasSeenCurrentRelease;
         RefreshDoomProcessState();
         try
@@ -577,10 +592,10 @@ public sealed class MainForm : Form
     private void RendererModeChanged(object? sender, EventArgs e)
     {
         if (rendererMode.SelectedIndex < 0) return;
-        statusToolTip.SetToolTip(rendererMode, rendererMode.SelectedIndex == 2
+        statusToolTip.SetToolTip(rendererMode, rendererMode.SelectedIndex == 1
             ? VulkanSfs.Description : "");
         useFsrUpscaling.Enabled = true;
-        statusToolTip.SetToolTip(renderScale, "Scales scene and XR resolution in both renderers. 100% scene: 3840 x 2160. No application upper limit; GPU/runtime limits apply. Restart required.");
+        RefreshRenderScaleAvailability();
         OptionChanged(sender, e);
     }
     private void WeaponModeChanged(object? sender, EventArgs e) => UpdateWeaponModeDescription();

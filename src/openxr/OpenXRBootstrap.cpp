@@ -45,6 +45,7 @@
 #include "OpenXRRuntimePolicy.h"
 #include "RuntimeVulkanDispatch.h"
 #include "NativeXrReleasePolicy.h"
+#include "SwapchainImageState.h"
 #include "CinematicRefreshPolicy.h"
 #include "CinewindowPosePolicy.h"
 #include "HandsJumpPolicy.h"
@@ -161,6 +162,7 @@ struct State {
     bool physicalIdentityQueryEnabled{};
     VkInstance vkInstance{}; VkPhysicalDevice physical{},xrPhysical{}; VkDevice device{}; VkQueue queue{}; uint32_t queueFamily{},queueIndex{},runtimeMaxVulkanApiVersion{}; KharvoxVulkanDispatch vk{};
     VkCommandPool commandPool{}; VkCommandBuffer commandBuffer{}; VkFence copyFence{};
+    std::array<kharvox::SwapchainImageState,2> eyeImageStates{}; kharvox::SwapchainImageState hudImageState{};
     kharvox::CopyGpuTiming sfsCopyTiming;
     std::unordered_map<VkSwapchainKHR,DoomSwapchain> doomSwapchains; DoomSwapchain retiredCompatibleDoomSwapchain{}; bool retiredCompatibleDoomSwapchainValid{}; ULONGLONG retiredCompatibleDoomSwapchainAt{}; VkSwapchainKHR startupActiveDoomSwapchain{}; bool vdxrSessionDeferralLogged{}; std::array<EyeSwapchain,2> eyes; EyeSwapchain hudQuad; uint32_t hudSurfaceWidth{},hudSurfaceHeight{}; float hudSafeTanHalfHorizontal{},hudSafeTanHalfVertical{}; int64_t hudQuadFormat{}; uint64_t hudQuadCopiedFrames{}; bool hudQuadRuntimeFailureLogged{}; std::array<XrView,2> views{{{XR_TYPE_VIEW},{XR_TYPE_VIEW}}};
     HeadPose head{}; XrVector3f trackingHeadPosition{}; bool trackingHeadPositionValid{}; XrQuaternionf headZero{0,0,0,1}; XrVector3f headZeroPosition{}; bool headZeroValid{}; bool headZeroPositionValid{}; bool headCameraArmed{true}; bool nativeMenuCameraPoseHeld{}; bool quadMode{true}; bool centeredQuadTransitionPending{}; unsigned centeredQuadFramesRemaining{}; bool cinewindowFollowsHeadset{cinewindowFollowsHeadsetRequested()}; bool cinewindowPresentationActive{}; bool cinewindowFixedPoseFallbackLogged{}; kharvox::CinewindowAnchor cinewindowAnchor{}; kharvox::CinewindowCaptureReadiness cinewindowCaptureReadiness{}; bool hudEverythingQuad{},hudEverythingQuadAvailable{}; bool hudEverythingQuadKeyDown{}; bool steamQuadOnly{}; bool steamMetaCompatibilityMode{}; bool presentationKeyDown{}; bool presentationManualOverride{}; XrTime lastSteamDisplayTime{}; uint64_t steamDuplicateFrames{},steamLinkReprojectedFrames{};
@@ -3871,21 +3873,25 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
     if(kharvox::useSteamFsrQuadStartupHandshake(steamRuntime,s.fsr1Requested,
             s.quadMode,s.steamFsrStartupHandshakeComplete)){
         auto& handshakeEye=s.eyes[0];
+        auto& handshakeImageState=s.eyeImageStates[0];
         uint32_t handshakeImageIndex{};
         XrSwapchainImageAcquireInfo acquire{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
-        XrResult handshakeResult=acquireSwapchainImage(handshakeEye.handle,&acquire,
-            &handshakeImageIndex);
-        bool handshakeImageAcquired=XR_SUCCEEDED(handshakeResult);
-        if(handshakeImageAcquired){
+        XrResult handshakeResult=handshakeImageState.owned()?XR_ERROR_CALL_ORDER_INVALID:
+            acquireSwapchainImage(handshakeEye.handle,&acquire,&handshakeImageIndex);
+        if(XR_SUCCEEDED(handshakeResult))handshakeImageState.acquired();
+        if(handshakeImageState.owned()){
             XrSwapchainImageWaitInfo wait{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
             wait.timeout=XR_INFINITE_DURATION;
             handshakeResult=s.waitImage(handshakeEye.handle,&wait);
+            if(XR_SUCCEEDED(handshakeResult))handshakeImageState.waited();
         }
-        if(handshakeImageAcquired){
+        if(handshakeImageState.releasable()){
             XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
             const XrResult releaseResult=releaseSwapchainImage(handshakeEye.handle,&release);
+            if(XR_SUCCEEDED(releaseResult))handshakeImageState.released();
             if(XR_SUCCEEDED(handshakeResult))handshakeResult=releaseResult;
         }
+        if(XR_FAILED(handshakeResult)&&handshakeImageState.owned())s.running=false;
         if(XR_SUCCEEDED(handshakeResult)){
             const int32_t quadWidth=static_cast<int32_t>(handshakeEye.width);
             const int32_t quadHeight=std::min(static_cast<int32_t>(handshakeEye.height),
@@ -4107,7 +4113,6 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
         && hudSource.extent.width > 0
         && hudSource.extent.height > 0;
     uint32_t hudImageIndex{};
-    bool hudImageAcquired{};
     bool hudImageCopied{};
     constexpr float radiansToDegrees=57.2957795131f;
     const bool immersiveCameraArmed=kharvox::shouldArmImmersiveCamera(
@@ -4539,20 +4544,33 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
     if(steamLinkSameFrameMono&&!steamLinkMonoColorCache&&!steamLinkMonoCacheFailureLogged){log("[STEAMLINK-MONO] SRGB intermediate cache allocation failed; color-correct test invalid");steamLinkMonoCacheFailureLogged=true;}
     VkSemaphore afwWaitSemaphore{};uint64_t afwWaitValue{};const bool afwPrepared=false;
     std::array<uint32_t,2> xi{};
-    std::array<bool,2> eyeImageAcquired{};
-    auto releaseImageChecked=[&](XrSwapchain swapchain){
+    bool imageReleaseFailed{};
+    auto releaseImageChecked=[&](XrSwapchain swapchain,kharvox::SwapchainImageState& imageState){
+        if(!imageState.releasable())return false;
         XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
         const XrResult released=releaseSwapchainImage(swapchain,&ri);
-        if(nativeFrameValid&&XR_FAILED(released))kharvox::native::fail("Native XR image release failed; resources retained");
+        if(XR_FAILED(released)){
+            s.running=false;
+            imageReleaseFailed=true;
+            log("XR image release failed "+result(released)+"; session restart required");
+            return false;
+        }
+        imageState.released();
+        return true;
     };
     auto releaseAcquiredEyeImages=[&](){
-        for(int e=0;e<2;e++)if(eyeImageAcquired[e]){
-            releaseImageChecked(s.eyes[e].handle);
-            eyeImageAcquired[e]=false;
-        }
+        bool released=true;
+        for(int e=0;e<2;e++)if(s.eyeImageStates[e].owned())
+            released=releaseImageChecked(s.eyes[e].handle,s.eyeImageStates[e])&&released;
+        return released;
     };
     if(updateEyeSwapchains){
         for(int e=0;e<2;e++){
+            if(s.eyeImageStates[e].owned()){
+                s.running=false;
+                log("eye image ownership retained after earlier failure");
+                endEmptyFrame("eye-image-still-owned");return;
+            }
             XrSwapchainImageAcquireInfo ai{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
             r=acquireSwapchainImage(s.eyes[e].handle,&ai,&xi[e]);
             if(XR_FAILED(r)){
@@ -4560,35 +4578,44 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
                 log("acquire eye "+result(r));
                 endEmptyFrame("acquire-eye-"+std::to_string(e)+"-failed");return;
             }
-            eyeImageAcquired[e]=true;
+            s.eyeImageStates[e].acquired();
             XrSwapchainImageWaitInfo xw{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
             xw.timeout=XR_INFINITE_DURATION;
             r=s.waitImage(s.eyes[e].handle,&xw);
             if(XR_FAILED(r)){
+                s.running=false;
                 releaseAcquiredEyeImages();
                 log("wait eye "+result(r));
                 endEmptyFrame("wait-eye-"+std::to_string(e)+"-failed");return;
             }
+            s.eyeImageStates[e].waited();
         }
     }
     if(hudQuadRequested){
+        if(s.hudImageState.owned()){
+            s.running=false;
+            log("HUD image ownership retained after earlier failure");
+            releaseAcquiredEyeImages();
+            endEmptyFrame("hud-image-still-owned");return;
+        }
         XrSwapchainImageAcquireInfo acquire{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
         r=acquireSwapchainImage(s.hudQuad.handle,&acquire,&hudImageIndex);
-        if(XR_SUCCEEDED(r)&&hudImageIndex<s.hudQuad.images.size()){
-            hudImageAcquired=true;
+        if(XR_SUCCEEDED(r)){
+            s.hudImageState.acquired();
+            if(hudImageIndex>=s.hudQuad.images.size())r=XR_ERROR_RUNTIME_FAILURE;
+        }
+        if(XR_SUCCEEDED(r)){
             XrSwapchainImageWaitInfo wait{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
             wait.timeout=XR_INFINITE_DURATION;
             r=s.waitImage(s.hudQuad.handle,&wait);
-            if(XR_FAILED(r)){
-                XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
-                releaseSwapchainImage(s.hudQuad.handle,&release);
-                hudImageAcquired=false;
-            }
+            if(XR_SUCCEEDED(r))s.hudImageState.waited();
         }
-        if(!hudImageAcquired&&!s.hudQuadRuntimeFailureLogged){
+        if(XR_FAILED(r)&&s.hudImageState.owned())s.running=false;
+        if(!s.hudImageState.releasable()&&!s.hudQuadRuntimeFailureLogged){
             log("[HUD9-QUAD] acquire/wait failed "+result(r)+"; native HUD fallback retained");
             s.hudQuadRuntimeFailureLogged=true;
         }
+        if(!s.running){releaseAcquiredEyeImages();endEmptyFrame("hud-image-failed");return;}
     }
 
     const bool monoColorCache=steamLinkMonoColorCache||initialMonoColorCache;
@@ -5091,7 +5118,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
                 rightHandPose,handVisibility,currentHandGameplay);
         eye.initialized[xi[e]]=true;
     }
-    if(hudImageAcquired){
+    if(s.hudImageState.releasable()){
         VkImage hudDestination=s.hudQuad.images[hudImageIndex].image;
         const VkImageLayout previousDestinationLayout=s.hudQuad.initialized[hudImageIndex]
             ?VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:VK_IMAGE_LAYOUT_UNDEFINED;
@@ -5180,7 +5207,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
     // before release/endFrame, then prove completion before reusing parameters,
     // command buffers or hand attachments. Readbacks keep synchronous retirement.
     const bool earlyReleaseRequested=(!sfsBackend||sourceRingBackend)&&kharvox::rendererDefaults::earlyXrRelease;
-    const bool nativePairReady=nativeFrameValid&&updateEyeSwapchains&&eyeImageAcquired[0]&&eyeImageAcquired[1];
+    const bool nativePairReady=nativeFrameValid&&updateEyeSwapchains&&s.eyeImageStates[0].releasable()&&s.eyeImageStates[1].releasable();
     const bool queueSynchronized=queueAccessLockCallback&&queueAccessUnlockCallback;
     const bool readbackRecorded=nativeXrCaptureRecorded||nativeWatchRecorded||eyeCaptureRecorded
         ||rawEyeCaptureRecorded[0]||rawEyeCaptureRecorded[1];
@@ -5238,7 +5265,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
         if(nativeFrameValid)kharvox::native::fail("owner native copy submission failed; restart required");
         s.handRenderer.finishSceneIntegratedFrame();
         releaseAcquiredEyeImages();
-        if(hudImageAcquired){XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};releaseSwapchainImage(s.hudQuad.handle,&ri);}
+        if(s.hudImageState.owned())releaseImageChecked(s.hudQuad.handle,s.hudImageState);
         log("copy submit failed "+std::to_string(submitResult));endEmptyFrame("copy-submit-failed");return;
     }
     if(steamRuntime){QueryPerformanceCounter(&copyWaitEnd);steamCopyWaitMs=performanceMilliseconds(copyWaitStart,copyWaitEnd);}
@@ -5248,7 +5275,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
         if(freshAerHands)s.freshHandsWorldValid=false;
         if(nativeFrameValid)kharvox::native::fail("owner native copy completion failed; restart required");
         releaseAcquiredEyeImages();
-        if(hudImageAcquired){XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};releaseSwapchainImage(s.hudQuad.handle,&ri);}
+        if(s.hudImageState.owned())releaseImageChecked(s.hudQuad.handle,s.hudImageState);
         log(std::string(copyCompletion?"copy fence wait failed ":"copy queue wait failed ")+std::to_string(completionResult));endEmptyFrame("copy-completion-failed");return;
     }
     if(!earlyRelease){
@@ -5264,7 +5291,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
     if(!copyLifetime.canReleaseImages())kharvox::native::fail("XR images released before ordered copy submission");
     if(nativeFrameValid)QueryPerformanceCounter(&nativeReleaseAt);
     releaseAcquiredEyeImages();
-    if(hudImageAcquired)releaseImageChecked(s.hudQuad.handle);
+    if(s.hudImageState.owned())releaseImageChecked(s.hudQuad.handle,s.hudImageState);
 
     if(nativeFrameValid)QueryPerformanceCounter(&nativeReleaseDone);
     if(freshWorldPairRecorded){
@@ -5523,7 +5550,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
     ei.environmentBlendMode=XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
     // Never submit uninitialized/mislabelled projection images while priming.
     // Keep the frame lifecycle and future eye programming running.
-    ei.layerCount=(aerSourceMode&&!s.steamXrAerPairReady)
+    ei.layerCount=imageReleaseFailed||(aerSourceMode&&!s.steamXrAerPairReady)
         ||(nativeBackend&&!s.quadMode&&!nativeFrameValid)?0:layerCount;
     ei.layers=layers.data();
     const std::string layerReason=hudImageCopied?"projection+hud-quad":(s.quadMode?"quad-layer":"projection-layer");

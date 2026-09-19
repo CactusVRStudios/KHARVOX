@@ -3961,7 +3961,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
             XrSwapchainImageWaitInfo wait{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
             wait.timeout=XR_INFINITE_DURATION;
             handshakeResult=s.waitImage(handshakeEye.handle,&wait);
-            if(XR_SUCCEEDED(handshakeResult))handshakeImageState.waited();
+            handshakeImageState.waited(handshakeResult!=XR_TIMEOUT_EXPIRED&&XR_SUCCEEDED(handshakeResult));
         }
         if(handshakeImageState.releasable()){
             XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
@@ -3969,9 +3969,9 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
             if(XR_SUCCEEDED(releaseResult))handshakeImageState.released();
             if(XR_SUCCEEDED(handshakeResult))handshakeResult=releaseResult;
         }
-        if(XR_FAILED(handshakeResult)&&handshakeImageState.owned())
+        if(handshakeImageState.owned())
             requestSessionRestart("startup handshake retained XR image ownership "+result(handshakeResult));
-        if(XR_SUCCEEDED(handshakeResult)){
+        if(XR_SUCCEEDED(handshakeResult)&&!handshakeImageState.owned()){
             const int32_t quadWidth=static_cast<int32_t>(handshakeEye.width);
             const int32_t quadHeight=std::min(static_cast<int32_t>(handshakeEye.height),
                 std::max(1,static_cast<int32_t>(std::lround(
@@ -3997,9 +3997,9 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
             handshakeResult=endFrameChecked(endInfo,"fsr1-quad-startup-handshake");
         }else{
             const XrResult emptyResult=endEmptyFrame("fsr1-quad-handshake-image-failed");
-            if(XR_SUCCEEDED(handshakeResult))handshakeResult=emptyResult;
+            if(handshakeResult==XR_SUCCESS)handshakeResult=emptyResult;
         }
-        if(XR_SUCCEEDED(handshakeResult)){
+        if(handshakeResult!=XR_TIMEOUT_EXPIRED&&XR_SUCCEEDED(handshakeResult)){
             s.steamFsrStartupHandshakeComplete=true;
             s.lastSteamDisplayTime=frame.predictedDisplayTime;
         }
@@ -4659,12 +4659,11 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
             XrSwapchainImageWaitInfo xw{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
             xw.timeout=XR_INFINITE_DURATION;
             r=s.waitImage(s.eyes[e].handle,&xw);
-            if(XR_FAILED(r)){
+            if(!s.eyeImageStates[e].waited(r!=XR_TIMEOUT_EXPIRED&&XR_SUCCEEDED(r))){
                 requestSessionRestart("wait eye "+result(r));
                 releaseAcquiredEyeImages();
                 endEmptyFrame("wait-eye-"+std::to_string(e)+"-failed");return;
             }
-            s.eyeImageStates[e].waited();
         }
     }
     if(hudQuadRequested){
@@ -4683,9 +4682,9 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
             XrSwapchainImageWaitInfo wait{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
             wait.timeout=XR_INFINITE_DURATION;
             r=s.waitImage(s.hudQuad.handle,&wait);
-            if(XR_SUCCEEDED(r))s.hudImageState.waited();
+            s.hudImageState.waited(r!=XR_TIMEOUT_EXPIRED&&XR_SUCCEEDED(r));
         }
-        if(XR_FAILED(r)&&s.hudImageState.owned())requestSessionRestart("HUD image acquire/wait failed "+result(r));
+        if(!s.hudImageState.releasable()&&s.hudImageState.owned())requestSessionRestart("HUD image acquire/wait failed "+result(r));
         if(!s.hudImageState.releasable()&&!s.hudQuadRuntimeFailureLogged){
             log("[HUD9-QUAD] acquire/wait failed "+result(r)+"; native HUD fallback retained");
             s.hudQuadRuntimeFailureLogged=true;

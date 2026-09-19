@@ -8,7 +8,10 @@ int main(){
     assert(image.owned());
     assert(!image.releasable());
     assert(!image.released());
-    assert(image.waited());
+    assert(!image.waited(false));
+    assert(image.owned());
+    assert(!image.releasable());
+    assert(image.waited(true));
     assert(image.releasable());
     assert(!image.acquired());
     assert(image.released());

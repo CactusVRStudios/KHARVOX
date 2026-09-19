@@ -143,9 +143,9 @@ Projects an aiming line from the rendered muzzle of supported firearms. It has n
 
 ### Rendering
 
-**SFS is the default renderer for all profiles and first launch. AER remains available as fallback.**
+#### Renderer selection
 
-SFS produces both eye views from one game frame through the KHARVOX Vulkan render path and submits them through OpenXR. Menus use the shared quad presentation. HUD, cinematic options and FSR are managed by the launcher. Resolution changes require restarting the game. See [SFS development and build notes](Docs/VULKAN_SFS_096.md).
+**SFS is the default renderer for all profiles and first launch. If SFS causes problems, select AER as a fallback.** Resolution changes require restarting the game.
 
 #### Render Scale
 
@@ -153,16 +153,24 @@ Render scale adjusts the resolution used to render the game. Higher values can i
 
 #### FSR Upscaling
 
-- With Meta XR, VDXR or SteamVR, select the default SFS renderer, choose a Render Scale below 100%, and enable **Use FSR Upscaling**.
+- With Meta XR, VDXR or SteamVR, select **SFS** or **AER**, choose a Render Scale below 100%, and enable **Use FSR Upscaling** beside it.
 - Start at 80%. Lower values reduce more source-pixel work but also lose fine detail.
 - FSR remains inactive at 100% or higher. Below 100%, verify **FSR1 active** in the launcher status line.
 
-Recommended runtime starting points:
+#### Recommended runtimes
 
 - Quest / Pico: Virtual Desktop with VDXR
 - Valve Index / PSVR2: SteamVR
 
-Use the highest stable headset refresh rate your system can sustain. Every KHARVOX launch disables DOOM's native Motion Blur, automatic Glory Kill Motion Blur and Chromatic Aberration. These temporary VR-safe overrides do not replace the encrypted DOOM user profile or campaign saves.
+Use the highest stable headset refresh rate your system can sustain. Test with SFS first and include the headset, GPU and runtime when reporting a rendering issue.
+
+#### Anti-aliasing
+
+With SFS, choose anti-aliasing in DOOM's graphics settings. KHARVOX does not force SMAA in this renderer. The Debug option to disable AA still overrides that choice when enabled. AER uses SMAA by default.
+
+#### VR-safe image settings
+
+Every KHARVOX launch disables DOOM's native Motion Blur, automatic Glory Kill Motion Blur and Chromatic Aberration. These VR-safe overrides do not edit or replace the encrypted DOOM user profile or campaign saves.
 
 ### bHaptics
 

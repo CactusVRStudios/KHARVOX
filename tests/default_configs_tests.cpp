@@ -74,15 +74,17 @@ int main(int argc, char** argv) {
         || handValues["right_fist_mirror_x"] != "0"
         || handValues["left_gun_mirror_x"] != "0"
         || handValues["right_gun_mirror_x"] != "0") return 17;
-    // Freeze ALL accepted 0.5 Beta vectors (global wrists and both physical hands
+    // Freeze ALL accepted 1.0 / Test38 vectors (global wrists and both physical hands
     // for all 14 weapon keys), not just one representative weapon. Comments
     // and platform newline conventions do not change this regression check.
     if (calibrationFingerprint(config / "hand_models_calibration_default.cfg")
-        != 0xaa353e68u) return 18;
+        != 0x8ef3e620u) return 18;
     if (calibrationFingerprint(config / "hud_flat_calibration_default.cfg")
         != 0x8bc58407u) return 19;
     if (calibrationFingerprint(config / "hud_profile_calibration_default.cfg")
         != 0x59b52852u) return 20;
     if (!readScalar(config / "hud_quad_scale_default.cfg", 16.75f)) return 21;
+    if (calibrationFingerprint(config / "offhand_hud_default.cfg")
+        != 0xe54166b8u) return 22;
     return 0;
 }

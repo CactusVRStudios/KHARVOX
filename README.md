@@ -6,7 +6,7 @@
 
 KHARVOX is a total VR conversion for DOOM (2016). It adds room-scale 6DoF movement, tracked motion-controller input and stereoscopic VR rendering to the original campaign.
 
-> The local 0.96 baseline uses SFS by default, with AER as fallback. Life and Ammo HUD panels can follow the offhand and be calibrated independently in game. A legal Steam version of DOOM (2016) is required. The game and its assets are not included.
+> KHARVOX 1.0 uses SFS by default, with AER as fallback. Life, Ammo and the five-circle ProgMeter can follow the offhand and be calibrated independently in game, with separate Normal/Left Mode values. A legal Steam version of DOOM (2016) is required. The game and its assets are not included.
 
 ## Installation
 

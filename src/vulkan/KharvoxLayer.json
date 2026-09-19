@@ -5,8 +5,8 @@
     "type": "GLOBAL",
     "library_path": ".\\KharvoxLayer.dll",
     "api_version": "1.3.0",
-    "implementation_version": "396",
-    "description": "KHARVOX 0.96 Test Vulkan OpenXR layer (Native Stereo experimental)",
+    "implementation_version": "1000",
+    "description": "KHARVOX 1.0 Vulkan OpenXR layer (SFS / AER)",
     "enable_environment": { "KHARVOX_ENABLE_LAYER": "1" },
     "disable_environment": { "KHARVOX_DISABLE_LAYER": "1" }
   }

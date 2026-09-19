@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(KHARVOX VERSION 0.9.6 LANGUAGES C CXX)
+project(KHARVOX VERSION 1.0.0 LANGUAGES C CXX)
 
 include(CTest)
 option(KHARVOX_BUILD_SFS_COMPILER "Build the native SFS shader transformer" OFF)
@@ -161,10 +161,15 @@ if(KHARVOX_BUILD_LAYER)
   set_target_properties(KharvoxLayer PROPERTIES
     OUTPUT_NAME "KharvoxLayer"
     VERSION "${PROJECT_VERSION}")
+  add_custom_command(TARGET KharvoxLayer POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${CMAKE_CURRENT_SOURCE_DIR}/config/offhand_hud_default.cfg"
+      "$<TARGET_FILE_DIR:KharvoxLayer>/offhand_hud_default.cfg")
   # Calibration-only changes must refresh shipped defaults even when no C++
   # source changed (the post-build copy otherwise need not run).
   set_property(TARGET KharvoxLayer APPEND PROPERTY LINK_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/config/hand_models_calibration_default.cfg"
+    "${CMAKE_CURRENT_SOURCE_DIR}/config/offhand_hud_default.cfg"
     "${CMAKE_CURRENT_SOURCE_DIR}/config/hud_flat_calibration_default.cfg"
     "${CMAKE_CURRENT_SOURCE_DIR}/config/hud_profile_calibration_default.cfg"
     "${CMAKE_CURRENT_SOURCE_DIR}/config/hud_quad_scale_default.cfg")

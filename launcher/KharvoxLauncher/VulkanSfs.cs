@@ -3,14 +3,13 @@ using System.Security.Cryptography;
 
 namespace KharvoxLauncher;
 
-// KHARVOX's own multiview implementation. The original provider is used only
-// by separate reverse-engineering probes, never by this launcher selection.
+// Vulkan multiview renderer with OpenXR headset submission.
 internal static class VulkanSfs
 {
     internal const string Key = "VULKAN_SFS";
     internal static string Label => "SFS";
     internal static string Description => "SFS is the default renderer. If you encounter rendering problems, use AER as a fallback. The desktop window stays black; use the headset for menus.";
-    internal const string Blocker = "This package does not contain a complete native Vulkan SFS test build. Use the prepared 0.96 native test package or select AER.";
+    internal const string Blocker = "This package does not contain a complete SFS build. Extract the complete KHARVOX 1.0 release or select AER.";
 
     internal static void EnsureAvailable(string? runtime = null)
     {

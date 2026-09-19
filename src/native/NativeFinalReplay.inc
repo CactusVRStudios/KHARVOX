@@ -523,8 +523,15 @@ static void VKAPI_CALL replayDrawIndexed(VkCommandBuffer cb,uint32_t a,uint32_t 
 static void VKAPI_CALL replayDrawIndirect(VkCommandBuffer cb,VkBuffer b,VkDeviceSize o,uint32_t c,uint32_t st){cpu::Scope profile(cpu::ReplayDraw);std::scoped_lock lock(replayMutex);record(cb,0,[=]{notePassWork(cb,false,0,true);validateStorageSnapshotsForDraw(cb);hook_cmd_draw_indirect(cb,b,o,c,st);},false);}
 static void VKAPI_CALL replayDrawIndexedIndirect(VkCommandBuffer cb,VkBuffer b,VkDeviceSize o,uint32_t c,uint32_t st){cpu::Scope profile(cpu::ReplayDraw);std::scoped_lock lock(replayMutex);record(cb,0,[=]{notePassWork(cb,false,0,true);validateStorageSnapshotsForDraw(cb);hook_cmd_draw_indexed_indirect(cb,b,o,c,st);},false);}
 static void VKAPI_CALL replayDepthBias(VkCommandBuffer cb,float a,float b,float c){std::scoped_lock lock(replayMutex);record(cb,3,[=]{hook_cmd_set_depth_bias(cb,a,b,c);});}
-static void VKAPI_CALL replayStencilCompare(VkCommandBuffer cb,VkStencilFaceFlags a,uint32_t b){std::scoped_lock lock(replayMutex);record(cb,0x50000+a,[=]{hook_cmd_set_stencil_compare_mask(cb,a,b);});}
-static void VKAPI_CALL replayStencilRef(VkCommandBuffer cb,VkStencilFaceFlags a,uint32_t b){std::scoped_lock lock(replayMutex);record(cb,0x60000+a,[=]{hook_cmd_set_stencil_reference(cb,a,b);});}
+template<class Bind>
+static void recordStencil(VkCommandBuffer cb,uint64_t base,VkStencilFaceFlags faces,uint32_t value,Bind bind){
+ std::scoped_lock lock(replayMutex);
+ const auto emit=[=](uint32_t face){bind(cb,face,value);};
+ if(!replayPreparationEnabled()){emit(faces);return;}
+ recordReplayFaces(replayStates[cb],base,faces,emit);
+}
+static void VKAPI_CALL replayStencilCompare(VkCommandBuffer cb,VkStencilFaceFlags a,uint32_t b){recordStencil(cb,0x50000,a,b,hook_cmd_set_stencil_compare_mask);}
+static void VKAPI_CALL replayStencilRef(VkCommandBuffer cb,VkStencilFaceFlags a,uint32_t b){recordStencil(cb,0x60000,a,b,hook_cmd_set_stencil_reference);}
 static PFN_vkCmdSetBlendConstants nextBlend{};
 static PFN_vkCmdSetDepthBounds nextDepthBounds{};
 static PFN_vkCmdSetLineWidth nextLineWidth{};
@@ -532,7 +539,7 @@ static PFN_vkCmdSetStencilWriteMask nextStencilWrite{};
 static void VKAPI_CALL replayBlend(VkCommandBuffer cb,const float values[4]){std::scoped_lock l(replayMutex);std::array<float,4> v{values[0],values[1],values[2],values[3]};record(cb,4,[=]{nextBlend(cb,v.data());});}
 static void VKAPI_CALL replayDepthBounds(VkCommandBuffer cb,float a,float b){std::scoped_lock l(replayMutex);record(cb,5,[=]{nextDepthBounds(cb,a,b);});}
 static void VKAPI_CALL replayLineWidth(VkCommandBuffer cb,float a){std::scoped_lock l(replayMutex);record(cb,6,[=]{nextLineWidth(cb,a);});}
-static void VKAPI_CALL replayStencilWrite(VkCommandBuffer cb,VkStencilFaceFlags a,uint32_t b){std::scoped_lock l(replayMutex);record(cb,0x70000+a,[=]{nextStencilWrite(cb,a,b);});}
+static void VKAPI_CALL replayStencilWrite(VkCommandBuffer cb,VkStencilFaceFlags a,uint32_t b){recordStencil(cb,0x70000,a,b,nextStencilWrite);}
 template<typename T,int Tag> struct UnsupportedFinal;
 template<int Tag,typename R,typename... A> struct UnsupportedFinal<R(VKAPI_PTR*)(VkCommandBuffer,A...),Tag>{
  using Fn=R(VKAPI_PTR*)(VkCommandBuffer,A...);static inline Fn next{};

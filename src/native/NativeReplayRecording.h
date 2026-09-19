@@ -75,4 +75,11 @@ void recordReplayBatch(Replay& replay,uint64_t base,uint32_t first,uint32_t coun
     if(replay.final&&!replay.replaying)replay.commands.emplace_back(batch());
     execute();
 }
+template<class Replay,class Bind>
+void recordReplayFaces(Replay& replay,uint64_t base,uint32_t faces,const Bind& bind){
+    for(uint32_t face=1;face<=2;face<<=1)
+        if(faces&face)replay.state[base+face]=[=]{bind(face);};
+    if(replay.final&&!replay.replaying)replay.commands.emplace_back([=]{bind(faces);});
+    bind(faces);
+}
 }

@@ -4,7 +4,7 @@ namespace KharvoxLauncher;
 
 internal sealed class LauncherSettings
 {
-    internal const int CurrentVersion = 32;
+    internal const int CurrentVersion = 33;
 
     public int SettingsVersion { get; set; }
     public int Preset { get; set; }
@@ -149,6 +149,10 @@ internal static class LauncherSettingsStore
         if (settings.SettingsVersion < 30)
             settings.DisableAa = false;
         if (settings.SettingsVersion < 31) settings.DisableVrIntro = false;
+        // Adopt the release renderer once for existing Custom profiles. Later AER choices remain valid.
+        if (settings.SettingsVersion < 33 && settings.Preset == 3
+            && string.Equals(settings.RendererMode, "AER", StringComparison.OrdinalIgnoreCase))
+            settings.RendererMode = VulkanSfs.Key;
         settings.RendererMode = RendererSelection.Normalize(settings.RendererMode);
         return settings;
     }

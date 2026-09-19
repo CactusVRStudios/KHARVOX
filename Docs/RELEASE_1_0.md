@@ -1,8 +1,9 @@
-# KHARVOX 1.0 Release Candidate
+# KHARVOX 1.0 Release Candidate 2
 
 Based on Test38, with the accepted in-game HUD and hand calibration as the new defaults.
 
 - With SteamVR active, launcher RenderScale is disabled. Adjust resolution within SteamVR. The saved launcher value is preserved for other runtimes; SteamVR starts with neutral launcher scaling and no launcher FSR downscaling.
+- Existing Custom profiles using AER switch to SFS once. Other preferences are retained, and selecting AER afterwards remains supported.
 - SFS is the default renderer; AER remains available as fallback.
 - Life, Ammo and the five-circle ProgMeter have independent offhand calibration for Normal and Left Mode.
 - Updated global/per-weapon hand calibration is included as the default, without requiring a saved override file.

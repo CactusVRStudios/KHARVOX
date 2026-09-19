@@ -164,6 +164,24 @@ internal static class SelfTest
                 Require(!scaleControl.Enabled && scaleControl.Value == 80m, "SteamVR preserves stored scale while disabling input");
             }
             finally { Environment.SetEnvironmentVariable("XR_RUNTIME_JSON", previousRuntime); }
+            var customMigrationPath = Path.Combine(testRoot, "custom-renderer-migration.json");
+            LauncherSettingsStore.Save(customMigrationPath, new LauncherSettings {
+                SettingsVersion = 32, Preset = 3, RendererMode = "AER",
+                RenderScale = 80m, LeftHanded = true, LaserSight = true });
+            var migratedCustom = LauncherSettingsStore.Load(customMigrationPath);
+            Require(migratedCustom.RendererMode == VulkanSfs.Key
+                && migratedCustom.Preset == 3 && migratedCustom.RenderScale == 80m
+                && migratedCustom.LeftHanded && migratedCustom.LaserSight,
+                "old Custom AER migrates to SFS without resetting other preferences");
+            migratedCustom.SettingsVersion = LauncherSettings.CurrentVersion;
+            migratedCustom.RendererMode = "AER";
+            LauncherSettingsStore.Save(customMigrationPath, migratedCustom);
+            Require(LauncherSettingsStore.Load(customMigrationPath).RendererMode == "AER",
+                "explicit AER selection after migration survives reload");
+            LauncherSettingsStore.Save(customMigrationPath, new LauncherSettings {
+                SettingsVersion = 32, Preset = 0, RendererMode = "AER" });
+            Require(LauncherSettingsStore.Load(customMigrationPath).RendererMode == "AER",
+                "Custom migration does not rewrite unrelated profiles");
             VerifyHandsMainPage(testRoot);
             VerifyScrollableWindow(testRoot);
             foreach (var steam in new[]{false,true}) {

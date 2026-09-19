@@ -17,8 +17,8 @@
     <AssemblyDescription>An independent VR compatibility framework</AssemblyDescription>
     <Description>An independent VR compatibility framework</Description>
     <Version>0.9.6</Version>
-    <FileVersion>0.9.6.431</FileVersion>
-    <InformationalVersion>0.9.6-test.31</InformationalVersion>
+    <FileVersion>0.9.6.432</FileVersion>
+    <InformationalVersion>0.9.6-test.32</InformationalVersion>
     <ApplicationIcon>..\..\assets\branding\kharvox.ico</ApplicationIcon>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">

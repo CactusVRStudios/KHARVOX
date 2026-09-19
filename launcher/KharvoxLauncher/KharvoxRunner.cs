@@ -141,7 +141,7 @@ internal sealed class KharvoxLaunchOptions
 
 internal static class KharvoxRunner
 {
-    internal const string BuildId = "2026.09.19-launcher-v0.96-test.31";
+    internal const string BuildId = "2026.09.19-launcher-v0.96-test.32";
     private const string LayerName = "VK_LAYER_KHARVOX_OPENXR";
     private const string RegistryPath = @"SOFTWARE\Khronos\Vulkan\ImplicitLayers";
     private static readonly CultureInfo Invariant = CultureInfo.InvariantCulture;
@@ -1672,14 +1672,17 @@ internal static class KharvoxRunner
             "+joy_yawSpeed", "600", "+joy_deadZone", "0.15",
             "+joy_dampenLook", "0", "+joy_gammaLook", "0",
             "+joy_smoothingEnabled", "0", "+joy_edgeAccelerationScalar", "0",
-            // DOOM mode 2 is spatial SMAA; neither eye consumes temporal AA history.
-            "+r_antialiasing", options.DisableAa ? "0" : "2", "+r_sharpening", "2",
+            "+r_sharpening", "2",
             "+r_filmGrainRatio", "0",
             "+r_SSR", "0", "+r_SSRQuality", "0", // Lowest SSR quality; not a verified off switch.
             "+r_windowWidth", renderWidth.ToString(Invariant),
             "+r_windowHeight", renderHeight.ToString(Invariant)
         ]);
-        // SSDO has separate temporal history even with spatial SMAA selected.
+        // Leave the game's AA setting untouched in SFS unless Debug AA-off
+        // was explicitly selected. AER retains spatial SMAA by default.
+        if (options.DisableAa || !RendererSelection.IsSfs(options.RendererMode))
+            args.AddRange(["+r_antialiasing", options.DisableAa ? "0" : "2"]);
+        // SSDO history remains independently disabled for tracked geometry.
         if (RendererSelection.IsSfs(options.RendererMode))
             args.AddRange(["+r_SSDOTemporalAA", "0", "+r_skipFlares", "1", "+r_lensFlaresRatio", "0"]);
         return args;

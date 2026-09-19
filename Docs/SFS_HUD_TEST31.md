@@ -21,3 +21,10 @@ shared by other UI. This deliberately limits how close the panel can approach.
 Regression coverage: exact owners, objective/bottom/unknown rejection with the
 same dimensions/scales, tilted corners, unchanged distant panel and invalid axes.
 Headset confirmation of both reported symptoms remains pending.
+
+## Test 32 follow-up
+SFS no longer sets or protects r_antialiasing by default. DOOM owns the choice.
+Explicit Debug AA-off remains effective; AER keeps its spatial SMAA default.
+SSDO temporal history is separate and remains disabled. Both HUD fixes above
+are included unchanged. Native CVar forwarding and launcher argument tests pass.
+

@@ -895,7 +895,11 @@ internal static class SelfTest
                 Require(scaled[Array.IndexOf(scaled,"+r_windowWidth")+1]==diagnosticArgs[Array.IndexOf(diagnosticArgs,"+r_windowWidth")+1],"desktop width is independent of runtime, renderer and RenderScale");
                 Require(scaled[Array.IndexOf(scaled,"+r_windowHeight")+1]==diagnosticArgs[Array.IndexOf(diagnosticArgs,"+r_windowHeight")+1],"desktop height is independent of runtime, renderer and RenderScale");
                 Require(scaled[Array.IndexOf(scaled,"+rs_enable")+1]=="0","no double scaling in engine");
-                foreach(var setting in new[]{("r_antialiasing",disableAaRequested?"0":"2"),("r_motionblur","0"),("r_motionBlurQuality","0"),("r_filmGrainRatio","0"),("r_SSR","0"),("r_SSRQuality","0"),("r_sharpening","2")})
+                var aaIndex=Array.IndexOf(scaled,"+r_antialiasing");
+                var isSfs=RendererSelection.IsSfs(form.CreateLaunchOptions().RendererMode);
+                Require(isSfs&&!disableAaRequested ? aaIndex<0
+                    : aaIndex>=0&&scaled[aaIndex+1]==(disableAaRequested?"0":"2"),"SFS respects game AA unless debug override is active");
+                foreach(var setting in new[]{("r_motionblur","0"),("r_motionBlurQuality","0"),("r_filmGrainRatio","0"),("r_SSR","0"),("r_SSRQuality","0"),("r_sharpening","2")})
                     Require(scaled[Array.IndexOf(scaled,"+"+setting.Item1)+1]==setting.Item2,"renderer-specific AA and shared visual settings");
               }
             }

@@ -6,6 +6,10 @@ int main(){
  int failures=0,writes=0,reports=0;auto check=[&](bool b){if(!b)++failures;};
  for(bool sfs:{false,true})for(bool native:{false,true})for(bool disableAa:{false,true}){
   const auto profile=rendererStartupControls(native,false,false,false,false,disableAa,sfs);
+  const auto* aa=nativePresetControl(profile,0x66dd200);
+  check(bool(aa)==(native||!sfs||disableAa));
+  if(!aa)for(const char* mode:{"0","1","2","3","4"})
+   check(setProtectedRenderControl(aa,mode,false,[&](const char* value,bool){return std::string(value)==mode;}));
   const auto* temporal=nativePresetControl(profile,0x672bc30);
   check(bool(temporal)==(sfs&&!native));
   for(auto rva:{uintptr_t(0x66d9380),uintptr_t(0x6727e70)}){

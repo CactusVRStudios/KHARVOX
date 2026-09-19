@@ -6,8 +6,6 @@
 
 KHARVOX is a total VR conversion for DOOM (2016). It adds room-scale 6DoF movement, tracked motion-controller input and stereoscopic VR rendering to the original campaign.
 
-> KHARVOX 1.0 uses SFS by default, with AER as fallback. Life, Ammo and the five-circle ProgMeter can follow the offhand and be calibrated independently in game, with separate Normal/Left Mode values. A legal Steam version of DOOM (2016) is required. The game and its assets are not included.
-
 ## Installation
 
 1. Download the latest KHARVOX release from the [GitHub Releases page](https://github.com/CactusVRStudios/KHARVOX/releases).
@@ -17,7 +15,7 @@ KHARVOX is a total VR conversion for DOOM (2016). It adds room-scale 6DoF moveme
 
 Keep all extracted KHARVOX files together in the same folder. Start DOOM through `KharvoxLauncher.exe` whenever you want to play in VR.
 
-**Windows Defender / VirusTotal:** Windows Defender has been reported to flag `KharvoxGameIntro.exe` as `Trojan:Win32/Bearfoos.A!ml`. The [VirusTotal report for the bundled Beta 0.2 file](https://www.virustotal.com/gui/file/0ed398154a34a5c0b96db05ba2dc4815615ac128a56e3b188a27b6b9f43b4b45/detection), checked on September 10, 2026, shows **1 of 71 detections**, from Microsoft (`Trojan:Win32/Wacatac.B!ml`).
+**Windows Defender / VirusTotal:** Windows Defender may flag `KharvoxLauncher.exe` or `KharvoxGameIntro.exe` with machine-learning detections such as `Trojan:Win32/Bearfoos.A!ml` or `Trojan:Win32/Wacatac.B!ml`. This notice applies to both executables across releases. VirusTotal results are specific to the scanned file and may change over time.
 
 ## Instructions
 

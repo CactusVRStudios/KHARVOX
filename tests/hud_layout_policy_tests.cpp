@@ -44,6 +44,15 @@ int main() {
         offhandHudBasis(hand,config.modes[1],panel);if(!near(panel[0],0)||!near(panel[1],1))return 106;
     }
 
+    // Owned health/ammo never fall back to the native screen during sequences.
+    if(suppressOffhandHudFallback(true,true,false,false,false,true))return 113;
+    if(!suppressOffhandHudFallback(true,false,false,false,false,true))return 114;
+    if(!suppressOffhandHudFallback(true,true,true,false,false,true))return 115;
+    if(!suppressOffhandHudFallback(true,true,false,true,false,true))return 116;
+    if(!suppressOffhandHudFallback(true,true,false,false,true,true))return 117;
+    if(!suppressOffhandHudFallback(true,true,false,false,false,false))return 118;
+    if(suppressOffhandHudFallback(false,false,true,true,true,false))return 119;
+
     // The physically reviewed Meta/VDXR projection remains the reference.
     if (!near(selectHudLayoutFit(0.83909965f, 0.966f), calibratedHudLayoutFit)) return 1;
 

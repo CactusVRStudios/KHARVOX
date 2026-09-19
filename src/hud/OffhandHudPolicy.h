@@ -10,6 +10,9 @@ struct OffhandHudCalibration {
     float scale{0.40f};
 };
 struct OffhandHudConfig { bool enabled{true};std::array<OffhandHudCalibration,4> modes{}; };
+inline bool suppressOffhandHudFallback(bool managed,bool gameplay,bool cinematic,bool ledge,bool syncAttack,bool tracked){
+    return managed&&(!gameplay||cinematic||ledge||syncAttack||!tracked);
+}
 inline int offhandHudSurface(uintptr_t caller,int width,int height,int scale){
     if(caller!=0xbdcf54||width!=512||height!=300)return -1;
     return scale==83?0:scale==100?1:-1;

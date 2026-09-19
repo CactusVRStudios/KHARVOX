@@ -138,8 +138,8 @@ internal sealed class DevModeForm : Form
                 "  Starts on Life. Num 0 selects Life / Ammo (brief size pulse).\n" +
                 "  Num +: rotation / position. Num 4/6: yaw / left-right.\n" +
                 "  Num 2/8: pitch / down-up. Num 7/9: roll / forward-back.\n" +
-                "  Shift: fine. Num * / Num /: selected size up / down.\n" +
-                "  Num 5: reset selected element for current handedness.\n" +
+                "  Shift: 2.5 degrees / 2.5 mm. Num * / Num /: size up / down.\n" +
+                "  Num 5: restore accepted calibration for selected element.\n" +
                 "  Auto-saved per element AND Normal/Left Mode.\n" +
                 "  Hand and other HUD calibration are blocked while checked.\n\n" +
                 "Enable HUD debugging / calibration before launching DOOM.\n\n" +

@@ -1035,3 +1035,19 @@ preserve the same center, including the selection pulse. Existing saved scale
 values remain readable, but this package supplies fresh larger defaults.
 Tests verify center invariance under rotation, scale and body movement.
 123 CTests and launcher self-test passed. Headset visual confirmation pending.
+## 0.96 Test 28 - accepted HUD calibration and sequence fallback suppression
+
+Accepted the user's latest Test27 offhand_hud.cfg verbatim, including updated
+Left Mode values, as config/offhand_hud_default.cfg. Runtime Num 5 restores only
+the selected panel/handedness from this accepted file. Shift steps increased to
+2.5 mm, 2.5 degrees and 0.005 scale (ordinary steps remain unchanged).
+The identified Life/Ammo GUI surfaces are now classified before the cinematic
+early exit. During non-gameplay HUD intervals, cutscenes, native ledges, sync
+attacks, or missing tracked offhand pose, the matching final canvas gets zero
+physical extents instead of falling back to the native bottom-center HUD.
+Suppression is call-local/thread-local and constrained to the validated size
+setter caller/entity/dimensions. Other HUD surfaces retain their existing policy.
+The next valid gameplay draw restores the hand-bound extents automatically.
+123 regression tests (including sequence/tracking-gap suppression scope) and
+launcher self-test passed. Headset validation of jump/glory-kill transitions
+remains pending.

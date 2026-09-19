@@ -151,6 +151,7 @@ std::mutex offhandHudMutex;
 bool offhandCanvasHookReady{};
 struct OffhandCanvasSubmission {const void* entity{};float center[3]{},axis[9]{},width{};};
 thread_local OffhandCanvasSubmission offhandCanvasSubmission;
+thread_local const void* suppressedOffhandCanvas{};
 
 kharvox::OffhandHudConfig offhandHudConfig;
 std::atomic<bool> offhandCalibrationActive{};
@@ -579,6 +580,9 @@ void __fastcall offhandHudCanvasSize(void* entity,int width,int height,float ext
     const auto caller=reinterpret_cast<uintptr_t>(_ReturnAddress())-image;
     const auto pending=offhandCanvasSubmission;
     offhandCanvasSubmission={};
+    const bool suppressed=caller==0xF922A7&&suppressedOffhandCanvas==entity&&width==512&&height==300;
+    suppressedOffhandCanvas=nullptr;
+    if(suppressed){originalHudCanvasSize(entity,width,height,0,0);return;}
     float origin[3]{};
     const bool owned=caller==0xF922A7&&pending.entity==entity&&width==512&&height==300
         &&kharvox::centeredOffhandHud(pending.center,pending.axis,pending.width,
@@ -2320,18 +2324,23 @@ void pollOffhandHudHotkeys(){
     {std::lock_guard<std::mutex> lock(offhandHudMutex);config=offhandHudConfig;}
     auto& c=config.modes[offhandSelectedSurface.load()*2+(offhandHudLeftMode()?1:0)];
     config.enabled=true;
-    if(resetNow)c={};
+    if(resetNow){
+        kharvox::OffhandHudConfig defaults;
+        std::ifstream input(kharvox::runtimePathA("offhand_hud_default.cfg"));
+        c=kharvox::readOffhandHudConfig(input,defaults)
+            ?defaults.modes[offhandSelectedSurface.load()*2+(offhandHudLeftMode()?1:0)]:kharvox::OffhandHudCalibration{};
+    }
     else {
-        if(rotate){const float step=fine?1.f:5.f;
+        if(rotate){const float step=fine?2.5f:5.f;
             c.degrees[0]=std::remainder(c.degrees[0]+y*step,360.f);
             c.degrees[1]=std::remainder(c.degrees[1]+x*step,360.f);
             c.degrees[2]=std::remainder(c.degrees[2]+z*step,360.f);
-        }else{const float step=fine?.1f:.5f;
+        }else{const float step=fine?.25f:.5f;
             c.centimeters[0]=std::clamp(c.centimeters[0]-z*step,-100.f,100.f);
             c.centimeters[1]=std::clamp(c.centimeters[1]-x*step,-100.f,100.f);
             c.centimeters[2]=std::clamp(c.centimeters[2]+y*step,-100.f,100.f);
         }
-        c.scale=std::clamp(c.scale+size*(fine?.001f:.01f),.02f,2.f);
+        c.scale=std::clamp(c.scale+size*(fine?.005f:.01f),.02f,2.f);
     }
     const auto path=kharvox::runtimePathA("offhand_hud.cfg"),temp=path+".hotkeys.tmp";
     std::ofstream output(temp,std::ios::trunc);output.imbue(std::locale::classic());
@@ -3152,6 +3161,7 @@ bool gameplayHudActive() {
 }
 
 bool KharvoxHudPrepareOriginTransform(void* intermediateEntity, float* nativeOrigin) {
+    suppressedOffhandCanvas=nullptr;
     if (!intermediateEntity || !nativeOrigin || !KharvoxCameraWorldActive()) return false;
 
     const auto current = reinterpret_cast<uintptr_t>(nativeOrigin) - 0x60;
@@ -3176,7 +3186,7 @@ bool KharvoxHudPrepareOriginTransform(void* intermediateEntity, float* nativeOri
             ||runeTrialNativeSessionActive.load(std::memory_order_acquire));
     // Menu detection must precede the exclusion from gameplay HUD transforms.
     // Ordinary cinematics retain the cheap early exit.
-    if(cinematicSurface&&!observeCinematicMenu)return false;
+    // Classify owned Life/Ammo before cinematic early-out to suppress native fallback.
     uintptr_t diagnosticCallerRva{};
     int diagnosticWidth{};
     int diagnosticHeight{};
@@ -3217,6 +3227,21 @@ bool KharvoxHudPrepareOriginTransform(void* intermediateEntity, float* nativeOri
         diagnosticWidth = profile.width;
         diagnosticHeight = profile.height;
         diagnosticScaleMilli = profile.scaleMilli;
+        bool managedOffhand=false;
+        if(offhandCanvasHookReady&&kharvox::offhandHudSurface(profile.callerRva,profile.width,profile.height,profile.scaleMilli)>=0){
+            std::lock_guard<std::mutex> guard(offhandHudMutex);
+            managedOffhand=offhandHudConfig.enabled||offhandCalibrationActive.load();
+        }
+        float handOrigin[3]{},handAxis[9]{};
+        const bool tracked=!managedOffhand||getOffhandHudFrame(handOrigin,handAxis);
+        if(kharvox::suppressOffhandHudFallback(managedOffhand,gameplayHudActive(),cinematicSurface,
+            ledgeTransitionActive,KharvoxCameraSyncAttackActive(),tracked)){
+            suppressedOffhandCanvas=*reinterpret_cast<void**>(current+0x30);
+            static std::atomic<unsigned> count{};const auto n=++count;
+            if(n<=4||n%240==0)log("[OFFHAND-HUD] native fallback suppressed during sequence/tracking gap count="+std::to_string(n));
+            return false;
+        }
+        if(cinematicSurface&&!observeCinematicMenu)return false;
         const auto surfaceKind = kharvox::classifyHudGuiSurface(
             profile.callerRva, profile.width, profile.height, profile.scaleMilli);
         const bool runeTrialChallengeMenu = surfaceKind
@@ -3384,6 +3409,7 @@ bool KharvoxHudPrepareOriginTransform(void* intermediateEntity, float* nativeOri
 bool KharvoxHudCompleteFinalEntity(
     const void* entity, const float* nativeAxis,
     float desiredOrigin[3], float desiredAxis[9]) {
+    if(entity&&entity==suppressedOffhandCanvas)return false;
     if (!pendingHudDepth) return false;
     size_t match = pendingHudDepth;
     if (entity) {

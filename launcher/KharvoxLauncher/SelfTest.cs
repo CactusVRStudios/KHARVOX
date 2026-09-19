@@ -116,7 +116,7 @@ internal static class SelfTest
             Require(actual.UseFsrUpscaling, "FSR1 setting round trip");
             var nativeSettings=new LauncherSettings {RendererMode="NATIVE"};
             LauncherSettingsStore.Save(Path.Combine(testRoot,"native.json"),nativeSettings);
-            Require(LauncherSettingsStore.Load(Path.Combine(testRoot,"native.json")).RendererMode=="NATIVE","native backend roundtrip");
+            Require(LauncherSettingsStore.Load(Path.Combine(testRoot,"native.json")).RendererMode==VulkanSfs.Key,"removed Native migrates to SFS");
 
             Require(actual.OtherCinematicsInQuad, "selective cinematic Quad round trip");
             Require(actual.CinewindowFollowsHeadset, "Cinewindow headset-follow round trip");
@@ -837,37 +837,32 @@ internal static class SelfTest
         }
         presets.SelectedIndex = 3;
         var renderer=Field<ComboBox>("rendererMode");
-        Require(form.CreateLaunchOptions().RendererMode=="AER","fresh installation defaults to AER");
-        Require(renderer.Items.Count == 3 && renderer.Items[0].ToString() == "AER"
-            && renderer.Items[1].ToString() == "Native Stereo Experimental", "exact renderer choices");
+        Require(form.CreateLaunchOptions().RendererMode==VulkanSfs.Key,"profiles default to SFS");
+        Require(renderer.Items.Count == 2 && renderer.Items[0].ToString() == "AER"
+            && renderer.Items[1].ToString() == "SFS", "exact renderer choices");
         renderer.SelectedIndex=1;
-        Require(form.CreateLaunchOptions().RendererMode == "NATIVE", "Native selection");
-        Require(Field<CheckBox>("useFsrUpscaling").Enabled, "Native FSR control enabled");
-        renderer.SelectedIndex=2;
         Require(form.CreateLaunchOptions().RendererMode == VulkanSfs.Key, "SFS selection");
-        Require(renderer.Items[2].ToString() == VulkanSfs.Label, "technical SFS label");
-        Require(RendererSelection.Index(VulkanSfs.Key)==2, "SFS settings restore");
-        renderer.SelectedIndex=1;
+        Require(RendererSelection.Index(VulkanSfs.Key)==1, "SFS settings restore");
         var migrationDirectory=Path.Combine(testRoot,"renderer-migration");
         Directory.CreateDirectory(migrationDirectory);
         foreach(var old in new[]{"NATIVE_MULTIVIEW","NATIVE_MULTIVIEW_VISIBLE","NATIVE_MULTIVIEW_HYBRID","NATIVE_CPU_RECORDING","NATIVE"}) {
             LauncherSettingsStore.Save(Path.Combine(migrationDirectory,"settings.json"),new LauncherSettings {RendererMode=old});
-            Require(LauncherSettingsStore.Load(Path.Combine(migrationDirectory,"settings.json")).RendererMode=="NATIVE","legacy Native migration");
+            Require(LauncherSettingsStore.Load(Path.Combine(migrationDirectory,"settings.json")).RendererMode==VulkanSfs.Key,"legacy Native migration");
         }
-        foreach(var old in new[]{"AFW","", "unknown"}) Require(RendererSelection.Normalize(old)=="AER","obsolete/default renderer migrates to AER");
+        foreach(var old in new[]{"AFW","", "unknown"}) Require(RendererSelection.Normalize(old)==VulkanSfs.Key,"obsolete/default renderer migrates to SFS");
         foreach(var marker in RendererSelection.ObsoleteMarkers) File.WriteAllText(Path.Combine(migrationDirectory,marker),"");
         RendererSelection.ClearObsoleteMarkers(migrationDirectory);
         Require(!RendererSelection.ObsoleteMarkers.Any(marker=>File.Exists(Path.Combine(migrationDirectory,marker))),"obsolete markers removed");
         var argumentBuilder=typeof(KharvoxRunner).GetMethod("BuildGameArguments",BindingFlags.Static|BindingFlags.NonPublic)!;
-        foreach(var index in new[]{0,1,2}) {
+        foreach(var index in new[]{0,1}) {
             renderer.SelectedIndex=index;
-            var args=((IEnumerable<string>)argumentBuilder.Invoke(null,new object[]{form.CreateLaunchOptions(),false,100m,index==1})!).ToArray();
+            var args=((IEnumerable<string>)argumentBuilder.Invoke(null,new object[]{form.CreateLaunchOptions(),false,100m,false})!).ToArray();
             var ssdo=Array.IndexOf(args,"+r_SSDOTemporalAA");
-            Require(index==2 ? ssdo>=0&&args[ssdo+1]=="0" : ssdo<0,
+            Require(index==1 ? ssdo>=0&&args[ssdo+1]=="0" : ssdo<0,
                 "only SFS disables independent SSDO temporal history");
             foreach(var flare in new[]{("r_skipFlares","1"),("r_lensFlaresRatio","0")}) {
                 var offset=Array.IndexOf(args,"+"+flare.Item1);
-                Require(index==2 ? offset>=0&&args[offset+1]==flare.Item2 : offset<0,
+                Require(index==1 ? offset>=0&&args[offset+1]==flare.Item2 : offset<0,
                     "only SFS forces lens flares off");
             }
         }
@@ -1005,6 +1000,8 @@ internal static class SelfTest
         hands.Checked = true;
         form.CreateControl();
         form.PerformLayout();
+        Require(Field<TextBox>("doomPath").Width == presets.Width, "installation and profile fields have equal width");
+        Require(renderer.Width == Field<NumericUpDown>("renderScale").Width, "renderer and scale widths match");
         using var bitmap = new Bitmap(form.ClientSize.Width, form.ClientSize.Height);
         form.DrawToBitmap(bitmap, form.ClientRectangle);
         Require(hands.FindForm() == form && hands.Parent == laser.Parent
@@ -1052,7 +1049,7 @@ internal static class SelfTest
     {
         Require(LauncherPresetPolicy.TryGet(presetIndex, out var preset),
             name + " preset exists");
-        Require(preset.RendererMode == "AER" && preset.RenderScale == 100m
+        Require(preset.RendererMode == VulkanSfs.Key && preset.RenderScale == 100m
             && !preset.UseFsrUpscaling, name + " rendering defaults");
         Require(preset.ImmersiveMode && preset.CinematicFreelook
             && preset.RegularCinematicsInCineWindow

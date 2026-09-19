@@ -782,17 +782,11 @@ internal sealed class InfoForm : Form
         AddParagraph(page,
             "A legally acquired, complete PC version of DOOM (2016) is required. KHARVOX has been tested with the Steam release and does not include the game or any game assets.");
         AddHeading(page, "Best practice");
-        AddText(page, "•  Set your headset to the highest refresh rate it supports.",
-            new Font("Segoe UI", 10F), Color.Gainsboro, new Padding(12, 0, 0, 0));
-        AddText(page, "90 Hz or higher is recommended.",
-            new Font("Segoe UI", 10F, FontStyle.Bold), Color.Gainsboro, new Padding(26, 0, 0, 7));
+        AddBullet(page, "Use SFS Renderer.");
         AddBullet(page, "Quest headsets should use Virtual Desktop or Meta Quest Link.");
         AddBullet(page, "Keep the DOOM game window in focus while playing.");
         AddColumnBreak(page);
         AddHeading(page, "Limitations");
-        AddParagraph(page,
-            "Native Stereo rendering is highly experimental and is not currently recommended. Work is ongoing to improve its integration. Use AER for the recommended experience.",
-            Color.Gainsboro, true);
         AddParagraph(page,
             "KHARVOX changes the game's rendering, camera and controls, so compatibility or startup issues may occur. Some hardware, including AMD graphics cards and less common headsets, may need additional setup. If a launch fails, close any remaining DOOM window and try Launch Game again.");
         AddHeading(page, "Community support");
@@ -918,16 +912,12 @@ internal sealed class InfoForm : Form
     private static void BuildRendering(FlowLayoutPanel page)
     {
         AddHeading(page, "Renderer selection");
-        AddParagraph(page,
-            "Native Stereo rendering is highly experimental and is not currently recommended. Work is ongoing to improve its integration. AER is the recommended renderer.",
-            Color.Gainsboro, true);
-        AddParagraph(page,
-            "AER is the default renderer. Native Stereo Experimental renders both current eyes and shares HUD, Cine Window and optional FSR upscaling. Native cutscenes use Cine Window. Resolution changes require restarting the game.");
+        AddParagraph(page, "SFS is the default renderer. If SFS causes problems, select AER as a fallback. Resolution changes require restarting the game.");
         AddHeading(page, "RenderScale");
         AddParagraph(page,
             "Render scale adjusts the resolution used to render the game. Higher values can improve clarity but demand more GPU power; lower values can improve performance at the cost of detail. The maximum supported resolution depends on your graphics card and VR runtime. Restart the game after changing this setting.");
         AddHeading(page, "FSR Upscaling");
-        AddBullet(page, "With Meta XR, VDXR or SteamVR, select AER or Native Stereo Experimental, choose a RenderScale below 100%, and enable Use FSR Upscaling beside it.");
+        AddBullet(page, "With Meta XR, VDXR or SteamVR, select SFS or AER, choose a RenderScale below 100%, and enable Use FSR Upscaling beside it.");
         AddBullet(page, "Start at 80%. Lower values reduce more source-pixel work but also lose fine detail.");
         AddBullet(page, "FSR remains inactive at 100% or higher. When enabled below 100%, verify FSR1 active in the launcher status line.");
         AddColumnBreak(page);
@@ -935,7 +925,7 @@ internal sealed class InfoForm : Form
         AddBullet(page, "Quest / Pico — Virtual Desktop with VDXR.");
         AddBullet(page, "Valve Index / PSVR2 — SteamVR.");
         AddParagraph(page,
-            "Use the highest stable headset refresh rate your system can sustain. Test with AER first and include the headset, GPU and runtime when reporting a rendering issue.");
+            "Use the highest stable headset refresh rate your system can sustain. Test with SFS first and include the headset, GPU and runtime when reporting a rendering issue.");
         AddHeading(page, "VR-safe image settings");
         AddParagraph(page,
             "Every KHARVOX launch disables DOOM's native Motion Blur, automatic Glory Kill Motion Blur and Chromatic Aberration. These VR-safe overrides do not edit or replace the encrypted DOOM user profile or campaign savegames.");

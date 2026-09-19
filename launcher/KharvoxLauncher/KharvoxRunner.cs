@@ -65,7 +65,7 @@ internal sealed class KharvoxLaunchOptions
         ImmersiveMode = immersiveMode; CinematicFreelook = cinematicFreelook;
         OtherCinematicsInQuad = otherCinematicsInQuad;
         CinewindowFollowsHeadset = cinewindowFollowsHeadset;
-        RendererMode = rendererMode; RenderScale = renderScale;
+        RendererMode = RendererSelection.Normalize(rendererMode); RenderScale = renderScale;
         UseFsrUpscaling = useFsrUpscaling;
         GameDirectory = gameDirectory; TurnMode = turnMode;
         MovementDirection = string.Equals(movementDirection, "off-hand",
@@ -141,7 +141,7 @@ internal sealed class KharvoxLaunchOptions
 
 internal static class KharvoxRunner
 {
-    internal const string BuildId = "2026.09.18-launcher-v0.96-test.22";
+    internal const string BuildId = "2026.09.19-launcher-v0.96-test.23";
     private const string LayerName = "VK_LAYER_KHARVOX_OPENXR";
     private const string RegistryPath = @"SOFTWARE\Khronos\Vulkan\ImplicitLayers";
     private static readonly CultureInfo Invariant = CultureInfo.InvariantCulture;
@@ -299,9 +299,6 @@ internal static class KharvoxRunner
         if (FileVersionInfo.GetVersionInfo(dllPath).ProductVersion != "0.9.6-test.1")
             throw new InvalidOperationException("The 0.96 Test launcher requires its matching 0.96 Test KharvoxLayer.dll. Extract the complete Beta release into its own folder.");
         using var gameIntro = await VrGameIntroSession.StartAsync(runtimeDir, statusUpdate, disableVrIntro: options.DisableVrIntro).ConfigureAwait(false);
-        var previousNativeFailure = NativeLaunchRecovery.Prepare(runtimeDir, options.RendererMode);
-        if (previousNativeFailure is not null)
-            statusUpdate?.Invoke("Retrying Native Stereo; previous failure saved in " + previousNativeFailure);
         WriteManifest(manifestPath, dllPath);
         EnsureNativeControllerBindings(options.BackWeapon);
         await StopBhapticsAsync().ConfigureAwait(false);
@@ -385,9 +382,7 @@ internal static class KharvoxRunner
             if (fsr1Enabled) WriteTemporary("enable_fsr_upscaling");
             if (options.LaserSight) WriteTemporary("enable_laser_sight");
             WriteTemporary("render_scale.cfg", Inv(effectiveRenderScale / 100m));
-            WriteRendererStatus(runtimeDir, sfsEnabled ? "Renderer: Vulkan Single-Frame Stereo (Test)" : nativeStereoEnabled
-                ? "Renderer: Native Stereo Experimental starting …"
-                : fsr1Enabled ? "Renderer: FSR1 AER upscaling starting …" : "Renderer: AER starting …");
+            WriteRendererStatus(runtimeDir, sfsEnabled ? "Renderer: SFS" : fsr1Enabled ? "Renderer: FSR1 AER upscaling starting …" : "Renderer: AER starting …");
             if (options.ImmersiveMode) WriteTemporary("enable_immersive_cinematics_and_glory_kills");
             if (options.ImmersiveMode && options.CinematicFreelook)
                 WriteTemporary("enable_immersive_cinematic_freelook");
@@ -693,9 +688,7 @@ internal static class KharvoxRunner
                 if (options.ExtendedLogging)
                     AppendDiagnostic(logPath, launchId,
                         "OpenXR session synchronized with shouldRender=false; preserving responsive DOOM process and skipping automatic restart");
-                WriteRendererStatus(runtimeDir, sfsEnabled ? "Renderer: Vulkan Single-Frame Stereo (Test)" : nativeStereoEnabled
-                    ? "Renderer: Native Stereo EXP (OpenXR runtime not visible; waiting for frames)"
-                    : "Renderer: OpenXR runtime not visible; waiting for frames");
+                WriteRendererStatus(runtimeDir, sfsEnabled ? "Renderer: SFS" : "Renderer: OpenXR runtime not visible; waiting for frames");
                 statusUpdate?.Invoke("OpenXR session is running but the runtime is not presenting frames. DOOM remains running; return focus to the headset/runtime.");
                 gameDetected?.Invoke();
                 launchSucceeded = true;
@@ -810,7 +803,7 @@ internal static class KharvoxRunner
         return false;
     }
 
-    public static string DetectedRendererDescription() => "Renderer: AER (default)";
+    public static string DetectedRendererDescription() => "Renderer: SFS (default)";
 
     private static void WriteRendererStatus(string runtimeDir, string value)
     {

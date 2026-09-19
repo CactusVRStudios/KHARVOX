@@ -7,7 +7,7 @@ internal readonly struct LauncherPresetDefinition
         RegularCinematicsInCineWindow = regularCinematicsInCineWindow;
     }
 
-    internal string RendererMode => "AER";
+    internal string RendererMode => VulkanSfs.Key;
     internal decimal RenderScale => 100m;
     internal bool UseFsrUpscaling => false;
     internal bool ImmersiveMode => true;

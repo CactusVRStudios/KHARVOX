@@ -8,11 +8,8 @@ namespace KharvoxLauncher;
 internal static class VulkanSfs
 {
     internal const string Key = "VULKAN_SFS";
-    internal static string Label => File.Exists(Path.Combine(AppContext.BaseDirectory, "sfs_source_ring"))
-        ? "Vulkan SFS Source Ring (Test)" : "Vulkan Single-Frame Stereo (Test)";
-    internal static string Description => File.Exists(Path.Combine(AppContext.BaseDirectory, "sfs_source_ring"))
-        ? "Vulkan multiview test for NVIDIA and AMD: stereo images go directly to OpenXR. AMD hardware validation is pending. The desktop window stays black; use the headset for menus."
-        : "Experimental same-frame stereo. Headset tracking, hand timing and full game compatibility are still being tested.";
+    internal static string Label => "SFS";
+    internal static string Description => "SFS is the default renderer. If you encounter rendering problems, use AER as a fallback. The desktop window stays black; use the headset for menus.";
     internal const string Blocker = "This package does not contain a complete native Vulkan SFS test build. Use the prepared 0.96 native test package or select AER.";
 
     internal static void EnsureAvailable(string? runtime = null)

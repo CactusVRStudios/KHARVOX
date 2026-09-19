@@ -182,7 +182,7 @@ public sealed class MainForm : Form
         var installRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, Padding = new Padding(8, 2, 8, 6) };
         installRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 112));
         installRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        installRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 82));
+        installRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 132));
         installRow.Controls.Add(new Label { Text = "DOOM installation", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft });
         installRow.Controls.Add(doomPath);
         var browseButton = new Button { Text = "Browse…", Dock = DockStyle.Fill, FlatStyle = FlatStyle.Flat };
@@ -196,11 +196,11 @@ public sealed class MainForm : Form
         optionGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 194));
         optionGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         for (var i = 0; i < 11; i++) optionGrid.RowStyles.Add(new RowStyle(SizeType.Percent, 100f / 11f));
-        rendererMode.Items.AddRange(["AER", "Native Stereo Experimental", VulkanSfs.Label]);
+        rendererMode.Items.AddRange(["AER", VulkanSfs.Label]);
         rendererMode.SelectedIndexChanged += RendererModeChanged;
         renderScale.ValueChanged += OptionChanged;
-        var renderingInputWidth = TextRenderer.MeasureText(VulkanSfs.Label, Font).Width
-            + SystemInformation.VerticalScrollBarWidth + 4;
+        var renderingInputWidth = (TextRenderer.MeasureText("Vulkan SFS Source Ring (Test)", Font).Width
+            + SystemInformation.VerticalScrollBarWidth + 4) / 2;
         AddField(optionGrid, 0, "Renderer", MakeFixedWidth(rendererMode, renderingInputWidth));
         optionGrid.Controls.Add(new Label
         {
@@ -518,7 +518,7 @@ public sealed class MainForm : Form
 
     internal void ApplyRendererStatus(string renderer)
     {
-        if (renderer.IndexOf("Native Stereo", StringComparison.OrdinalIgnoreCase) >= 0)
+        if (renderer.IndexOf("SFS", StringComparison.OrdinalIgnoreCase) >= 0)
         {
             status.Text = renderer.Trim().Replace("Renderer: ", "");
             var fsrStatus = Path.Combine(AppContext.BaseDirectory, "fsr1_status.txt");
@@ -568,7 +568,7 @@ public sealed class MainForm : Form
             status.Text = "Could not focus DOOM.";
     }
 
-    private string SelectedRendererKey() => rendererMode.SelectedIndex == 2 ? VulkanSfs.Key : rendererMode.SelectedIndex == 1 ? "NATIVE" : "AER";
+    private string SelectedRendererKey() => rendererMode.SelectedIndex == 0 ? "AER" : VulkanSfs.Key;
 
     private void RendererModeChanged(object? sender, EventArgs e)
     {
@@ -746,7 +746,7 @@ public sealed class MainForm : Form
             }
             else
             {
-                rendererMode.SelectedIndex = 0;
+                rendererMode.SelectedIndex = RendererSelection.Index(VulkanSfs.Key);
                 renderScale.Value = 100m;
                 useFsrUpscaling.Checked = false;
                 physicalGlorykill.Checked = true;
@@ -1027,7 +1027,7 @@ public sealed class MainForm : Form
         }
         catch
         {
-            rendererMode.SelectedIndex = 0;
+            rendererMode.SelectedIndex = RendererSelection.Index(VulkanSfs.Key);
             renderScale.Value = AerDefaultRenderScale;
             weaponMode.SelectedIndex = 0;
             calibrationWeapon.SelectedIndex = 1;

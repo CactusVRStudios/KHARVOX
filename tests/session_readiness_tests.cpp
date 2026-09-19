@@ -8,6 +8,10 @@ int main(){
     assert(!session.usable());
     session.completed();
     assert(session.usable());
+    session.restartRequired();
+    assert(!session.usable());
+    session.completed();
+    assert(session.usable());
     session.reset();
     assert(!session.usable());
 }

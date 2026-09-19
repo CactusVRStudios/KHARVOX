@@ -305,6 +305,7 @@ PFN_vkGetPhysicalDeviceMemoryProperties bridgeGetPhysicalDeviceMemoryPropertiesD
 void log(const std::string& x, bool operational = false);
 bool eyeCaptureEnabled();
 void destroySessionResources();
+void requestSessionRestart(const std::string& failure){s.running=false;s.sessionReadiness.restartRequired();log(failure+"; session restart required");}
 KharvoxQueueAccessCallback queueAccessLockCallback{},queueAccessUnlockCallback{};
 struct QueueAccessScope {
     QueueAccessScope(){if(queueAccessLockCallback)queueAccessLockCallback();}
@@ -3965,7 +3966,8 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
             if(XR_SUCCEEDED(releaseResult))handshakeImageState.released();
             if(XR_SUCCEEDED(handshakeResult))handshakeResult=releaseResult;
         }
-        if(XR_FAILED(handshakeResult)&&handshakeImageState.owned())s.running=false;
+        if(XR_FAILED(handshakeResult)&&handshakeImageState.owned())
+            requestSessionRestart("startup handshake retained XR image ownership "+result(handshakeResult));
         if(XR_SUCCEEDED(handshakeResult)){
             const int32_t quadWidth=static_cast<int32_t>(handshakeEye.width);
             const int32_t quadHeight=std::min(static_cast<int32_t>(handshakeEye.height),
@@ -4624,9 +4626,8 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
         XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
         const XrResult released=releaseSwapchainImage(swapchain,&ri);
         if(XR_FAILED(released)){
-            s.running=false;
             imageReleaseFailed=true;
-            log("XR image release failed "+result(released)+"; session restart required");
+            requestSessionRestart("XR image release failed "+result(released));
             return false;
         }
         imageState.released();
@@ -4641,8 +4642,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
     if(updateEyeSwapchains){
         for(int e=0;e<2;e++){
             if(s.eyeImageStates[e].owned()){
-                s.running=false;
-                log("eye image ownership retained after earlier failure");
+                requestSessionRestart("eye image ownership retained after earlier failure");
                 endEmptyFrame("eye-image-still-owned");return;
             }
             XrSwapchainImageAcquireInfo ai{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
@@ -4657,9 +4657,8 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
             xw.timeout=XR_INFINITE_DURATION;
             r=s.waitImage(s.eyes[e].handle,&xw);
             if(XR_FAILED(r)){
-                s.running=false;
+                requestSessionRestart("wait eye "+result(r));
                 releaseAcquiredEyeImages();
-                log("wait eye "+result(r));
                 endEmptyFrame("wait-eye-"+std::to_string(e)+"-failed");return;
             }
             s.eyeImageStates[e].waited();
@@ -4667,8 +4666,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
     }
     if(hudQuadRequested){
         if(s.hudImageState.owned()){
-            s.running=false;
-            log("HUD image ownership retained after earlier failure");
+            requestSessionRestart("HUD image ownership retained after earlier failure");
             releaseAcquiredEyeImages();
             endEmptyFrame("hud-image-still-owned");return;
         }
@@ -4684,7 +4682,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
             r=s.waitImage(s.hudQuad.handle,&wait);
             if(XR_SUCCEEDED(r))s.hudImageState.waited();
         }
-        if(XR_FAILED(r)&&s.hudImageState.owned())s.running=false;
+        if(XR_FAILED(r)&&s.hudImageState.owned())requestSessionRestart("HUD image acquire/wait failed "+result(r));
         if(!s.hudImageState.releasable()&&!s.hudQuadRuntimeFailureLogged){
             log("[HUD9-QUAD] acquire/wait failed "+result(r)+"; native HUD fallback retained");
             s.hudQuadRuntimeFailureLogged=true;

@@ -21,4 +21,12 @@ int main(){
     assert(!session.canCreate());
     session.reset();
     assert(!session.canCreate());
+    kharvox::SessionReadiness lost;
+    lost.created();
+    lost.completed();
+    lost.systemRecoveryRequired();
+    assert(!lost.usable());
+    assert(!lost.canCreate());
+    lost.reset();
+    assert(!lost.canCreate());
 }

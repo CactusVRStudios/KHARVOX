@@ -2961,6 +2961,7 @@ void pollEvents(){
                 resetCinewindowAnchorState();
                 if(s.queue&&s.vk.queueWaitIdle){QueueAccessScope queueAccess;s.vk.queueWaitIdle(s.queue);}
                 if(c.state==XR_SESSION_STATE_EXITING)s.sessionReadiness.exitRequested();
+                else{s.sessionReadiness.systemRecoveryRequired();log("OpenXR system loss requires application restart");}
                 destroySessionResources();
             }
         }else if(e.type==XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED){

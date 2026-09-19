@@ -156,6 +156,21 @@ Both wrappers share the existing submission tracking and queue lease. The
 a forbidden non-null core pointer alongside a valid KHR pointer, missing aliases,
 submission failure, and empty submissions.
 
+### P2: Queue Host Synchronization
+
+Confirmed: game `vkQueueWaitIdle` and `vkQueueBindSparse` previously bypassed
+the queue lease used by device retirement. Both now hold that lease, as does
+application `vkDeviceWaitIdle`. Instance-proc lookup also routes submit/present
+through the same wrappers. Queue debug-label, performance-configuration/hint,
+and out-of-band notification commands declared by the bundled Vulkan headers
+are serialized when downstream exposes them. Foreign processes and auxiliary
+runtime devices still bypass interception.
+
+Sparse binds conservatively invalidate SFS completion evidence. The production
+wrapper regression checks lock exclusion from another thread, result propagation,
+proc mapping, and sparse-bind invalidation. This closes application entry-point
+gaps; it is not live Vulkan synchronization validation.
+
 ## Audit-Time Verification And Limits
 
 - Nine existing tests compiled and passed with MinGW g++ in C++20 mode: descriptor arena, deferred memory, resource retirement, storage mirror budget, snapshot batch, eye bindings, source layouts, image plans, and SFS push replay.

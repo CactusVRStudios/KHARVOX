@@ -2,6 +2,8 @@
 #include <vulkan/vulkan.h>
 #include <cassert>
 #include <cstdint>
+#include <cstring>
+#include <future>
 #include <mutex>
 #include <sstream>
 #include <string>
@@ -19,6 +21,7 @@ static struct DeviceDispatch {
     VkDevice device=reinterpret_cast<VkDevice>(uintptr_t(1));
     PFN_vkQueueSubmit2 submit2{};
     PFN_vkQueueSubmit2KHR submit2Khr{};
+    PFN_vkGetDeviceProcAddr gdpa{};
     bool runtimeAuxiliary{};
 } dispatch;
 static DeviceDispatch deviceState(void*){return dispatch;}
@@ -38,12 +41,35 @@ static bool vrEnabled(){return true;}
 static void submitted(VkDevice device,VkQueue,VkResult result){assert(device==dispatch.device);++observed;observedResult=result;}
 }
 #include "../src/vulkan/QueueSubmit2.inc"
+#include "../src/vulkan/QueueHostCommands.inc"
+VKAPI_ATTR VkResult VKAPI_CALL vkQueueSubmit(VkQueue,uint32_t,const VkSubmitInfo*,VkFence){return VK_SUCCESS;}
+VKAPI_ATTR VkResult VKAPI_CALL vkQueuePresentKHR(VkQueue,const VkPresentInfoKHR*){return VK_SUCCESS;}
 
 static unsigned coreCalls{},khrCalls{};
 static bool coreCallable{};
 static VkResult downstreamResult=VK_SUCCESS;
 static VkResult VKAPI_CALL core(VkQueue,uint32_t,const VkSubmitInfo2*,VkFence){assert(coreCallable);++coreCalls;return downstreamResult;}
 static VkResult VKAPI_CALL khr(VkQueue,uint32_t,const VkSubmitInfo2*,VkFence){++khrCalls;return downstreamResult;}
+
+static void verifyQueueLocked(){
+    assert(std::async(std::launch::async,[]{
+        if(!queueAccessMutex.try_lock())return true;
+        queueAccessMutex.unlock();return false;
+    }).get());
+}
+static VkResult VKAPI_CALL queueWait(VkQueue){verifyQueueLocked();return downstreamResult;}
+static VkResult VKAPI_CALL deviceWait(VkDevice){verifyQueueLocked();return downstreamResult;}
+static VkResult VKAPI_CALL sparse(VkQueue,uint32_t count,const VkBindSparseInfo* infos,VkFence){
+    verifyQueueLocked();assert(count==1&&infos&&infos->sType==VK_STRUCTURE_TYPE_BIND_SPARSE_INFO);return downstreamResult;
+}
+static void VKAPI_CALL label(VkQueue,const VkDebugUtilsLabelEXT* info){verifyQueueLocked();assert(info);}
+static PFN_vkVoidFunction VKAPI_CALL getProc(VkDevice,const char* name){
+    if(!std::strcmp(name,"vkQueueWaitIdle"))return reinterpret_cast<PFN_vkVoidFunction>(queueWait);
+    if(!std::strcmp(name,"vkDeviceWaitIdle"))return reinterpret_cast<PFN_vkVoidFunction>(deviceWait);
+    if(!std::strcmp(name,"vkQueueBindSparse"))return reinterpret_cast<PFN_vkVoidFunction>(sparse);
+    if(!std::strcmp(name,"vkQueueBeginDebugUtilsLabelEXT"))return reinterpret_cast<PFN_vkVoidFunction>(label);
+    return nullptr;
+}
 
 int main(){
     dispatch.submit2=core;dispatch.submit2Khr=khr;
@@ -71,4 +97,23 @@ int main(){
     assert(observed==previous+1&&observedResult==downstreamResult);
     dispatch.runtimeAuxiliary=true;
     assert(vkQueueSubmit2KHR(queue,1,&info,{})==downstreamResult&&observed==previous+1);
+    dispatch.runtimeAuxiliary=false;dispatch.gdpa=getProc;
+    assert(queueHostProc("vkQueueSubmit2KHR")==reinterpret_cast<PFN_vkVoidFunction>(vkQueueSubmit2KHR));
+    assert(queueHostProc("vkQueueSubmit2")==reinterpret_cast<PFN_vkVoidFunction>(vkQueueSubmit2));
+    assert(!queueHostProc("vkUnrelatedCommand"));
+    VkBindSparseInfo binds{VK_STRUCTURE_TYPE_BIND_SPARSE_INFO};
+    for(const auto result:{VK_SUCCESS,VK_ERROR_DEVICE_LOST}){
+        downstreamResult=result;
+        assert(reinterpret_cast<PFN_vkQueueWaitIdle>(queueHostProc("vkQueueWaitIdle"))(queue)==result);
+        assert(reinterpret_cast<PFN_vkDeviceWaitIdle>(queueHostProc("vkDeviceWaitIdle"))(dispatch.device)==result);
+        const auto before=observed;
+        assert(reinterpret_cast<PFN_vkQueueBindSparse>(queueHostProc("vkQueueBindSparse"))(queue,1,&binds,{})==result);
+        assert(observed==before+1&&observedResult==result);
+    }
+    VkDebugUtilsLabelEXT debugLabel{VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT};
+    reinterpret_cast<PFN_vkQueueBeginDebugUtilsLabelEXT>(queueHostProc("vkQueueBeginDebugUtilsLabelEXT"))(queue,&debugLabel);
+    dispatch.gdpa=nullptr;
+    assert(vkQueueWaitIdle(queue)==VK_ERROR_DEVICE_LOST);
+    assert(vkDeviceWaitIdle(dispatch.device)==VK_ERROR_DEVICE_LOST);
+    assert(vkQueueBindSparse(queue,1,&binds,{})==VK_ERROR_DEVICE_LOST);
 }

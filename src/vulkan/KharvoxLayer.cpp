@@ -835,6 +835,7 @@ VKAPI_ATTR void VKAPI_CALL vkDestroySurfaceKHR(VkInstance instance,VkSurfaceKHR 
     if(dispatch.destroySurface)dispatch.destroySurface(instance,surface,allocator);
 }
 
+#include "QueueHostCommands.inc"
 #define MATCH(name) if(!std::strcmp(n,#name)) return reinterpret_cast<PFN_vkVoidFunction>(name)
 VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(VkInstance i,const char* n){
     if(!n)return nullptr;
@@ -845,10 +846,7 @@ VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(VkInstance i,cons
         return dispatch.gipa?dispatch.gipa(i,n):nullptr;
     }
     auto d=instanceState(key(i));if(i&&d.runtimeAuxiliary)return d.gipa?d.gipa(i,n):nullptr; MATCH(vkGetInstanceProcAddr); MATCH(vkGetDeviceProcAddr); MATCH(vkCreateInstance); MATCH(vkDestroyInstance); MATCH(vkCreateDevice); MATCH(vkCreateWin32SurfaceKHR);
-    if(kharvox::sfs::vrEnabled()&&(!std::strcmp(n,"vkQueueSubmit")||!std::strcmp(n,"vkQueueSubmit2")||!std::strcmp(n,"vkQueueSubmit2KHR"))&&d.gipa&&d.gipa(i,n)){
-        MATCH(vkQueueSubmit);MATCH(vkQueueSubmit2);
-        MATCH(vkQueueSubmit2KHR);
-    }
+    if(const auto proc=queueHostProc(n);proc&&d.gipa&&d.gipa(i,n))return proc;
     if(d.independentSurface||d.coreSurface){MATCH(vkGetPhysicalDeviceSurfaceCapabilitiesKHR); if(d.surfaceCaps2){MATCH(vkGetPhysicalDeviceSurfaceCapabilities2KHR);} MATCH(vkDestroySurfaceKHR);}
     return d.gipa?d.gipa(i,n):nullptr;
 }
@@ -859,8 +857,9 @@ static PFN_vkVoidFunction deviceProcBase(VkDevice d,const char* n){
         const auto dispatch=deviceState(key(d));
         return dispatch.gdpa?dispatch.gdpa(d,n):nullptr;
     }
-    auto s=deviceState(key(d));if(d&&s.runtimeAuxiliary)return s.gdpa?s.gdpa(d,n):nullptr; MATCH(vkGetDeviceProcAddr); MATCH(vkDestroyDevice); MATCH(vkGetDeviceQueue); MATCH(vkGetDeviceQueue2); MATCH(vkCreateSwapchainKHR); MATCH(vkDestroySwapchainKHR); MATCH(vkGetSwapchainImagesKHR); MATCH(vkAcquireNextImageKHR); MATCH(vkAcquireNextImage2KHR); MATCH(vkQueueSubmit); MATCH(vkQueueSubmit2); MATCH(vkQueuePresentKHR); MATCH(vkCmdPushConstants); MATCH(vkCmdUpdateBuffer); MATCH(vkMapMemory); MATCH(vkUnmapMemory); MATCH(vkBindBufferMemory); MATCH(vkUpdateDescriptorSets); MATCH(vkCmdBindDescriptorSets); MATCH(vkCmdBindPipeline); MATCH(vkCmdBindVertexBuffers); MATCH(vkCmdBindIndexBuffer); MATCH(vkCmdDraw); MATCH(vkCmdDrawIndexed); MATCH(vkCmdDrawIndirect); MATCH(vkCmdDrawIndexedIndirect); MATCH(vkCmdSetViewport); MATCH(vkCmdSetScissor); MATCH(vkCreateShaderModule); MATCH(vkDestroyShaderModule); MATCH(vkCreateGraphicsPipelines); MATCH(vkDestroyPipeline); MATCH(vkCmdPipelineBarrier); MATCH(vkCreateImage); MATCH(vkDestroyImage); MATCH(vkCreateImageView); MATCH(vkDestroyImageView); MATCH(vkCreateFramebuffer); MATCH(vkDestroyFramebuffer); MATCH(vkCreateRenderPass); MATCH(vkCreateRenderPass2); MATCH(vkDestroyRenderPass); MATCH(vkCmdBeginRenderPass); MATCH(vkCmdBeginRenderPass2); MATCH(vkCmdNextSubpass); MATCH(vkCmdNextSubpass2); MATCH(vkCmdEndRenderPass); MATCH(vkCmdEndRenderPass2);
-    if(kharvox::sfs::vrEnabled()&&!strcmp(n,"vkQueueSubmit2KHR")&&s.submit2Khr)return reinterpret_cast<PFN_vkVoidFunction>(&vkQueueSubmit2KHR);
+    auto s=deviceState(key(d));if(d&&s.runtimeAuxiliary)return s.gdpa?s.gdpa(d,n):nullptr;
+    if(const auto proc=queueHostProc(n))return s.gdpa&&s.gdpa(d,n)?proc:nullptr;
+    MATCH(vkGetDeviceProcAddr); MATCH(vkDestroyDevice); MATCH(vkGetDeviceQueue); MATCH(vkGetDeviceQueue2); MATCH(vkCreateSwapchainKHR); MATCH(vkDestroySwapchainKHR); MATCH(vkGetSwapchainImagesKHR); MATCH(vkAcquireNextImageKHR); MATCH(vkAcquireNextImage2KHR); MATCH(vkCmdPushConstants); MATCH(vkCmdUpdateBuffer); MATCH(vkMapMemory); MATCH(vkUnmapMemory); MATCH(vkBindBufferMemory); MATCH(vkUpdateDescriptorSets); MATCH(vkCmdBindDescriptorSets); MATCH(vkCmdBindPipeline); MATCH(vkCmdBindVertexBuffers); MATCH(vkCmdBindIndexBuffer); MATCH(vkCmdDraw); MATCH(vkCmdDrawIndexed); MATCH(vkCmdDrawIndirect); MATCH(vkCmdDrawIndexedIndirect); MATCH(vkCmdSetViewport); MATCH(vkCmdSetScissor); MATCH(vkCreateShaderModule); MATCH(vkDestroyShaderModule); MATCH(vkCreateGraphicsPipelines); MATCH(vkDestroyPipeline); MATCH(vkCmdPipelineBarrier); MATCH(vkCreateImage); MATCH(vkDestroyImage); MATCH(vkCreateImageView); MATCH(vkDestroyImageView); MATCH(vkCreateFramebuffer); MATCH(vkDestroyFramebuffer); MATCH(vkCreateRenderPass); MATCH(vkCreateRenderPass2); MATCH(vkDestroyRenderPass); MATCH(vkCmdBeginRenderPass); MATCH(vkCmdBeginRenderPass2); MATCH(vkCmdNextSubpass); MATCH(vkCmdNextSubpass2); MATCH(vkCmdEndRenderPass); MATCH(vkCmdEndRenderPass2);
     return s.gdpa?s.gdpa(d,n):nullptr;
 }
 // These entry points sit OUTSIDE Native's wrappers so no Native bookkeeping

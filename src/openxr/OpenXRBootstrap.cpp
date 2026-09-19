@@ -45,6 +45,7 @@
 #include "OpenXRRuntimePolicy.h"
 #include "RuntimeVulkanDispatch.h"
 #include "NativeXrReleasePolicy.h"
+#include "CommandRecordingState.h"
 #include "SwapchainImageState.h"
 #include "CinematicRefreshPolicy.h"
 #include "CinewindowPosePolicy.h"
@@ -4679,10 +4680,26 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
         &&s.alternatingStereoWarmupFramesRemaining>1;
     const bool skipAlternatingCapture=skipInitialAlternatingCapture
         ||settlingAlternatingPipeline||(aerSourceMode&&!aerSourceQualified);
-    s.vk.resetCommandBuffer(s.commandBuffer,0);
+    auto abortCommandRecording=[&](const char*operation,VkResult failure){
+        if(freshAerHands)s.freshHandsWorldValid=false;
+        for(int e=0;e<2;++e)if(s.eyeImageStates[e].owned()&&xi[e]<s.eyes[e].initialized.size())
+            s.eyes[e].initialized[xi[e]]=false;
+        if(s.hudImageState.owned()&&hudImageIndex<s.hudQuad.initialized.size())
+            s.hudQuad.initialized[hudImageIndex]=false;
+        invalidateAlternatingStereoHistory(true);
+        s.handRenderer.finishSceneIntegratedFrame();
+        releaseAcquiredEyeImages();
+        if(s.hudImageState.owned())releaseImageChecked(s.hudQuad.handle,s.hudImageState);
+        log(std::string(operation)+" failed "+std::to_string(failure));
+        endEmptyFrame(std::string(operation)+"-failed");
+    };
+    kharvox::CommandRecordingState commandRecording;
+    const VkResult resetResult=s.vk.resetCommandBuffer(s.commandBuffer,0);
+    if(!commandRecording.reset(resetResult==VK_SUCCESS)){abortCommandRecording("reset-command-buffer",resetResult);return;}
     VkCommandBufferBeginInfo cbi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     cbi.flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    s.vk.beginCommandBuffer(s.commandBuffer,&cbi);
+    const VkResult beginCommandResult=s.vk.beginCommandBuffer(s.commandBuffer,&cbi);
+    if(!commandRecording.begun(beginCommandResult==VK_SUCCESS)){abortCommandRecording("begin-command-buffer",beginCommandResult);return;}
     if(sfsBackend){
         if(!s.sfsCopyTiming.pool){
             VkPhysicalDeviceProperties properties{};s.vk.getPhysicalDeviceProperties(s.physical,&properties);
@@ -5194,7 +5211,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
     kharvox::native::endOwnerGpuTiming(nativeOwnerGpuSpan);
     if(sfsBackend)s.sfsCopyTiming.end(s.commandBuffer);
     const VkResult copyRecordResult=s.vk.endCommandBuffer(s.commandBuffer);
-    if(nativeFrameValid&&copyRecordResult!=VK_SUCCESS)kharvox::native::fail("Native XR copy command recording failed; resources retained");
+    if(!commandRecording.ended(copyRecordResult==VK_SUCCESS)){abortCommandRecording("end-command-buffer",copyRecordResult);return;}
     VkSemaphore afwSignalSemaphore{};uint64_t afwSignalValue{};const bool afwSignalPrepared=false;
     std::vector<VkSemaphore> submitWaits;if(p->waitSemaphoreCount)submitWaits.assign(p->pWaitSemaphores,p->pWaitSemaphores+p->waitSemaphoreCount);if(afwPrepared)submitWaits.push_back(afwWaitSemaphore);
     std::vector<VkPipelineStageFlags> waitStages(submitWaits.size(),VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);

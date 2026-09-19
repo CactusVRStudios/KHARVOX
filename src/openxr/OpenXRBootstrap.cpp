@@ -46,6 +46,7 @@
 #include "RuntimeVulkanDispatch.h"
 #include "NativeXrReleasePolicy.h"
 #include "CommandRecordingState.h"
+#include "SessionReadiness.h"
 #include "SwapchainImageState.h"
 #include "CinematicRefreshPolicy.h"
 #include "CinewindowPosePolicy.h"
@@ -155,7 +156,7 @@ struct State {
     std::array<bool,2> aerSourceCacheValid{};
     std::array<kharvox::AerSourceKey,2> aerSourceCacheKeys{};
     HMODULE loader{}; XrInstance instance{XR_NULL_HANDLE}; XrSystemId system{XR_NULL_SYSTEM_ID}; XrSession session{XR_NULL_HANDLE}; XrSpace space{XR_NULL_HANDLE}; XrSpace viewSpace{XR_NULL_HANDLE};
-    XrSessionState sessionState{XR_SESSION_STATE_UNKNOWN}; bool running{}, enable2{},useEnable2Bridge{},useEnable2RuntimeManaged{}; int64_t format{}; uint64_t frame{},submittedLayerFrames{};
+    XrSessionState sessionState{XR_SESSION_STATE_UNKNOWN}; kharvox::SessionReadiness sessionReadiness{}; bool running{}, enable2{},useEnable2Bridge{},useEnable2RuntimeManaged{}; int64_t format{}; uint64_t frame{},submittedLayerFrames{};
     kharvox::OpenXRRuntimeKind runtimeKind{kharvox::OpenXRRuntimeKind::Unknown};
     kharvox::OpenXRVulkanPath vulkanPath{kharvox::OpenXRVulkanPath::None};
     std::string runtimeManifest;
@@ -2899,7 +2900,7 @@ void updateCinewindowAnchor(const XrViewState& viewState,XrTime displayTime){
 }
 template<class T> bool load(const char* n,T& out){bool ok=s.getProc&&XR_SUCCEEDED(s.getProc(s.instance,n,reinterpret_cast<PFN_xrVoidFunction*>(&out)))&&out;if(!ok)log(std::string("missing ")+n);else kharvox::native::trace::wrapXrFrameTrace(n,out);return ok;}
 void pollEvents(){
-    if(!s.session||!s.pollEvent)return;
+    if(!s.sessionReadiness.usable()||!s.pollEvent)return;
     XrEventDataBuffer e{XR_TYPE_EVENT_DATA_BUFFER};
     while(s.pollEvent(s.instance,&e)==XR_SUCCESS){
         if(e.type==XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED){
@@ -3180,6 +3181,45 @@ bool releaseStandaloneIntro(){
     log("[VR-INTRO] standalone black session released; creating DOOM session");
     return true;
 }
+void destroySessionResources(){
+    s.running=false;
+    s.steamFramePrepared=false;
+    s.steamFrameBegun=false;
+    s.handRenderer.shutdown();
+    if(s.copyFence&&s.vk.destroyFence)s.vk.destroyFence(s.device,s.copyFence,nullptr);
+    s.copyFence=VK_NULL_HANDLE;
+    if(s.commandPool&&s.vk.destroyCommandPool)s.vk.destroyCommandPool(s.device,s.commandPool,nullptr);
+    s.commandPool=VK_NULL_HANDLE;
+    s.commandBuffer=VK_NULL_HANDLE;
+    auto destroySwapchain=[&](EyeSwapchain& swapchain){
+        if(swapchain.handle&&s.destroySwapchain)s.destroySwapchain(swapchain.handle);
+        swapchain={};
+    };
+    destroySwapchain(pauseBindings);
+    pauseBindingsReady=false;
+    destroySwapchain(s.hudQuad);
+    for(auto&eye:s.eyes)destroySwapchain(eye);
+    auto destroySpace=[&](XrSpace& space){
+        if(space&&s.destroySpace)s.destroySpace(space);
+        space=XR_NULL_HANDLE;
+    };
+    destroySpace(s.rightAimSpace);
+    destroySpace(s.leftAimSpace);
+    destroySpace(s.rightGripSpace);
+    destroySpace(s.leftGripSpace);
+    destroySpace(s.viewSpace);
+    destroySpace(s.space);
+    if(s.session&&s.destroySession)s.destroySession(s.session);
+    s.session=XR_NULL_HANDLE;
+    if(s.gameplayActionSet&&s.destroyActionSet)s.destroyActionSet(s.gameplayActionSet);
+    s.gameplayActionSet=XR_NULL_HANDLE;
+    s.actionsReady=false;
+    s.hapticActionsReady=false;
+    s.sessionState=XR_SESSION_STATE_UNKNOWN;
+    for(auto&state:s.eyeImageStates)state.reset();
+    s.hudImageState.reset();
+    s.sessionReadiness.reset();
+}
 bool createSession(){
     if(s.session||!s.instance||!s.vkInstance||!s.physical||!s.device||!s.queue)return false;
     // The launcher removes its temporary marker after the startup health check.
@@ -3208,9 +3248,9 @@ bool createSession(){
         }
     }else r=s.graphicsDevice1(s.instance,s.system,s.vkInstance,&required);
     log("Runtime physical="+std::to_string(reinterpret_cast<uintptr_t>(required))+" created physical="+std::to_string(reinterpret_cast<uintptr_t>(s.physical)));
-    if(XR_FAILED(r)){log("graphics device query failed "+result(r));return false;}if(required!=s.physical){log("runtime physical changed after device creation; refusing mismatched OpenXR binding");return false;}XrGraphicsBindingVulkanKHR binding{XR_TYPE_GRAPHICS_BINDING_VULKAN_KHR};binding.instance=s.vkInstance;binding.physicalDevice=required;binding.device=s.device;binding.queueFamilyIndex=s.queueFamily;binding.queueIndex=s.queueIndex;XrSessionCreateInfo ci{XR_TYPE_SESSION_CREATE_INFO};ci.next=&binding;ci.systemId=s.system;if(!releaseStandaloneIntro())return false;bridgeSessionTrace=s.useEnable2Bridge;log("[XR] ENTER xrCreateSession runtime="+std::string(kharvox::openXRRuntimeKindName(s.runtimeKind)));r=s.createSession(s.instance,&ci,&s.session);log("[XR] EXIT xrCreateSession "+result(r));bridgeSessionTrace=false;log("xrCreateSession "+result(r));if(XR_FAILED(r))return false;
-    XrReferenceSpaceCreateInfo si{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};si.referenceSpaceType=XR_REFERENCE_SPACE_TYPE_LOCAL;si.poseInReferenceSpace.orientation.w=1;r=s.createSpace(s.session,&si,&s.space);log("xrCreateReferenceSpace LOCAL "+result(r));if(XR_FAILED(r))return false;si.referenceSpaceType=XR_REFERENCE_SPACE_TYPE_VIEW;r=s.createSpace(s.session,&si,&s.viewSpace);log("xrCreateReferenceSpace VIEW "+result(r));if(XR_FAILED(r))return false;s.worldScale=configuredWorldScale();log("World scale="+std::to_string(s.worldScale)+" DOOM units/meter");log("Immersive cinematic FOV uses exact frame-matched OpenXR projection; cinematic zoom disabled");log("Presentation mode: QUAD");if(s.hudEverythingQuad)log("[HUD10-EVERYTHING-QUAD] LATCHED FOR SESSION: complete final DOOM image including world, weapon, and every UI element is shown on one Cinewindow Quad; F9 toggles normal 6DoF Projection");if(s.steamQuadOnly)log("[STEAM-QUAD-ONLY] LATCHED FOR SESSION: gameplay copies the normal DOOM frame into one Cinewindow QUAD layer; no PROJECTION layer will be submitted");
-    createGameplayActions();if(!createSwapchains())return false;VkCommandPoolCreateInfo pi{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};pi.flags=VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;pi.queueFamilyIndex=s.queueFamily;if(s.vk.createCommandPool(s.device,&pi,nullptr,&s.commandPool)!=VK_SUCCESS)return false;VkCommandBufferAllocateInfo ai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};ai.commandPool=s.commandPool;ai.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY;ai.commandBufferCount=1;if(s.vk.allocateCommandBuffers(s.device,&ai,&s.commandBuffer)!=VK_SUCCESS)return false;
+    if(XR_FAILED(r)){log("graphics device query failed "+result(r));return false;}if(required!=s.physical){log("runtime physical changed after device creation; refusing mismatched OpenXR binding");return false;}XrGraphicsBindingVulkanKHR binding{XR_TYPE_GRAPHICS_BINDING_VULKAN_KHR};binding.instance=s.vkInstance;binding.physicalDevice=required;binding.device=s.device;binding.queueFamilyIndex=s.queueFamily;binding.queueIndex=s.queueIndex;XrSessionCreateInfo ci{XR_TYPE_SESSION_CREATE_INFO};ci.next=&binding;ci.systemId=s.system;if(!releaseStandaloneIntro())return false;bridgeSessionTrace=s.useEnable2Bridge;log("[XR] ENTER xrCreateSession runtime="+std::string(kharvox::openXRRuntimeKindName(s.runtimeKind)));r=s.createSession(s.instance,&ci,&s.session);log("[XR] EXIT xrCreateSession "+result(r));bridgeSessionTrace=false;log("xrCreateSession "+result(r));if(XR_FAILED(r)){s.session=XR_NULL_HANDLE;return false;}s.sessionReadiness.created();auto fail=[](){destroySessionResources();return false;};
+    XrReferenceSpaceCreateInfo si{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};si.referenceSpaceType=XR_REFERENCE_SPACE_TYPE_LOCAL;si.poseInReferenceSpace.orientation.w=1;r=s.createSpace(s.session,&si,&s.space);log("xrCreateReferenceSpace LOCAL "+result(r));if(XR_FAILED(r))return fail();si.referenceSpaceType=XR_REFERENCE_SPACE_TYPE_VIEW;r=s.createSpace(s.session,&si,&s.viewSpace);log("xrCreateReferenceSpace VIEW "+result(r));if(XR_FAILED(r))return fail();s.worldScale=configuredWorldScale();log("World scale="+std::to_string(s.worldScale)+" DOOM units/meter");log("Immersive cinematic FOV uses exact frame-matched OpenXR projection; cinematic zoom disabled");log("Presentation mode: QUAD");if(s.hudEverythingQuad)log("[HUD10-EVERYTHING-QUAD] LATCHED FOR SESSION: complete final DOOM image including world, weapon, and every UI element is shown on one Cinewindow Quad; F9 toggles normal 6DoF Projection");if(s.steamQuadOnly)log("[STEAM-QUAD-ONLY] LATCHED FOR SESSION: gameplay copies the normal DOOM frame into one Cinewindow QUAD layer; no PROJECTION layer will be submitted");
+    if(!createGameplayActions()||!createSwapchains())return fail();VkCommandPoolCreateInfo pi{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};pi.flags=VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;pi.queueFamilyIndex=s.queueFamily;if(s.vk.createCommandPool(s.device,&pi,nullptr,&s.commandPool)!=VK_SUCCESS)return fail();VkCommandBufferAllocateInfo ai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};ai.commandPool=s.commandPool;ai.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY;ai.commandBufferCount=1;if(s.vk.allocateCommandBuffers(s.device,&ai,&s.commandBuffer)!=VK_SUCCESS)return fail();
     {
         std::array<VkExtent2D,2> extents{{{s.eyes[0].width,s.eyes[0].height},{s.eyes[1].width,s.eyes[1].height}}};
         std::array<std::vector<VkImage>,2> images{};
@@ -3234,7 +3274,7 @@ bool createSession(){
         log("[XR-COPY-FENCE] runtime="+std::string(kharvox::openXRRuntimeKindName(s.runtimeKind))
             +(created==VK_SUCCESS?" private copy fence available; use selected per frame":" copy fence unavailable; queueWaitIdle fallback retained"));
     }
-    log("Session created");return true;}
+    s.sessionReadiness.completed();log("Session created");return true;}
 void barrierAspect(VkCommandBuffer cb,VkImage img,VkImageLayout oldL,VkImageLayout newL,VkAccessFlags src,VkAccessFlags dst,VkImageAspectFlags aspect,uint32_t baseLayer=0){VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};b.srcAccessMask=src;b.dstAccessMask=dst;b.oldLayout=kharvox::sfs::sourceLayout(s.device,img,oldL);b.newLayout=kharvox::sfs::sourceLayout(s.device,img,newL);b.srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;b.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;b.image=img;b.subresourceRange.aspectMask=aspect;b.subresourceRange.baseArrayLayer=baseLayer;b.subresourceRange.levelCount=1;b.subresourceRange.layerCount=1;s.vk.cmdPipelineBarrier(cb,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,0,0,nullptr,0,nullptr,1,&b);}
 void barrier(VkCommandBuffer cb,VkImage img,VkImageLayout oldL,VkImageLayout newL,VkAccessFlags src,VkAccessFlags dst){barrierAspect(cb,img,oldL,newL,src,dst,VK_IMAGE_ASPECT_COLOR_BIT);}
 void invalidateAlternatingStereoHistory(bool clearProgrammedViews){
@@ -3493,7 +3533,8 @@ bool KharvoxXRStartSessionIfReady(){
     std::unique_lock<std::mutex>l(mutex);
     const bool steamRuntime=kharvox::isSteamBackedOpenXRRuntime(s.runtimeKind);
     if(steamRuntime&&steamSessionCreationInProgress)return false;
-    if(s.session)return true;
+    if(s.sessionReadiness.usable())return true;
+    if(s.session)destroySessionResources();
     if(GetFileAttributesW(kharvox::runtimePath(L"enable_xr_session").c_str())==INVALID_FILE_ATTRIBUTES)return false;
     if(!s.instance||!s.vkInstance||!s.physical||!s.device||!s.queue)return false;
     const bool directVirtualDesktop=

@@ -1877,8 +1877,12 @@ extern "C" void __fastcall patchCamera(void* rawContext, void* rawReturnAddress)
         reinterpret_cast<unsigned char*>(rawContext) + 0xC0);
     std::memcpy(hudAnchorOrigin, renderPosition, sizeof(hudAnchorOrigin));
     std::memcpy(hudAnchorAxis, basis, sizeof(hudAnchorAxis));
-    if (gameplayCamera)
+    if (gameplayCamera) {
         publishHudCenterRenderPose(hudAnchorOrigin, hudAnchorAxis);
+        // Bind the arm HUD to this rendered body, before HMD translation.
+        // Live physics can already be on a different tick during locomotion.
+        KharvoxHudCaptureOffhandRenderFrame(sourceViewBodyOrigin,bodyBasis);
+    }
 
     const float eyeOffset = stereoEnabled ? stereoEyeOffset.load(std::memory_order_relaxed) : 0.0f;
     if (moveLeft || moveRight || eyeOffset != 0.0f) {

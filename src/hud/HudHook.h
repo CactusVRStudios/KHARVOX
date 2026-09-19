@@ -78,3 +78,4 @@ std::size_t KharvoxHudCopyDiagnosticEvents(
 bool KharvoxHudMovieActive();
 
 bool KharvoxHudOffhandCalibrationActive();
+void KharvoxHudCaptureOffhandRenderFrame(const float bodyOrigin[3],const float bodyAxis[9]);

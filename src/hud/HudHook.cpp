@@ -147,6 +147,8 @@ struct TrackedHandPose {
 
 std::array<TrackedHandPose, 2> handPoses{};
 std::mutex handPoseMutex;
+std::mutex offhandRenderMutex;
+kharvox::OffhandHudRenderFrame offhandRenderFrame;
 std::mutex offhandHudMutex;
 bool offhandCanvasHookReady{};
 struct OffhandCanvasSubmission {const void* entity{};float center[3]{},axis[9]{},width{};};
@@ -2255,12 +2257,16 @@ std::array<float, 3> bodyVectorToWorld(
     };
 }
 
-bool getHandWorldPose(bool rightHand, float origin[3], float axis[9]) {
+bool getHandWorldPose(bool rightHand, float origin[3], float axis[9],
+    const float* renderBodyOrigin=nullptr,const float* renderBodyAxis=nullptr) {
     std::lock_guard<std::mutex> poseGuard(handPoseMutex);
     auto& hand = handPoses[rightHand ? 0 : 1];
     if (!hand.valid.load(std::memory_order_acquire)) return false;
     float bodyOrigin[3]{}, bodyAxis[9]{};
-    if (!KharvoxCameraGetBodyPose(bodyOrigin, bodyAxis)) return false;
+    if(renderBodyOrigin&&renderBodyAxis){
+        std::memcpy(bodyOrigin,renderBodyOrigin,sizeof(bodyOrigin));
+        std::memcpy(bodyAxis,renderBodyAxis,sizeof(bodyAxis));
+    } else if (!KharvoxCameraGetBodyPose(bodyOrigin, bodyAxis)) return false;
 
     std::array<float, 3> grip{};
     std::array<float, 4> quaternion{};
@@ -2287,11 +2293,12 @@ bool getHandWorldPose(bool rightHand, float origin[3], float axis[9]) {
 }
 
 bool getOffhandHudFrame(float origin[3],float axis[9]) {
-    static std::mutex mutex;std::lock_guard<std::mutex> guard(mutex);
-    static unsigned long long present=~0ull;static bool valid{};static float position[3]{},basis[9]{};
-    const auto now=KharvoxCameraCurrentPresentSerial();
-    if(now!=present){present=now;valid=getHandWorldPose(offhandHudLeftMode(),position,basis);}
-    if(!valid)return false;std::memcpy(origin,position,sizeof(position));std::memcpy(axis,basis,sizeof(basis));return true;
+    std::lock_guard<std::mutex> guard(offhandRenderMutex);
+    if(!offhandRenderFrame.usable(KharvoxCameraCurrentPresentSerial(),
+        KharvoxCameraLevelTransitionGeneration()))return false;
+    std::memcpy(origin,offhandRenderFrame.origin.data(),sizeof(float)*3);
+    std::memcpy(axis,offhandRenderFrame.axis.data(),sizeof(float)*9);
+    return true;
 }
 
 void pollOffhandHudHotkeys(){
@@ -4127,3 +4134,12 @@ bool KharvoxHudMovieActive(){
 }
 
 bool KharvoxHudOffhandCalibrationActive(){return offhandCalibrationActive.load(std::memory_order_acquire);}
+
+void KharvoxHudCaptureOffhandRenderFrame(const float bodyOrigin[3],const float bodyAxis[9]){
+    kharvox::OffhandHudRenderFrame next;
+    next.present=KharvoxCameraCurrentPresentSerial();
+    next.level=KharvoxCameraLevelTransitionGeneration();
+    next.valid=getHandWorldPose(offhandHudLeftMode(),next.origin.data(),next.axis.data(),bodyOrigin,bodyAxis);
+    std::lock_guard<std::mutex> guard(offhandRenderMutex);
+    offhandRenderFrame=next;
+}

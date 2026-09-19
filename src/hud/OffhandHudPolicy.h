@@ -4,6 +4,17 @@
 #include <cstdint>
 #include <istream>
 namespace kharvox {
+// A render publication may outlive Present by one boundary, but must never
+// be replaced with a live physics pose or carried into another level.
+struct OffhandHudRenderFrame {
+    std::array<float,3> origin{};
+    std::array<float,9> axis{};
+    uint64_t present{},level{};
+    bool valid{};
+    bool usable(uint64_t now,uint64_t currentLevel) const {
+        return valid&&level==currentLevel&&now>=present&&now-present<=1;
+    }
+};
 struct OffhandHudCalibration {
     std::array<float,3> centimeters{8,0,8};
     std::array<float,3> degrees{}; // pitch, yaw, roll

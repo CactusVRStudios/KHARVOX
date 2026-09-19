@@ -16,6 +16,22 @@ int main() {
     using namespace kharvox;
 
     {
+        OffhandHudRenderFrame frame;
+        if(frame.usable(0,0))return 120;
+        frame.valid=true;frame.present=100;frame.level=3;
+        frame.origin={10,20,30};frame.axis={1,0,0,0,1,0,0,0,1};
+        if(!frame.usable(100,3)||!frame.usable(101,3))return 121;
+        if(frame.usable(99,3)||frame.usable(102,3)||frame.usable(100,4))return 122;
+        // Present advancing does not replace the captured render origin with
+        // newer physics. A new camera publication can update within a Present.
+        auto next=frame;next.origin[0]=12;
+        frame=next;
+        if(!frame.usable(100,3)||!near(frame.origin[0],12))return 123;
+        frame.valid=false;
+        if(frame.usable(100,3))return 124;
+    }
+
+    {
         if(offhandHudSurface(0xbdcf54,512,300,83)!=0||offhandHudSurface(0xbdcf54,512,300,100)!=1)return 100;
         if(offhandHudSurface(0xbdcf54,512,301,100)!=-1||offhandHudSurface(0xbdcf55,512,300,100)!=-1)return 101;
         OffhandHudConfig config;std::istringstream saved("1 1 8 0 8 0 0 0 .1 4 2 6 0 90 0 .2");

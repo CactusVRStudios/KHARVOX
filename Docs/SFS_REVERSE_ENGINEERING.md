@@ -1062,3 +1062,15 @@ still invalidate; explicit calibration resets remain unchanged.
 Identity publication is serialized. Regression tests cover repeated fire-mode
 edges, same-family re-equips, owner changes, unknowns and missing base identity.
 123 CTests and launcher self-test passed. Headset R-Grip validation is pending.
+## Test 30 - Render-bound offhand HUD (2026-09-19)
+Offhand HUD previously combined live physics/body reconstruction with current
+controller tracking and froze that world pose by Present serial. During walking,
+this differs from the source camera rendering the world; publication within the
+same Present could not replace the cached position.
+Capture the offhand world transform when publishing the gameplay render camera,
+using its source body origin before HMD translation and its body basis. Publish
+position, orientation, validity, Present and level together under a mutex.
+Offhand consumers use this snapshot only (current or one boundary-old Present),
+never live physics fallback. Invalid tracking, stale/future snapshots and level
+changes remain rejected. Calibration and sequence suppression are retained.
+123 CTests plus launcher self-test passed; headset locomotion check pending.

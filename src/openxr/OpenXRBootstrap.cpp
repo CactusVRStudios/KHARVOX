@@ -45,6 +45,9 @@
 #include "OpenXRRuntimePolicy.h"
 #include "RuntimeVulkanDispatch.h"
 #include "NativeXrReleasePolicy.h"
+#include "CommandRecordingState.h"
+#include "SessionReadiness.h"
+#include "SwapchainImageState.h"
 #include "CinematicRefreshPolicy.h"
 #include "CinewindowPosePolicy.h"
 #include "HandsJumpPolicy.h"
@@ -153,7 +156,7 @@ struct State {
     std::array<bool,2> aerSourceCacheValid{};
     std::array<kharvox::AerSourceKey,2> aerSourceCacheKeys{};
     HMODULE loader{}; XrInstance instance{XR_NULL_HANDLE}; XrSystemId system{XR_NULL_SYSTEM_ID}; XrSession session{XR_NULL_HANDLE}; XrSpace space{XR_NULL_HANDLE}; XrSpace viewSpace{XR_NULL_HANDLE};
-    XrSessionState sessionState{XR_SESSION_STATE_UNKNOWN}; bool running{}, enable2{},useEnable2Bridge{},useEnable2RuntimeManaged{}; int64_t format{}; uint64_t frame{},submittedLayerFrames{};
+    XrSessionState sessionState{XR_SESSION_STATE_UNKNOWN}; kharvox::SessionReadiness sessionReadiness{}; bool running{}, enable2{},useEnable2Bridge{},useEnable2RuntimeManaged{}; int64_t format{}; uint64_t frame{},submittedLayerFrames{};
     kharvox::OpenXRRuntimeKind runtimeKind{kharvox::OpenXRRuntimeKind::Unknown};
     kharvox::OpenXRVulkanPath vulkanPath{kharvox::OpenXRVulkanPath::None};
     std::string runtimeManifest;
@@ -161,6 +164,7 @@ struct State {
     bool physicalIdentityQueryEnabled{};
     VkInstance vkInstance{}; VkPhysicalDevice physical{},xrPhysical{}; VkDevice device{}; VkQueue queue{}; uint32_t queueFamily{},queueIndex{},runtimeMaxVulkanApiVersion{}; KharvoxVulkanDispatch vk{};
     VkCommandPool commandPool{}; VkCommandBuffer commandBuffer{}; VkFence copyFence{};
+    std::array<kharvox::SwapchainImageState,2> eyeImageStates{}; kharvox::SwapchainImageState hudImageState{};
     kharvox::CopyGpuTiming sfsCopyTiming;
     std::unordered_map<VkSwapchainKHR,DoomSwapchain> doomSwapchains; DoomSwapchain retiredCompatibleDoomSwapchain{}; bool retiredCompatibleDoomSwapchainValid{}; ULONGLONG retiredCompatibleDoomSwapchainAt{}; VkSwapchainKHR startupActiveDoomSwapchain{}; bool vdxrSessionDeferralLogged{}; std::array<EyeSwapchain,2> eyes; EyeSwapchain hudQuad; uint32_t hudSurfaceWidth{},hudSurfaceHeight{}; float hudSafeTanHalfHorizontal{},hudSafeTanHalfVertical{}; int64_t hudQuadFormat{}; uint64_t hudQuadCopiedFrames{}; bool hudQuadRuntimeFailureLogged{}; std::array<XrView,2> views{{{XR_TYPE_VIEW},{XR_TYPE_VIEW}}};
     HeadPose head{}; XrVector3f trackingHeadPosition{}; bool trackingHeadPositionValid{}; XrQuaternionf headZero{0,0,0,1}; XrVector3f headZeroPosition{}; bool headZeroValid{}; bool headZeroPositionValid{}; bool headCameraArmed{true}; bool nativeMenuCameraPoseHeld{}; bool quadMode{true}; bool centeredQuadTransitionPending{}; unsigned centeredQuadFramesRemaining{}; bool cinewindowFollowsHeadset{cinewindowFollowsHeadsetRequested()}; bool cinewindowPresentationActive{}; bool cinewindowFixedPoseFallbackLogged{}; kharvox::CinewindowAnchor cinewindowAnchor{}; kharvox::CinewindowCaptureReadiness cinewindowCaptureReadiness{}; bool hudEverythingQuad{},hudEverythingQuadAvailable{}; bool hudEverythingQuadKeyDown{}; bool steamQuadOnly{}; bool steamMetaCompatibilityMode{}; bool presentationKeyDown{}; bool presentationManualOverride{}; XrTime lastSteamDisplayTime{}; uint64_t steamDuplicateFrames{},steamLinkReprojectedFrames{};
@@ -300,11 +304,17 @@ PFN_vkGetPhysicalDeviceProperties2 bridgeGetPhysicalDeviceProperties2Downstream=
 PFN_vkGetPhysicalDeviceMemoryProperties bridgeGetPhysicalDeviceMemoryPropertiesDownstream=nullptr;
 void log(const std::string& x, bool operational = false);
 bool eyeCaptureEnabled();
+void destroySessionResources();
+void requestSessionRestart(const std::string& failure){s.running=false;s.sessionReadiness.restartRequired();log(failure+"; session restart required");}
 KharvoxQueueAccessCallback queueAccessLockCallback{},queueAccessUnlockCallback{};
 struct QueueAccessScope {
     QueueAccessScope(){if(queueAccessLockCallback)queueAccessLockCallback();}
     ~QueueAccessScope(){if(queueAccessUnlockCallback)queueAccessUnlockCallback();}
 };
+XrResult acquireSwapchainImage(XrSwapchain swapchain,const XrSwapchainImageAcquireInfo*info,uint32_t*index){QueueAccessScope queueAccess;return s.acquireImage(swapchain,info,index);}
+XrResult releaseSwapchainImage(XrSwapchain swapchain,const XrSwapchainImageReleaseInfo*info){QueueAccessScope queueAccess;return s.releaseImage(swapchain,info);}
+XrResult beginFrame(const XrFrameBeginInfo*info){QueueAccessScope queueAccess;return s.beginFrame(s.session,info);}
+XrResult endFrame(const XrFrameEndInfo*info){QueueAccessScope queueAccess;return s.endFrame(s.session,info);}
 class SteamXrFrameThread {
 public:
     ~SteamXrFrameThread(){
@@ -357,10 +367,7 @@ private:
             if(stopping&&!taskPending)break;
             auto current=std::move(task);
             lock.unlock();
-            {
-                QueueAccessScope queueAccess;
-                current();
-            }
+            current();
             lock.lock();
             taskPending=false;
             taskComplete=true;
@@ -2895,7 +2902,7 @@ void updateCinewindowAnchor(const XrViewState& viewState,XrTime displayTime){
 }
 template<class T> bool load(const char* n,T& out){bool ok=s.getProc&&XR_SUCCEEDED(s.getProc(s.instance,n,reinterpret_cast<PFN_xrVoidFunction*>(&out)))&&out;if(!ok)log(std::string("missing ")+n);else kharvox::native::trace::wrapXrFrameTrace(n,out);return ok;}
 void pollEvents(){
-    if(!s.session||!s.pollEvent)return;
+    if(!s.sessionReadiness.usable()||!s.pollEvent)return;
     XrEventDataBuffer e{XR_TYPE_EVENT_DATA_BUFFER};
     while(s.pollEvent(s.instance,&e)==XR_SUCCESS){
         if(e.type==XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED){
@@ -2932,7 +2939,7 @@ void pollEvents(){
                         empty.displayTime=s.steamPreparedFrame.predictedDisplayTime;
                         empty.environmentBlendMode=XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
                         XrResult endResult{XR_ERROR_RUNTIME_FAILURE};
-                        const DWORD frameThread=steamXrFrameThread.invoke([&]{endResult=s.endFrame(s.session,&empty);});
+                        const DWORD frameThread=steamXrFrameThread.invoke([&]{endResult=endFrame(&empty);});
                         ++s.steamEndCalls;
                         if(XR_FAILED(endResult))++s.steamEndFailures;
                         log("[STEAM-XR-SPLIT] pending acquire frame ended empty before xrEndSession result="+result(endResult)+" lifecycleThread="+std::to_string(frameThread));
@@ -2952,6 +2959,10 @@ void pollEvents(){
                 releaseMovement();
                 s.running=false;
                 resetCinewindowAnchorState();
+                if(s.queue&&s.vk.queueWaitIdle){QueueAccessScope queueAccess;s.vk.queueWaitIdle(s.queue);}
+                if(c.state==XR_SESSION_STATE_EXITING)s.sessionReadiness.exitRequested();
+                else{s.sessionReadiness.systemRecoveryRequired();log("OpenXR system loss requires application restart");}
+                destroySessionResources();
             }
         }else if(e.type==XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED){
             s.interactionProfilesDirty=true;
@@ -3176,6 +3187,45 @@ bool releaseStandaloneIntro(){
     log("[VR-INTRO] standalone black session released; creating DOOM session");
     return true;
 }
+void destroySessionResources(){
+    s.running=false;
+    s.steamFramePrepared=false;
+    s.steamFrameBegun=false;
+    s.handRenderer.shutdown();
+    if(s.copyFence&&s.vk.destroyFence)s.vk.destroyFence(s.device,s.copyFence,nullptr);
+    s.copyFence=VK_NULL_HANDLE;
+    if(s.commandPool&&s.vk.destroyCommandPool)s.vk.destroyCommandPool(s.device,s.commandPool,nullptr);
+    s.commandPool=VK_NULL_HANDLE;
+    s.commandBuffer=VK_NULL_HANDLE;
+    auto destroySwapchain=[&](EyeSwapchain& swapchain){
+        if(swapchain.handle&&s.destroySwapchain)s.destroySwapchain(swapchain.handle);
+        swapchain={};
+    };
+    destroySwapchain(pauseBindings);
+    pauseBindingsReady=false;
+    destroySwapchain(s.hudQuad);
+    for(auto&eye:s.eyes)destroySwapchain(eye);
+    auto destroySpace=[&](XrSpace& space){
+        if(space&&s.destroySpace)s.destroySpace(space);
+        space=XR_NULL_HANDLE;
+    };
+    destroySpace(s.rightAimSpace);
+    destroySpace(s.leftAimSpace);
+    destroySpace(s.rightGripSpace);
+    destroySpace(s.leftGripSpace);
+    destroySpace(s.viewSpace);
+    destroySpace(s.space);
+    if(s.session&&s.destroySession)s.destroySession(s.session);
+    s.session=XR_NULL_HANDLE;
+    if(s.gameplayActionSet&&s.destroyActionSet)s.destroyActionSet(s.gameplayActionSet);
+    s.gameplayActionSet=XR_NULL_HANDLE;
+    s.actionsReady=false;
+    s.hapticActionsReady=false;
+    s.sessionState=XR_SESSION_STATE_UNKNOWN;
+    for(auto&state:s.eyeImageStates)state.reset();
+    s.hudImageState.reset();
+    s.sessionReadiness.reset();
+}
 bool createSession(){
     if(s.session||!s.instance||!s.vkInstance||!s.physical||!s.device||!s.queue)return false;
     // The launcher removes its temporary marker after the startup health check.
@@ -3204,9 +3254,9 @@ bool createSession(){
         }
     }else r=s.graphicsDevice1(s.instance,s.system,s.vkInstance,&required);
     log("Runtime physical="+std::to_string(reinterpret_cast<uintptr_t>(required))+" created physical="+std::to_string(reinterpret_cast<uintptr_t>(s.physical)));
-    if(XR_FAILED(r)){log("graphics device query failed "+result(r));return false;}if(required!=s.physical){log("runtime physical changed after device creation; refusing mismatched OpenXR binding");return false;}XrGraphicsBindingVulkanKHR binding{XR_TYPE_GRAPHICS_BINDING_VULKAN_KHR};binding.instance=s.vkInstance;binding.physicalDevice=required;binding.device=s.device;binding.queueFamilyIndex=s.queueFamily;binding.queueIndex=s.queueIndex;XrSessionCreateInfo ci{XR_TYPE_SESSION_CREATE_INFO};ci.next=&binding;ci.systemId=s.system;if(!releaseStandaloneIntro())return false;bridgeSessionTrace=s.useEnable2Bridge;log("[XR] ENTER xrCreateSession runtime="+std::string(kharvox::openXRRuntimeKindName(s.runtimeKind)));r=s.createSession(s.instance,&ci,&s.session);log("[XR] EXIT xrCreateSession "+result(r));bridgeSessionTrace=false;log("xrCreateSession "+result(r));if(XR_FAILED(r))return false;
-    XrReferenceSpaceCreateInfo si{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};si.referenceSpaceType=XR_REFERENCE_SPACE_TYPE_LOCAL;si.poseInReferenceSpace.orientation.w=1;r=s.createSpace(s.session,&si,&s.space);log("xrCreateReferenceSpace LOCAL "+result(r));if(XR_FAILED(r))return false;si.referenceSpaceType=XR_REFERENCE_SPACE_TYPE_VIEW;r=s.createSpace(s.session,&si,&s.viewSpace);log("xrCreateReferenceSpace VIEW "+result(r));if(XR_FAILED(r))return false;s.worldScale=configuredWorldScale();log("World scale="+std::to_string(s.worldScale)+" DOOM units/meter");log("Immersive cinematic FOV uses exact frame-matched OpenXR projection; cinematic zoom disabled");log("Presentation mode: QUAD");if(s.hudEverythingQuad)log("[HUD10-EVERYTHING-QUAD] LATCHED FOR SESSION: complete final DOOM image including world, weapon, and every UI element is shown on one Cinewindow Quad; F9 toggles normal 6DoF Projection");if(s.steamQuadOnly)log("[STEAM-QUAD-ONLY] LATCHED FOR SESSION: gameplay copies the normal DOOM frame into one Cinewindow QUAD layer; no PROJECTION layer will be submitted");
-    createGameplayActions();if(!createSwapchains())return false;VkCommandPoolCreateInfo pi{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};pi.flags=VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;pi.queueFamilyIndex=s.queueFamily;if(s.vk.createCommandPool(s.device,&pi,nullptr,&s.commandPool)!=VK_SUCCESS)return false;VkCommandBufferAllocateInfo ai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};ai.commandPool=s.commandPool;ai.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY;ai.commandBufferCount=1;if(s.vk.allocateCommandBuffers(s.device,&ai,&s.commandBuffer)!=VK_SUCCESS)return false;
+    if(XR_FAILED(r)){log("graphics device query failed "+result(r));return false;}if(required!=s.physical){log("runtime physical changed after device creation; refusing mismatched OpenXR binding");return false;}XrGraphicsBindingVulkanKHR binding{XR_TYPE_GRAPHICS_BINDING_VULKAN_KHR};binding.instance=s.vkInstance;binding.physicalDevice=required;binding.device=s.device;binding.queueFamilyIndex=s.queueFamily;binding.queueIndex=s.queueIndex;XrSessionCreateInfo ci{XR_TYPE_SESSION_CREATE_INFO};ci.next=&binding;ci.systemId=s.system;if(!releaseStandaloneIntro())return false;bridgeSessionTrace=s.useEnable2Bridge;log("[XR] ENTER xrCreateSession runtime="+std::string(kharvox::openXRRuntimeKindName(s.runtimeKind)));r=s.createSession(s.instance,&ci,&s.session);log("[XR] EXIT xrCreateSession "+result(r));bridgeSessionTrace=false;log("xrCreateSession "+result(r));if(XR_FAILED(r)){s.session=XR_NULL_HANDLE;return false;}s.sessionReadiness.created();auto fail=[](){destroySessionResources();return false;};
+    XrReferenceSpaceCreateInfo si{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};si.referenceSpaceType=XR_REFERENCE_SPACE_TYPE_LOCAL;si.poseInReferenceSpace.orientation.w=1;r=s.createSpace(s.session,&si,&s.space);log("xrCreateReferenceSpace LOCAL "+result(r));if(XR_FAILED(r))return fail();si.referenceSpaceType=XR_REFERENCE_SPACE_TYPE_VIEW;r=s.createSpace(s.session,&si,&s.viewSpace);log("xrCreateReferenceSpace VIEW "+result(r));if(XR_FAILED(r))return fail();s.worldScale=configuredWorldScale();log("World scale="+std::to_string(s.worldScale)+" DOOM units/meter");log("Immersive cinematic FOV uses exact frame-matched OpenXR projection; cinematic zoom disabled");log("Presentation mode: QUAD");if(s.hudEverythingQuad)log("[HUD10-EVERYTHING-QUAD] LATCHED FOR SESSION: complete final DOOM image including world, weapon, and every UI element is shown on one Cinewindow Quad; F9 toggles normal 6DoF Projection");if(s.steamQuadOnly)log("[STEAM-QUAD-ONLY] LATCHED FOR SESSION: gameplay copies the normal DOOM frame into one Cinewindow QUAD layer; no PROJECTION layer will be submitted");
+    if(!createGameplayActions()||!createSwapchains())return fail();VkCommandPoolCreateInfo pi{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};pi.flags=VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;pi.queueFamilyIndex=s.queueFamily;if(s.vk.createCommandPool(s.device,&pi,nullptr,&s.commandPool)!=VK_SUCCESS)return fail();VkCommandBufferAllocateInfo ai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};ai.commandPool=s.commandPool;ai.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY;ai.commandBufferCount=1;if(s.vk.allocateCommandBuffers(s.device,&ai,&s.commandBuffer)!=VK_SUCCESS)return fail();
     {
         std::array<VkExtent2D,2> extents{{{s.eyes[0].width,s.eyes[0].height},{s.eyes[1].width,s.eyes[1].height}}};
         std::array<std::vector<VkImage>,2> images{};
@@ -3230,7 +3280,7 @@ bool createSession(){
         log("[XR-COPY-FENCE] runtime="+std::string(kharvox::openXRRuntimeKindName(s.runtimeKind))
             +(created==VK_SUCCESS?" private copy fence available; use selected per frame":" copy fence unavailable; queueWaitIdle fallback retained"));
     }
-    log("Session created");return true;}
+    s.sessionReadiness.completed();log("Session created");return true;}
 void barrierAspect(VkCommandBuffer cb,VkImage img,VkImageLayout oldL,VkImageLayout newL,VkAccessFlags src,VkAccessFlags dst,VkImageAspectFlags aspect,uint32_t baseLayer=0){VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};b.srcAccessMask=src;b.dstAccessMask=dst;b.oldLayout=kharvox::sfs::sourceLayout(s.device,img,oldL);b.newLayout=kharvox::sfs::sourceLayout(s.device,img,newL);b.srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;b.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;b.image=img;b.subresourceRange.aspectMask=aspect;b.subresourceRange.baseArrayLayer=baseLayer;b.subresourceRange.levelCount=1;b.subresourceRange.layerCount=1;s.vk.cmdPipelineBarrier(cb,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,0,0,nullptr,0,nullptr,1,&b);}
 void barrier(VkCommandBuffer cb,VkImage img,VkImageLayout oldL,VkImageLayout newL,VkAccessFlags src,VkAccessFlags dst){barrierAspect(cb,img,oldL,newL,src,dst,VK_IMAGE_ASPECT_COLOR_BIT);}
 void invalidateAlternatingStereoHistory(bool clearProgrammedViews){
@@ -3295,7 +3345,36 @@ static void initializeOpenXR(VkInstance instance){std::lock_guard<std::mutex>l(m
     bool graphics=false;if(s.enable2)graphics=load("xrGetVulkanGraphicsRequirements2KHR",s.requirements2)&&load("xrGetVulkanGraphicsDevice2KHR",s.graphicsDevice2)&&load("xrCreateVulkanInstanceKHR",s.createVulkanInstance)&&load("xrCreateVulkanDeviceKHR",s.createVulkanDevice);else graphics=load("xrGetVulkanGraphicsRequirementsKHR",s.requirements1)&&load("xrGetVulkanGraphicsDeviceKHR",s.graphicsDevice1)&&load("xrGetVulkanInstanceExtensionsKHR",s.instanceExtensions)&&load("xrGetVulkanDeviceExtensionsKHR",s.deviceExtensions);log(std::string("Vulkan XR functions ")+(graphics?"ready":"INCOMPLETE"));if(s.enable2){log("XR_KHR_vulkan_enable2 active");log(std::string("xrCreateVulkanInstanceKHR ")+(s.createVulkanInstance?"available":"MISSING"));log(std::string("xrCreateVulkanDeviceKHR ")+(s.createVulkanDevice?"available":"MISSING"));log(std::string("xrGetVulkanGraphicsDevice2KHR ")+(s.graphicsDevice2?"available":"MISSING"));}if(!graphics)return;XrSystemGetInfo gi{XR_TYPE_SYSTEM_GET_INFO};gi.formFactor=XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;log("calling xrGetSystem");r=s.getSystem(s.instance,&gi,&s.system);log("xrGetSystem result="+std::to_string(r)+" system="+std::to_string(s.system));if(XR_SUCCEEDED(r)){XrGraphicsRequirementsVulkanKHR requirements{XR_TYPE_GRAPHICS_REQUIREMENTS_VULKAN_KHR};const XrResult requirementsResult=s.enable2?s.requirements2(s.instance,s.system,&requirements):s.requirements1(s.instance,s.system,&requirements);if(XR_SUCCEEDED(requirementsResult)){s.runtimeMaxVulkanApiVersion=VK_MAKE_API_VERSION(0,XR_VERSION_MAJOR(requirements.maxApiVersionSupported),XR_VERSION_MINOR(requirements.maxApiVersionSupported),XR_VERSION_PATCH(requirements.maxApiVersionSupported));log("Runtime Vulkan API range min="+std::to_string(XR_VERSION_MAJOR(requirements.minApiVersionSupported))+"."+std::to_string(XR_VERSION_MINOR(requirements.minApiVersionSupported))+" max="+std::to_string(XR_VERSION_MAJOR(requirements.maxApiVersionSupported))+"."+std::to_string(XR_VERSION_MINOR(requirements.maxApiVersionSupported)));}else log("Runtime Vulkan requirements query failed "+result(requirementsResult));}if(!s.enable2&&XR_SUCCEEDED(r)){uint32_t size=0;s.instanceExtensions(s.instance,s.system,0,&size,nullptr);std::vector<char>b(size);s.instanceExtensions(s.instance,s.system,size,&size,b.data());log(std::string("Required instance extensions: ")+b.data());size=0;s.deviceExtensions(s.instance,s.system,0,&size,nullptr);b.assign(size,0);s.deviceExtensions(s.instance,s.system,size,&size,b.data());log(std::string("Required device extensions: ")+b.data());}}
 
 void KharvoxXRShutdownHaptics(){clearXInputHapticState();KharvoxPsvr2SubmitTrigger(kharvox::psvr2::offCommand(s.leftHanded,kharvox::psvr2::TriggerOffReason::SessionEnd));KharvoxPsvr2IpcRequestStop();KharvoxBhapticsIpcRequestStop();}
-void KharvoxXRDeviceDestroyed(){std::lock_guard<std::mutex>l(mutex);s.handRenderer.shutdown();if(s.sfsCopyTiming.pool){if(s.vk.queueWaitIdle(s.queue)==VK_SUCCESS)s.sfsCopyTiming.shutdownAfterCompletion();}}
+void KharvoxXRDeviceDestroyed(){
+    std::lock_guard<std::mutex>l(mutex);
+    s.running=false;
+    s.sessionReadiness.reset();
+    VkResult idleResult=VK_SUCCESS;
+    if(s.queue&&s.vk.queueWaitIdle){QueueAccessScope queueAccess;idleResult=s.vk.queueWaitIdle(s.queue);}
+    if(idleResult!=VK_SUCCESS)log("XR device teardown queue idle failed "+std::to_string(idleResult));
+    releaseEyeCapture();
+    for(auto&source:eyeSourceCapture){source.completed=true;releaseEyeSource(source);}
+    s.fsr1.releaseAfterCompletion();
+    s.fsr1InitializationAttempted=false;
+    if(s.sfsCopyTiming.pool)s.sfsCopyTiming.shutdownAfterCompletion();
+    for(int e=0;e<2;++e){
+        if(s.freshHandsWorld[e]&&s.vk.destroyImage)s.vk.destroyImage(s.device,s.freshHandsWorld[e],nullptr);
+        if(s.freshHandsMemory[e]&&s.vk.freeMemory)s.vk.freeMemory(s.device,s.freshHandsMemory[e],nullptr);
+        if(s.stereoCache[e]&&s.vk.destroyImage)s.vk.destroyImage(s.device,s.stereoCache[e],nullptr);
+        if(s.stereoCacheMemory[e]&&s.vk.freeMemory)s.vk.freeMemory(s.device,s.stereoCacheMemory[e],nullptr);
+    }
+    s.freshHandsWorld={};s.freshHandsMemory={};s.freshHandsExtent={};s.freshHandsInitialized=false;s.freshHandsWorldValid=false;
+    s.stereoCache={};s.stereoCacheMemory={};s.stereoCacheExtent={};s.stereoCacheInitialized={};s.stereoCacheRevision={};
+    destroySessionResources();
+    s.doomSwapchains.clear();
+    s.retiredCompatibleDoomSwapchain={};
+    s.retiredCompatibleDoomSwapchainValid=false;
+    s.startupActiveDoomSwapchain=VK_NULL_HANDLE;
+    s.queue=VK_NULL_HANDLE;
+    s.device=VK_NULL_HANDLE;
+    s.physical=VK_NULL_HANDLE;
+    s.vk={};
+}
 
 bool KharvoxXRMediationEnabled(){return GetFileAttributesW(kharvox::runtimePath(L"enable_xr_mediated").c_str())!=INVALID_FILE_ATTRIBUTES;}
 bool KharvoxXRMediationReentry(){return mediationReentry;}
@@ -3489,7 +3568,9 @@ bool KharvoxXRStartSessionIfReady(){
     std::unique_lock<std::mutex>l(mutex);
     const bool steamRuntime=kharvox::isSteamBackedOpenXRRuntime(s.runtimeKind);
     if(steamRuntime&&steamSessionCreationInProgress)return false;
-    if(s.session)return true;
+    if(!s.sessionReadiness.canCreate())return false;
+    if(s.sessionReadiness.usable())return true;
+    if(s.session)destroySessionResources();
     if(GetFileAttributesW(kharvox::runtimePath(L"enable_xr_session").c_str())==INVALID_FILE_ATTRIBUTES)return false;
     if(!s.instance||!s.vkInstance||!s.physical||!s.device||!s.queue)return false;
     const bool directVirtualDesktop=
@@ -3556,7 +3637,7 @@ void KharvoxXRPrepareFrame(VkSwapchainKHR swapchain){
         if(XR_SUCCEEDED(waitResult)){
             XrFrameBeginInfo beginInfo{XR_TYPE_FRAME_BEGIN_INFO};
             beginAttempted=true;
-            beginResult=s.beginFrame(s.session,&beginInfo);
+            beginResult=beginFrame(&beginInfo);
         }
     });
     const double waitMs=performanceMilliseconds(waitStart,waitEnd);
@@ -3644,7 +3725,7 @@ void KharvoxXRSwapchainDestroyed(VkSwapchainKHR sc){
         empty.displayTime=s.steamPreparedFrame.predictedDisplayTime;
         empty.environmentBlendMode=XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
         XrResult endResult{XR_ERROR_RUNTIME_FAILURE};
-        const DWORD frameThread=steamXrFrameThread.invoke([&]{endResult=s.endFrame(s.session,&empty);});
+        const DWORD frameThread=steamXrFrameThread.invoke([&]{endResult=endFrame(&empty);});
         ++s.steamEndCalls;
         if(XR_FAILED(endResult))++s.steamEndFailures;
         s.steamFramePrepared=false;
@@ -3708,7 +3789,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
             empty.displayTime=s.steamPreparedFrame.predictedDisplayTime;
             empty.environmentBlendMode=XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
             XrResult ended{XR_ERROR_RUNTIME_FAILURE};
-            steamXrFrameThread.invoke([&]{ended=s.endFrame(s.session,&empty);});
+            steamXrFrameThread.invoke([&]{ended=endFrame(&empty);});
             ++s.steamEndCalls;
             if(XR_FAILED(ended))++s.steamEndFailures;
             s.steamFramePrepared=false;s.steamFrameBegun=false;
@@ -3771,7 +3852,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
                 waitResult=s.waitFrame(s.session,&wi,&frame);
                 if(XR_SUCCEEDED(waitResult)){
                     XrFrameBeginInfo bi{XR_TYPE_FRAME_BEGIN_INFO};
-                    beginResult=s.beginFrame(s.session,&bi);
+                    beginResult=beginFrame(&bi);
                 }
             });
         }else {kharvox::native::cpu::Scope profile(kharvox::native::cpu::XrWaitFrame);waitResult=s.waitFrame(s.session,&wi,&frame);}
@@ -3786,7 +3867,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
             log("[STEAM-XR-ORDER] xrWaitFrame "+result(waitResult)+" lifecycleThread="+std::to_string(lifecycleThread)+" callerThread="+std::to_string(GetCurrentThreadId())+" wait/begin/end="+std::to_string(s.steamWaitCalls)+"/"+std::to_string(s.steamBeginCalls)+"/"+std::to_string(s.steamEndCalls));
             return;
         }
-        if(!steamRuntime){XrFrameBeginInfo bi{XR_TYPE_FRAME_BEGIN_INFO};beginResult=s.beginFrame(s.session,&bi);}
+        if(!steamRuntime){XrFrameBeginInfo bi{XR_TYPE_FRAME_BEGIN_INFO};beginResult=beginFrame(&bi);}
         if(steamRuntime)++s.steamBeginCalls;
         if(XR_FAILED(beginResult)){
             log("[STEAM-XR-ORDER] xrBeginFrame "+result(beginResult)+" after wait="+result(waitResult)+" lifecycleThread="+std::to_string(lifecycleThread)+" callerThread="+std::to_string(GetCurrentThreadId())+" wait/begin/end="+std::to_string(s.steamWaitCalls)+"/"+std::to_string(s.steamBeginCalls)+"/"+std::to_string(s.steamEndCalls));
@@ -3803,12 +3884,10 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
         XrResult endResult{XR_ERROR_RUNTIME_FAILURE};
         kharvox::pose_trace::Event traceEnd{};traceEnd.kind=kharvox::pose_trace::EndBegin;traceEnd.frame=s.frame;traceEnd.displayTime=endInfo.displayTime;traceEnd.flags=poseTraceFlags();traceEnd.source=endInfo.layerCount;kharvox::pose_trace::record(traceEnd);
         DWORD lifecycleThread=GetCurrentThreadId();
-        if(steamRuntime){kharvox::native::cpu::Scope profile(kharvox::native::cpu::XrEndFrame);lifecycleThread=steamXrFrameThread.invoke([&]{endResult=s.endFrame(s.session,&endInfo);});}
+        if(steamRuntime){kharvox::native::cpu::Scope profile(kharvox::native::cpu::XrEndFrame);lifecycleThread=steamXrFrameThread.invoke([&]{endResult=endFrame(&endInfo);});}
         else {
             kharvox::native::cpu::Scope profile(kharvox::native::cpu::XrEndFrame);
-            if(s.runtimeKind==kharvox::OpenXRRuntimeKind::VirtualDesktop){
-                QueueAccessScope queueAccess;endResult=s.endFrame(s.session,&endInfo);
-            }else endResult=s.endFrame(s.session,&endInfo);
+            endResult=endFrame(&endInfo);
         }
         traceEnd.kind=kharvox::pose_trace::EndReturn;traceEnd.status=endResult;kharvox::pose_trace::record(traceEnd);
         if(steamRuntime){
@@ -3872,22 +3951,27 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
     if(kharvox::useSteamFsrQuadStartupHandshake(steamRuntime,s.fsr1Requested,
             s.quadMode,s.steamFsrStartupHandshakeComplete)){
         auto& handshakeEye=s.eyes[0];
+        auto& handshakeImageState=s.eyeImageStates[0];
         uint32_t handshakeImageIndex{};
         XrSwapchainImageAcquireInfo acquire{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
-        XrResult handshakeResult=s.acquireImage(handshakeEye.handle,&acquire,
-            &handshakeImageIndex);
-        bool handshakeImageAcquired=XR_SUCCEEDED(handshakeResult);
-        if(handshakeImageAcquired){
+        XrResult handshakeResult=handshakeImageState.owned()?XR_ERROR_CALL_ORDER_INVALID:
+            acquireSwapchainImage(handshakeEye.handle,&acquire,&handshakeImageIndex);
+        if(XR_SUCCEEDED(handshakeResult))handshakeImageState.acquired();
+        if(handshakeImageState.owned()){
             XrSwapchainImageWaitInfo wait{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
             wait.timeout=XR_INFINITE_DURATION;
             handshakeResult=s.waitImage(handshakeEye.handle,&wait);
+            handshakeImageState.waited(handshakeResult!=XR_TIMEOUT_EXPIRED&&XR_SUCCEEDED(handshakeResult));
         }
-        if(handshakeImageAcquired){
+        if(handshakeImageState.releasable()){
             XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
-            const XrResult releaseResult=s.releaseImage(handshakeEye.handle,&release);
+            const XrResult releaseResult=releaseSwapchainImage(handshakeEye.handle,&release);
+            if(XR_SUCCEEDED(releaseResult))handshakeImageState.released();
             if(XR_SUCCEEDED(handshakeResult))handshakeResult=releaseResult;
         }
-        if(XR_SUCCEEDED(handshakeResult)){
+        if(handshakeImageState.owned())
+            requestSessionRestart("startup handshake retained XR image ownership "+result(handshakeResult));
+        if(XR_SUCCEEDED(handshakeResult)&&!handshakeImageState.owned()){
             const int32_t quadWidth=static_cast<int32_t>(handshakeEye.width);
             const int32_t quadHeight=std::min(static_cast<int32_t>(handshakeEye.height),
                 std::max(1,static_cast<int32_t>(std::lround(
@@ -3913,9 +3997,9 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
             handshakeResult=endFrameChecked(endInfo,"fsr1-quad-startup-handshake");
         }else{
             const XrResult emptyResult=endEmptyFrame("fsr1-quad-handshake-image-failed");
-            if(XR_SUCCEEDED(handshakeResult))handshakeResult=emptyResult;
+            if(handshakeResult==XR_SUCCESS)handshakeResult=emptyResult;
         }
-        if(XR_SUCCEEDED(handshakeResult)){
+        if(handshakeResult!=XR_TIMEOUT_EXPIRED&&XR_SUCCEEDED(handshakeResult)){
             s.steamFsrStartupHandshakeComplete=true;
             s.lastSteamDisplayTime=frame.predictedDisplayTime;
         }
@@ -4108,7 +4192,6 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
         && hudSource.extent.width > 0
         && hudSource.extent.height > 0;
     uint32_t hudImageIndex{};
-    bool hudImageAcquired{};
     bool hudImageCopied{};
     constexpr float radiansToDegrees=57.2957795131f;
     const bool immersiveCameraArmed=kharvox::shouldArmImmersiveCamera(
@@ -4540,57 +4623,73 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
     if(steamLinkSameFrameMono&&!steamLinkMonoColorCache&&!steamLinkMonoCacheFailureLogged){log("[STEAMLINK-MONO] SRGB intermediate cache allocation failed; color-correct test invalid");steamLinkMonoCacheFailureLogged=true;}
     VkSemaphore afwWaitSemaphore{};uint64_t afwWaitValue{};const bool afwPrepared=false;
     std::array<uint32_t,2> xi{};
-    std::array<bool,2> eyeImageAcquired{};
-    auto releaseImageChecked=[&](XrSwapchain swapchain){
-        QueueAccessScope queueAccess;
+    bool imageReleaseFailed{};
+    auto releaseImageChecked=[&](XrSwapchain swapchain,kharvox::SwapchainImageState& imageState){
+        if(!imageState.releasable())return false;
         XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
-        const XrResult released=s.releaseImage(swapchain,&ri);
-        if(nativeFrameValid&&XR_FAILED(released))kharvox::native::fail("Native XR image release failed; resources retained");
+        const XrResult released=releaseSwapchainImage(swapchain,&ri);
+        if(XR_FAILED(released)){
+            imageReleaseFailed=true;
+            requestSessionRestart("XR image release failed "+result(released));
+            return false;
+        }
+        imageState.released();
+        return true;
     };
     auto releaseAcquiredEyeImages=[&](){
-        for(int e=0;e<2;e++)if(eyeImageAcquired[e]){
-            releaseImageChecked(s.eyes[e].handle);
-            eyeImageAcquired[e]=false;
-        }
+        bool released=true;
+        for(int e=0;e<2;e++)if(s.eyeImageStates[e].owned())
+            released=releaseImageChecked(s.eyes[e].handle,s.eyeImageStates[e])&&released;
+        return released;
     };
     if(updateEyeSwapchains){
         for(int e=0;e<2;e++){
+            if(s.eyeImageStates[e].owned()){
+                requestSessionRestart("eye image ownership retained after earlier failure");
+                endEmptyFrame("eye-image-still-owned");return;
+            }
             XrSwapchainImageAcquireInfo ai{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
-            r=s.acquireImage(s.eyes[e].handle,&ai,&xi[e]);
+            r=acquireSwapchainImage(s.eyes[e].handle,&ai,&xi[e]);
             if(XR_FAILED(r)){
                 releaseAcquiredEyeImages();
                 log("acquire eye "+result(r));
                 endEmptyFrame("acquire-eye-"+std::to_string(e)+"-failed");return;
             }
-            eyeImageAcquired[e]=true;
+            s.eyeImageStates[e].acquired();
             XrSwapchainImageWaitInfo xw{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
             xw.timeout=XR_INFINITE_DURATION;
             r=s.waitImage(s.eyes[e].handle,&xw);
-            if(XR_FAILED(r)){
+            if(!s.eyeImageStates[e].waited(r!=XR_TIMEOUT_EXPIRED&&XR_SUCCEEDED(r))){
+                requestSessionRestart("wait eye "+result(r));
                 releaseAcquiredEyeImages();
-                log("wait eye "+result(r));
                 endEmptyFrame("wait-eye-"+std::to_string(e)+"-failed");return;
             }
         }
     }
     if(hudQuadRequested){
+        if(s.hudImageState.owned()){
+            requestSessionRestart("HUD image ownership retained after earlier failure");
+            releaseAcquiredEyeImages();
+            endEmptyFrame("hud-image-still-owned");return;
+        }
         XrSwapchainImageAcquireInfo acquire{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
-        r=s.acquireImage(s.hudQuad.handle,&acquire,&hudImageIndex);
-        if(XR_SUCCEEDED(r)&&hudImageIndex<s.hudQuad.images.size()){
-            hudImageAcquired=true;
+        r=acquireSwapchainImage(s.hudQuad.handle,&acquire,&hudImageIndex);
+        if(XR_SUCCEEDED(r)){
+            s.hudImageState.acquired();
+            if(hudImageIndex>=s.hudQuad.images.size())r=XR_ERROR_RUNTIME_FAILURE;
+        }
+        if(XR_SUCCEEDED(r)){
             XrSwapchainImageWaitInfo wait{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
             wait.timeout=XR_INFINITE_DURATION;
             r=s.waitImage(s.hudQuad.handle,&wait);
-            if(XR_FAILED(r)){
-                XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
-                s.releaseImage(s.hudQuad.handle,&release);
-                hudImageAcquired=false;
-            }
+            s.hudImageState.waited(r!=XR_TIMEOUT_EXPIRED&&XR_SUCCEEDED(r));
         }
-        if(!hudImageAcquired&&!s.hudQuadRuntimeFailureLogged){
+        if(!s.hudImageState.releasable()&&s.hudImageState.owned())requestSessionRestart("HUD image acquire/wait failed "+result(r));
+        if(!s.hudImageState.releasable()&&!s.hudQuadRuntimeFailureLogged){
             log("[HUD9-QUAD] acquire/wait failed "+result(r)+"; native HUD fallback retained");
             s.hudQuadRuntimeFailureLogged=true;
         }
+        if(!s.running){releaseAcquiredEyeImages();endEmptyFrame("hud-image-failed");return;}
     }
 
     const bool monoColorCache=steamLinkMonoColorCache||initialMonoColorCache;
@@ -4654,10 +4753,26 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
         &&s.alternatingStereoWarmupFramesRemaining>1;
     const bool skipAlternatingCapture=skipInitialAlternatingCapture
         ||settlingAlternatingPipeline||(aerSourceMode&&!aerSourceQualified);
-    s.vk.resetCommandBuffer(s.commandBuffer,0);
+    auto abortCommandRecording=[&](const char*operation,VkResult failure){
+        if(freshAerHands)s.freshHandsWorldValid=false;
+        for(int e=0;e<2;++e)if(s.eyeImageStates[e].owned()&&xi[e]<s.eyes[e].initialized.size())
+            s.eyes[e].initialized[xi[e]]=false;
+        if(s.hudImageState.owned()&&hudImageIndex<s.hudQuad.initialized.size())
+            s.hudQuad.initialized[hudImageIndex]=false;
+        invalidateAlternatingStereoHistory(true);
+        s.handRenderer.finishSceneIntegratedFrame();
+        releaseAcquiredEyeImages();
+        if(s.hudImageState.owned())releaseImageChecked(s.hudQuad.handle,s.hudImageState);
+        log(std::string(operation)+" failed "+std::to_string(failure));
+        endEmptyFrame(std::string(operation)+"-failed");
+    };
+    kharvox::CommandRecordingState commandRecording;
+    const VkResult resetResult=s.vk.resetCommandBuffer(s.commandBuffer,0);
+    if(!commandRecording.reset(resetResult==VK_SUCCESS)){abortCommandRecording("reset-command-buffer",resetResult);return;}
     VkCommandBufferBeginInfo cbi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     cbi.flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    s.vk.beginCommandBuffer(s.commandBuffer,&cbi);
+    const VkResult beginCommandResult=s.vk.beginCommandBuffer(s.commandBuffer,&cbi);
+    if(!commandRecording.begun(beginCommandResult==VK_SUCCESS)){abortCommandRecording("begin-command-buffer",beginCommandResult);return;}
     if(sfsBackend){
         if(!s.sfsCopyTiming.pool){
             VkPhysicalDeviceProperties properties{};s.vk.getPhysicalDeviceProperties(s.physical,&properties);
@@ -5093,7 +5208,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
                 rightHandPose,handVisibility,currentHandGameplay);
         eye.initialized[xi[e]]=true;
     }
-    if(hudImageAcquired){
+    if(s.hudImageState.releasable()){
         VkImage hudDestination=s.hudQuad.images[hudImageIndex].image;
         const VkImageLayout previousDestinationLayout=s.hudQuad.initialized[hudImageIndex]
             ?VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:VK_IMAGE_LAYOUT_UNDEFINED;
@@ -5169,7 +5284,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
     kharvox::native::endOwnerGpuTiming(nativeOwnerGpuSpan);
     if(sfsBackend)s.sfsCopyTiming.end(s.commandBuffer);
     const VkResult copyRecordResult=s.vk.endCommandBuffer(s.commandBuffer);
-    if(nativeFrameValid&&copyRecordResult!=VK_SUCCESS)kharvox::native::fail("Native XR copy command recording failed; resources retained");
+    if(!commandRecording.ended(copyRecordResult==VK_SUCCESS)){abortCommandRecording("end-command-buffer",copyRecordResult);return;}
     VkSemaphore afwSignalSemaphore{};uint64_t afwSignalValue{};const bool afwSignalPrepared=false;
     std::vector<VkSemaphore> submitWaits;if(p->waitSemaphoreCount)submitWaits.assign(p->pWaitSemaphores,p->pWaitSemaphores+p->waitSemaphoreCount);if(afwPrepared)submitWaits.push_back(afwWaitSemaphore);
     std::vector<VkPipelineStageFlags> waitStages(submitWaits.size(),VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
@@ -5182,7 +5297,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
     // before release/endFrame, then prove completion before reusing parameters,
     // command buffers or hand attachments. Readbacks keep synchronous retirement.
     const bool earlyReleaseRequested=(!sfsBackend||sourceRingBackend)&&kharvox::rendererDefaults::earlyXrRelease;
-    const bool nativePairReady=nativeFrameValid&&updateEyeSwapchains&&eyeImageAcquired[0]&&eyeImageAcquired[1];
+    const bool nativePairReady=nativeFrameValid&&updateEyeSwapchains&&s.eyeImageStates[0].releasable()&&s.eyeImageStates[1].releasable();
     const bool queueSynchronized=queueAccessLockCallback&&queueAccessUnlockCallback;
     const bool readbackRecorded=nativeXrCaptureRecorded||nativeWatchRecorded||eyeCaptureRecorded
         ||rawEyeCaptureRecorded[0]||rawEyeCaptureRecorded[1];
@@ -5243,7 +5358,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
         if(nativeFrameValid)kharvox::native::fail("owner native copy submission failed; restart required");
         s.handRenderer.finishSceneIntegratedFrame();
         releaseAcquiredEyeImages();
-        if(hudImageAcquired){XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};s.releaseImage(s.hudQuad.handle,&ri);}
+        if(s.hudImageState.owned())releaseImageChecked(s.hudQuad.handle,s.hudImageState);
         log("copy submit failed "+std::to_string(submitResult));endEmptyFrame("copy-submit-failed");return;
     }
     if(steamRuntime){QueryPerformanceCounter(&copyWaitEnd);steamCopyWaitMs=performanceMilliseconds(copyWaitStart,copyWaitEnd);}
@@ -5253,7 +5368,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
         if(freshAerHands)s.freshHandsWorldValid=false;
         if(nativeFrameValid)kharvox::native::fail("owner native copy completion failed; restart required");
         releaseAcquiredEyeImages();
-        if(hudImageAcquired){XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};s.releaseImage(s.hudQuad.handle,&ri);}
+        if(s.hudImageState.owned())releaseImageChecked(s.hudQuad.handle,s.hudImageState);
         log(std::string(copyCompletion?"copy fence wait failed ":"copy queue wait failed ")+std::to_string(completionResult));endEmptyFrame("copy-completion-failed");return;
     }
     if(!earlyRelease){
@@ -5269,7 +5384,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
     if(!copyLifetime.canReleaseImages())kharvox::native::fail("XR images released before ordered copy submission");
     if(nativeFrameValid)QueryPerformanceCounter(&nativeReleaseAt);
     releaseAcquiredEyeImages();
-    if(hudImageAcquired)releaseImageChecked(s.hudQuad.handle);
+    if(s.hudImageState.owned())releaseImageChecked(s.hudQuad.handle,s.hudImageState);
 
     if(nativeFrameValid)QueryPerformanceCounter(&nativeReleaseDone);
     if(freshWorldPairRecorded){
@@ -5528,7 +5643,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
     ei.environmentBlendMode=XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
     // Never submit uninitialized/mislabelled projection images while priming.
     // Keep the frame lifecycle and future eye programming running.
-    ei.layerCount=(aerSourceMode&&!s.steamXrAerPairReady)
+    ei.layerCount=imageReleaseFailed||(aerSourceMode&&!s.steamXrAerPairReady)
         ||(nativeBackend&&!s.quadMode&&!nativeFrameValid)?0:layerCount;
     ei.layers=layers.data();
     const std::string layerReason=hudImageCopied?"projection+hud-quad":(s.quadMode?"quad-layer":"projection-layer");

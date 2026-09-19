@@ -602,7 +602,7 @@ void __fastcall offhandHudCanvasSize(void* entity,int width,int height,float ext
             if(pending.surface>=0&&pending.surface<2){
                 auto& state=visible[pending.surface];
                 state=measured&&kharvox::offhandHudNearVisible(state,nearest,
-                    std::max(10.f,.15f*hudWorldUnitsPerMeter),.02f*hudWorldUnitsPerMeter);
+                    .04f*hudWorldUnitsPerMeter,.005f*hudWorldUnitsPerMeter);
                 show=state;
             }
         }

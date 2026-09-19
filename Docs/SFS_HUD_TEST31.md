@@ -51,3 +51,13 @@ Calibration, native-owner filtering and free SFS AA remain unchanged.
 Tests verify immutable centers, tilted corner depth and hide/restore hysteresis.
 123 CTests and launcher self-test passed. Headset confirmation is pending.
 
+
+## Test 35 - Metric near-field HUD stereo
+Test34 rejected whole panels below 10 units (25.4 cm) plus corner extent.
+Recognize perspective UI by nonzero spatial MVP-W row; retain eye translation
+for all its vertices at near depths. Constant-W overlays retain the old rule.
+Camera safety now hides panels only below 4 cm nearest-corner depth, with a
+0.5 cm recovery margin. No pose translation or calibration changes.
+123 CTests, launcher self-test and 23 actual UI shader compilations passed.
+Headset confirmation, including flat overlay behavior, remains pending.
+

@@ -42,7 +42,7 @@ int main(int argc,char** argv){try{
         }
         if(i==2){
             const auto fov=ui.glsl.find("gl_Position = khSfsProjection.clipFromCenter[gl_ViewIndex] * gl_Position;");
-            const auto ipd=ui.glsl.find("if (gl_Position.w > 8.0) gl_Position += khSfsProjection.eyeTranslation[gl_ViewIndex];");
+            const auto ipd=ui.glsl.find(".xyz) > 0.00000001 || gl_Position.w > 8.0) gl_Position += khSfsProjection.eyeTranslation[gl_ViewIndex];");
             check(fov!=std::string::npos&&ipd!=std::string::npos&&fov<ipd);
         }
     }

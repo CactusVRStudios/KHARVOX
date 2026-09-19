@@ -196,7 +196,17 @@ CompiledShader compileStereoShader(const std::vector<uint32_t>& original,const S
             // asymmetric FOV transform. Equal clip coordinates in both eyes
             // are different viewing rays and cause binocular double images.
             source+="gl_Position = khSfsProjection.clipFromCenter[gl_ViewIndex] * gl_Position;\n";
-            if(result.screenSpaceUiApplied)source+="if (gl_Position.w > 8.0) ";
+            if(result.screenSpaceUiApplied){
+                // Perspective HUD has a spatial clip-W row even at short depth.
+                // Classify it per draw, not per vertex: an arm panel must not
+                // switch stereo off as individual corners cross the old band.
+                std::smatch metricRow;
+                static const std::regex row(R"((\b[A-Za-z_]\w*\.mvpmatrixw)\b)");
+                if(std::regex_search(source,metricRow,row)){
+                    const auto w=metricRow[1].str();
+                    source+="if (dot("+w+".xyz, "+w+".xyz) > 0.00000001 || gl_Position.w > 8.0) ";
+                } else source+="if (gl_Position.w > 8.0) ";
+            }
             source+="gl_Position += khSfsProjection.eyeTranslation[gl_ViewIndex];\n";
         }
         source+="}\n";

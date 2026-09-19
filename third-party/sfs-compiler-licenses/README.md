@@ -1,4 +1,4 @@
-## Optional SFS shader compiler (0.96 prototype)
+## SFS shader compiler
 
 The optional `KHARVOX_BUILD_SFS_COMPILER` build statically links unmodified
 SPIRV-Cross core/GLSL libraries (KhronosGroup/SPIRV-Cross,
@@ -18,4 +18,5 @@ pinned sources and retain the matching notices.
 
 The local DOOM shader capture and the user-provided shader replacement profile
 are test inputs, not part of this source distribution. The native SFS layer
-does not load the Vk3DVision provider DLL.
+does not load an external stereo provider DLL. Profile provenance and its
+retained notice are documented in `Docs/THIRD_PARTY_NOTICES.txt`.

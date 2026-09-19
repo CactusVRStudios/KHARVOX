@@ -110,11 +110,15 @@ copyright (c) 2015-2026 Baldur Karlsson. Its full notice is included in
 `src/native/upstream/RENDERDOC-LICENSE.txt` and in the runtime package.
 
 
-Optional local Single-Frame Stereo provider: Vk3DVision
+SFS external shader-profile provenance
 https://github.com/helifax/Vk3DVision-Public
 Original provider author: Octavian Mihai Vasilovici (Helifax).
-KHARVOX integration is independent and is not endorsed by the author.
-The external DOOM shader profile is user-supplied and not part of this source distribution.
+KHARVOX implements its own Vulkan/OpenXR runtime and does not load the provider DLL.
+Local SFS packages still use compiled replacements from the user-supplied DOOM
+shader profile. These are not part of this source distribution. The original
+notice is retained while this profile remains in use; compiler transformations
+and AMD support do not establish that its contents were independently authored.
+KHARVOX is not endorsed by the original author.
 
 BSD 3-Clause License
 

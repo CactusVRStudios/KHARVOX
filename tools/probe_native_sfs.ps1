@@ -12,7 +12,7 @@ param(
     [switch]$NativeViewmodel
 )
 $ErrorActionPreference='Stop'
-# Local developer prototype, not the external Vk3DVision binary probe.
+# Bounded local test of the KHARVOX SFS renderer.
 # Runtime must contain a layer built with KHARVOX_BUILD_SFS_COMPILER=ON.
 $Runtime=(Resolve-Path -LiteralPath $Runtime).Path
 $Game=(Resolve-Path -LiteralPath $Game).Path

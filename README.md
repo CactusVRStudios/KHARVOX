@@ -6,7 +6,7 @@
 
 KHARVOX is a total VR conversion for DOOM (2016). It adds room-scale 6DoF movement, tracked motion-controller input and stereoscopic VR rendering to the original campaign.
 
-> KHARVOX 0.5 Beta includes updated left- and right-hand calibration defaults, hands and weapons at 77% of their original size, and the integrated VR intro. The launcher displays the release version and replays the VR intro after an upgrade to a newer release. A legally acquired, complete PC version of DOOM (2016) is required. The game and its assets are not included.
+> The local 0.96 baseline uses SFS by default, with AER as fallback. Life and Ammo HUD panels can follow the offhand and be calibrated independently in game. A legal Steam version of DOOM (2016) is required. The game and its assets are not included.
 
 ## Installation
 
@@ -25,7 +25,7 @@ Keep all extracted KHARVOX files together in the same folder. Start DOOM through
 
 #### Known issues and limitations
 
-**Native Stereo rendering is highly experimental and is not currently recommended. Work is ongoing to improve its integration. Use AER for the recommended experience.**
+**Works only with a legal Steam version of Doom 2016**
 
 KHARVOX has been tested with the Steam release of DOOM (2016). It changes the game's rendering, camera and controls, so compatibility or startup issues may occur. Some hardware, including AMD graphics cards and less common headsets, may need additional setup. If a launch fails, close any remaining DOOM window and select **Launch Game** again.
 
@@ -33,7 +33,7 @@ Changing graphics quality while a level is loaded can freeze or crash the game. 
 
 #### Best practice
 
-- Set your headset to the highest refresh rate it supports; **90 Hz or higher is recommended**.
+- Use the **SFS** renderer. If it causes problems, select **AER** as fallback.
 - Quest headsets should use Virtual Desktop or Meta Quest Link.
 - Keep the DOOM game window in focus while playing. The launcher makes one focus attempt when the DOOM window becomes available and does not repeatedly reclaim focus. Click the status line beneath the launch button to bring a running game to the foreground manually.
 
@@ -143,9 +143,9 @@ Projects an aiming line from the rendered muzzle of supported firearms. It has n
 
 ### Rendering
 
-**Native Stereo rendering is highly experimental and is not currently recommended. Work is ongoing to improve its integration. AER is the recommended renderer.**
+**SFS is the default renderer for all profiles and first launch. AER remains available as fallback.**
 
-AER is the default renderer. Native Stereo Experimental renders both current eyes and shares the HUD, Cine Window and optional FSR upscaling. Native cutscenes use the Cine Window. Resolution changes require restarting the game.
+SFS produces both eye views from one game frame through the KHARVOX Vulkan render path and submits them through OpenXR. Menus use the shared quad presentation. HUD, cinematic options and FSR are managed by the launcher. Resolution changes require restarting the game. See [SFS development and build notes](Docs/VULKAN_SFS_096.md).
 
 #### Render Scale
 
@@ -153,7 +153,7 @@ Render scale adjusts the resolution used to render the game. Higher values can i
 
 #### FSR Upscaling
 
-- With Meta XR, VDXR or SteamVR, select the recommended AER renderer, choose a Render Scale below 100%, and enable **Use FSR Upscaling**.
+- With Meta XR, VDXR or SteamVR, select the default SFS renderer, choose a Render Scale below 100%, and enable **Use FSR Upscaling**.
 - Start at 80%. Lower values reduce more source-pixel work but also lose fine detail.
 - FSR remains inactive at 100% or higher. Below 100%, verify **FSR1 active** in the launcher status line.
 

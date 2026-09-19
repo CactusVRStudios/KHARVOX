@@ -1,3 +1,9 @@
+# Archived development history
+
+Historical experiments and evidence, not current build instructions.
+For the current renderer see ../VULKAN_SFS_096.md. References to removed
+provider tools describe past experiments preserved in Git history.
+
 # Native SFS reconstruction, 2026-09-17
 
 This is an implementation milestone, **not a playable VR renderer**. Branch:

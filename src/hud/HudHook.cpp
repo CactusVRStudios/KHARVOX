@@ -580,11 +580,19 @@ HudCanvasSizeFn originalHudCanvasSize{};
 void __fastcall offhandHudCanvasSize(void* entity,int width,int height,float extentX,float extentY){
     const auto image=reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
     const auto caller=reinterpret_cast<uintptr_t>(_ReturnAddress())-image;
-    const auto pending=offhandCanvasSubmission;
+    auto pending=offhandCanvasSubmission;
     offhandCanvasSubmission={};
     const bool suppressed=caller==0xF922A7&&suppressedOffhandCanvas==entity&&width==512&&height==300;
     suppressedOffhandCanvas=nullptr;
     if(suppressed){originalHudCanvasSize(entity,width,height,0,0);return;}
+    if(caller==0xF922A7&&pending.entity==entity&&width==512&&height==300){
+        float eye[3]{},headAxis[9]{};
+        if(!KharvoxCameraGetHudCenterRenderPose(eye,headAxis)
+            ||!kharvox::keepOffhandHudInFront(pending.center,pending.axis,pending.width,
+                float(width)/float(height),eye,headAxis,std::max(10.f,.15f*hudWorldUnitsPerMeter))){
+            originalHudCanvasSize(entity,width,height,0,0);return;
+        }
+    }
     float origin[3]{};
     const bool owned=caller==0xF922A7&&pending.entity==entity&&width==512&&height==300
         &&kharvox::centeredOffhandHud(pending.center,pending.axis,pending.width,
@@ -3177,7 +3185,8 @@ bool KharvoxHudPrepareOriginTransform(void* intermediateEntity, float* nativeOri
     // before excluding native movie layout from our HUD transforms.
     observeHudMovie(reinterpret_cast<void*>(current),"HUD-draw");
     if(KharvoxHudMovieActive())return false;
-    if (!writableRange(reinterpret_cast<void*>(current + 0x60), 0x34)
+    if (!readableRange(reinterpret_cast<void*>(current),sizeof(uintptr_t))
+        || !writableRange(reinterpret_cast<void*>(current + 0x60), 0x34)
         || !readableRange(reinterpret_cast<void*>(current + 0x20), 0x28)) return false;
     const auto capturedCrosshair = static_cast<uintptr_t>(InterlockedCompareExchange64(
         &capturedCrosshairContext, 0, 0));
@@ -3199,6 +3208,7 @@ bool KharvoxHudPrepareOriginTransform(void* intermediateEntity, float* nativeOri
     int diagnosticHeight{};
     int diagnosticScaleMilli{};
     int flatProfileIndex{-1};
+    int ownedHandSurface{-1};
     HudProfileAdjustment profileAdjustment{};
 
     if (!crosshair) {
@@ -3234,8 +3244,11 @@ bool KharvoxHudPrepareOriginTransform(void* intermediateEntity, float* nativeOri
         diagnosticWidth = profile.width;
         diagnosticHeight = profile.height;
         diagnosticScaleMilli = profile.scaleMilli;
+        const auto ownerVtable=*reinterpret_cast<const uintptr_t*>(current);
+        ownedHandSurface=kharvox::ownedOffhandHudSurface(ownerVtable>=image?ownerVtable-image:0,
+            profile.callerRva,profile.width,profile.height,profile.scaleMilli);
         bool managedOffhand=false;
-        if(offhandCanvasHookReady&&kharvox::offhandHudSurface(profile.callerRva,profile.width,profile.height,profile.scaleMilli)>=0){
+        if(offhandCanvasHookReady&&ownedHandSurface>=0){
             std::lock_guard<std::mutex> guard(offhandHudMutex);
             managedOffhand=offhandHudConfig.enabled||offhandCalibrationActive.load();
         }
@@ -3329,7 +3342,7 @@ bool KharvoxHudPrepareOriginTransform(void* intermediateEntity, float* nativeOri
             profileAdjustment)) return false;
 
     bool offhand=false;float offhandAxis[9]{};float offhandScale=1;
-    const int handSurface=kharvox::offhandHudSurface(diagnosticCallerRva,diagnosticWidth,diagnosticHeight,diagnosticScaleMilli);
+    const int handSurface=ownedHandSurface;
     if(offhandCanvasHookReady&&!crosshair&&!offscreen&&handSurface>=0){
         kharvox::OffhandHudConfig config;{std::lock_guard<std::mutex> lock(offhandHudMutex);config=offhandHudConfig;}
         float grip[3]{},handAxis[9]{};

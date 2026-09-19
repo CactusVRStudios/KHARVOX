@@ -14,6 +14,26 @@ bool near(float left, float right) {
 
 int main() {
     using namespace kharvox;
+    {
+        if(ownedOffhandHudSurface(0x2240978,0xbdcf54,512,300,83)!=0)return 125;
+        if(ownedOffhandHudSurface(0x2240888,0xbdcf54,512,300,100)!=1)return 126;
+        for(auto owner:{uintptr_t(0),uintptr_t(0x22425d0),uintptr_t(0x2240a68),uintptr_t(0x22412e0)})
+            for(int scale:{83,100})if(ownedOffhandHudSurface(owner,0xbdcf54,512,300,scale)!=-1)return 127;
+        if(ownedOffhandHudSurface(0x2240978,0xbdcf54,512,300,100)!=-1)return 128;
+        const float eye[3]{},forward[3]{1,0,0};
+        const float axis[9]{0,1,0,0,0,1,1,0,0};float center[3]{5,2,3};
+        if(!keepOffhandHudInFront(center,axis,20,2,eye,forward,10)||!near(center[0],10)
+            ||!near(center[1],2)||!near(center[2],3))return 129;
+        center[0]=40;
+        if(!keepOffhandHudInFront(center,axis,20,2,eye,forward,10)||!near(center[0],40))return 130;
+        const float tilted[9]{1,1,0,-1,1,0,0,0,1};center[0]=5;
+        if(!keepOffhandHudInFront(center,tilted,20,2,eye,forward,10))return 131;
+        // All four corners of a tilted panel stay beyond the same depth limit.
+        for(int x:{-1,1})for(int y:{-1,1})
+            if(center[0]+x*10/std::sqrt(2.f)-y*5/std::sqrt(2.f)<9.999f)return 132;
+        const float zero[9]{};
+        if(keepOffhandHudInFront(center,zero,20,2,eye,forward,10))return 133;
+    }
 
     {
         OffhandHudRenderFrame frame;

@@ -28,6 +28,32 @@ inline int offhandHudSurface(uintptr_t caller,int width,int height,int scale){
     if(caller!=0xbdcf54||width!=512||height!=300)return -1;
     return scale==83?0:scale==100?1:-1;
 }
+inline int ownedOffhandHudSurface(uintptr_t ownerVtable,uintptr_t caller,int width,int height,int scale){
+    const int surface=offhandHudSurface(caller,width,height,scale);
+    // Exact native managers: Hud_BottomLeft and Hud_WeaponInfo. Objective
+    // and challenge managers can share canvas dimensions and scale.
+    return (surface==0&&ownerVtable==0x2240978)
+        ||(surface==1&&ownerVtable==0x2240888)?surface:-1;
+}
+// Keep every corner beyond the screen-UI depth switch and camera near plane.
+// Only translate along view-forward, preserving calibrated size/rotation.
+inline bool keepOffhandHudInFront(float* center,const float* axis,float width,float aspect,
+    const float* eye,const float* forward,float minimumDepth){
+    if(!std::isfinite(width)||width<=0||!std::isfinite(aspect)||aspect<=0
+        ||!std::isfinite(minimumDepth)||minimumDepth<=0)return false;
+    float depth=0,radius=0,norm=0;
+    for(int i=0;i<3;++i){if(!std::isfinite(center[i])||!std::isfinite(eye[i])||!std::isfinite(forward[i]))return false;
+        depth+=(center[i]-eye[i])*forward[i];norm+=forward[i]*forward[i];}
+    if(std::abs(norm-1.f)>.01f)return false;
+    for(int row=0;row<2;++row){float length=0,dot=0;
+        for(int i=0;i<3;++i){const float v=axis[row*3+i];if(!std::isfinite(v))return false;length+=v*v;dot+=v*forward[i];}
+        if(length<1e-10f)return false;
+        radius+=.5f*(row?width/aspect:width)*std::abs(dot)/std::sqrt(length);
+    }
+    const float shift=minimumDepth+radius-depth;
+    if(shift>0)for(int i=0;i<3;++i)center[i]+=forward[i]*shift;
+    return true;
+}
 inline bool readOffhandHudConfig(std::istream& stream,OffhandHudConfig& out){
     int version{},enabled{};OffhandHudConfig value;
     if(!(stream>>version>>enabled)||(version!=1&&version!=2)||(enabled!=0&&enabled!=1))return false;

@@ -541,7 +541,6 @@ internal static class KharvoxRunner
                 "[KHARVOX][LAUNCHER] build=" + BuildId + " runtimeDir=" + runtimeDir +
                 " requestedRenderer=" + options.RendererMode +
                 " nativeAttempt=" + nativeStereoEnabled +
-                " previousNativeFailure=\"" + (previousNativeFailure ?? "none") + "\"" +
                 " twoHandMode=" + (options.TwoHandCalibration ? "calibration" : "gameplay-test") +
                 " calibrationWeapon=" + options.TwoHandCalibrationWeapon +
                 " backWeapon=" + options.BackWeapon +

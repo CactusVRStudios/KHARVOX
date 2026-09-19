@@ -787,6 +787,7 @@ internal sealed class InfoForm : Form
         AddBullet(page, "Keep the DOOM game window in focus while playing.");
         AddColumnBreak(page);
         AddHeading(page, "Limitations");
+        AddParagraph(page, "Works only with a legal Steam version of Doom 2016", Color.Gainsboro, true);
         AddParagraph(page,
             "KHARVOX changes the game's rendering, camera and controls, so compatibility or startup issues may occur. Some hardware, including AMD graphics cards and less common headsets, may need additional setup. If a launch fails, close any remaining DOOM window and try Launch Game again.");
         AddHeading(page, "Community support");

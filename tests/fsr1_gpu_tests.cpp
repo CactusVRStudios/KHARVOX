@@ -10,6 +10,35 @@
 
 static void check(bool value,const char* reason){if(!value)throw std::runtime_error(reason);}
 static void ok(VkResult value){check(value==VK_SUCCESS,"Vulkan operation failed");}
+namespace kharvox::native {
+[[noreturn]] void fail(const char* reason){throw std::runtime_error(reason);}
+}
+static void handleCopySubmitResult(Fsr1Upscaler& fsr,VkResult submitResult){
+    struct Hands {void finishSceneIntegratedFrame(){}};
+    struct ImageState {bool owned()const{return false;}};
+    struct Hud {std::uintptr_t handle{};};
+    struct State {
+        Fsr1Upscaler& fsr1;
+        bool freshHandsWorldValid{true};
+        Hands handRenderer;
+        ImageState hudImageState;
+        Hud hudQuad;
+    } s{fsr};
+    const bool freshAerHands=false,nativeFrameValid=false;
+    const auto releaseAcquiredEyeImages=[]{};
+    const auto releaseImageChecked=[](std::uintptr_t,ImageState&){};
+    const auto log=[](const std::string&){};
+    const auto endEmptyFrame=[](const char*){};
+#include "../src/openxr/XrCopySubmitFailure.inc"
+}
+static VkResult injectedSubmitResult{VK_SUCCESS};
+static unsigned rejectedSubmits{};
+static VkResult VKAPI_CALL rejectCopySubmit(VkQueue queue,uint32_t count,const VkSubmitInfo* submits,VkFence){
+    check(queue&&count==1&&submits&&submits[0].commandBufferCount==1,
+        "Expected a recorded copy submission");
+    ++rejectedSubmits;
+    return injectedSubmitResult;
+}
 static PFN_vkCmdDispatch dispatchCompute{};
 static unsigned dispatchCount{};
 static void VKAPI_CALL countedDispatch(VkCommandBuffer cb,uint32_t x,uint32_t y,uint32_t z){
@@ -155,7 +184,19 @@ int main(){try{
                 check(fsr.record(cb,source[e],e,frame,{0,0,64,36},{width,height})!=VK_NULL_HANDLE,"Abandoned recording failed");
             }
             ok(vkEndCommandBuffer(cb));
-            fsr.discardRecordedFrame();
+            if(frame==1){
+                fsr.discardRecordedFrame();
+            }else{
+                const auto savedSubmit=dispatch.queueSubmit;
+                dispatch.queueSubmit=rejectCopySubmit;
+                injectedSubmitResult=frame==2?VK_ERROR_OUT_OF_HOST_MEMORY:VK_ERROR_OUT_OF_DEVICE_MEMORY;
+                VkSubmitInfo rejected{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+                rejected.commandBufferCount=1;rejected.pCommandBuffers=&cb;
+                const auto result=dispatch.queueSubmit(queue,1,&rejected,VK_NULL_HANDLE);
+                check(result==injectedSubmitResult,"Copy submission did not return injected OOM");
+                handleCopySubmitResult(fsr,result);
+                dispatch.queueSubmit=savedSubmit;
+            }
             dispatchCount=undefinedTransitions=0;
             ok(vkResetCommandBuffer(cb,0));VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};ok(vkBeginCommandBuffer(cb,&begin));
             std::array<std::array<float,3>,2> colors{{{0.1f*float(frame),0.2f,0.7f},{0.8f,0.1f*float(frame),0.1f}}};
@@ -163,6 +204,7 @@ int main(){try{
             for(int e=0;e<2;++e){transition(source[e],frame==1?VK_IMAGE_LAYOUT_UNDEFINED:VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
                 VkClearColorValue color{{colors[e][0],colors[e][1],colors[e][2],1}};VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};vkCmdClearColorImage(cb,source[e],VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,&color,1,&range);transition(source[e],VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
                 outputs[e]=fsr.record(cb,source[e],e,frame,{0,0,64,36},{width,height});check(outputs[e],"FSR output missing");
+                handleCopySubmitResult(fsr,VK_SUCCESS);
                 check(fsr.record(cb,source[e],e,frame,{0,0,64,36},{width,height})==outputs[e],"Same-eye revision reuse failed");
                 VkBufferImageCopy copy{};copy.bufferOffset=bytes*e;copy.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};copy.imageExtent={width,height,1};vkCmdCopyImageToBuffer(cb,outputs[e],VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,readback,1,&copy);
             }
@@ -176,9 +218,10 @@ int main(){try{
                 check(std::abs(int(data[bytes*e+4*(y*width+x)+c])-int(std::lround(colors[e][c]*255)))<=4,"FSR current-eye color/revision mismatch");
             vkUnmapMemory(device,host);
         }
-        std::cout<<"format "<<format<<": 3 discarded recordings recovered, distinct outputs, cached reuse, EASU+RCAS readback passed\n";
+        std::cout<<"format "<<format<<": abandoned recording and host/device OOM submissions recovered; same-revision EASU+RCAS, UNDEFINED layouts, cached reuse and both eye readbacks passed\n";
         fsr.releaseAfterCompletion();
         for(int e=0;e<2;++e){vkDestroyImage(device,source[e],nullptr);vkFreeMemory(device,sourceMemory[e],nullptr);}
     }
+    check(rejectedSubmits==8,"Missing OOM submission coverage");
     vkDestroyBuffer(device,readback,nullptr);vkFreeMemory(device,host,nullptr);vkDestroyCommandPool(device,pool,nullptr);vkDestroyDevice(device,nullptr);vkDestroyInstance(instance,nullptr);FreeLibrary(loader);return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

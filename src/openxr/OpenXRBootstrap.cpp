@@ -5354,14 +5354,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
         kharvox::native::fail("GPU device lost during owner copy; see native_gpu_failure log");
     };
     reportNativeDeviceLost("queueSubmit",submitResult);
-    if(submitResult!=VK_SUCCESS){
-        if(freshAerHands)s.freshHandsWorldValid=false;
-        if(nativeFrameValid)kharvox::native::fail("owner native copy submission failed; restart required");
-        s.handRenderer.finishSceneIntegratedFrame();
-        releaseAcquiredEyeImages();
-        if(s.hudImageState.owned())releaseImageChecked(s.hudQuad.handle,s.hudImageState);
-        log("copy submit failed "+std::to_string(submitResult));endEmptyFrame("copy-submit-failed");return;
-    }
+#include "XrCopySubmitFailure.inc"
     if(steamRuntime){QueryPerformanceCounter(&copyWaitEnd);steamCopyWaitMs=performanceMilliseconds(copyWaitStart,copyWaitEnd);}
     if(!earlyRelease)copyLifetime.completed(completionResult==VK_SUCCESS);
     if(!earlyRelease)reportNativeDeviceLost(copyCompletion?"waitForFences":"queueWaitIdle",completionResult);

@@ -31,3 +31,28 @@ Temporarily omitting invalidation made the test fail with
 `Discarded output reused or valid output recomputed`; restoring it passed.
 Raw diff and `git diff --check` passed. This exercises real FSR GPU work, not
 in-game error injection or headset frametimes. No performance gain is claimed.
+
+## P1 Follow-Up: Failed Copy Submission Kept Recorded FSR State
+
+The recording-abort fix did not cover a successful `vkEndCommandBuffer` followed
+by a failed `vkQueueSubmit`. A host/device OOM submission can leave GPU resources
+untouched while FSR retains the revision and layouts advanced during recording.
+A retry could then reuse output that the GPU never produced.
+
+The copy-submit failure handler now calls `discardRecordedFrame` before cleanup
+or the existing native fail-fast path. The handler lives in
+`XrCopySubmitFailure.inc` so the GPU regression executes the production branch
+with stubbed XR cleanup. Wait failures after successful submission keep their
+existing recovery policy; this change adds no GPU waits or resource destruction.
+
+The GPU test injects host and device OOM through the copy-submit dispatch after
+successful command-buffer recording. Each retry uses the same source revision
+and checks four EASU/RCAS dispatches, six UNDEFINED transitions, valid cache reuse
+and both eye readbacks across RGBA/BGRA UNORM/SRGB. The injected call never reaches
+the driver. Removing the production invalidation reproduced
+`Discarded output reused or valid output recomputed` on the RTX 4090.
+
+With invalidation restored, the SPS compiler-enabled MSVC x64 Release build and
+all 131 CTests passed. This run used the PR #4 branch, without PRs #3 and #5-#7.
+Build diagnostics were limited to macro redefinitions and test assertion
+flag overrides. No live game OOM injection or headset validation was performed.

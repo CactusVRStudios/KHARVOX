@@ -407,6 +407,13 @@ void Fsr1Upscaler::releaseAfterCompletion() {
     *impl_ = Impl{};
 }
 
+void Fsr1Upscaler::discardRecordedFrame() {
+    for (auto& image : impl_->input) image.initialized = false;
+    for (auto& image : impl_->easu) image.initialized = false;
+    for (auto& image : impl_->output) image.initialized = false;
+    impl_->processedRevision = {};
+}
+
 VkImage Fsr1Upscaler::record(VkCommandBuffer commandBuffer, VkImage source,
                              int eye, std::uint64_t sourceRevision,
                              Fsr1SourceRect sourceRect,

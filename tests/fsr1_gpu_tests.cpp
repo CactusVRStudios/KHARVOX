@@ -10,6 +10,49 @@
 
 static void check(bool value,const char* reason){if(!value)throw std::runtime_error(reason);}
 static void ok(VkResult value){check(value==VK_SUCCESS,"Vulkan operation failed");}
+namespace kharvox::native {
+[[noreturn]] void fail(const char* reason){throw std::runtime_error(reason);}
+}
+static void handleCopySubmitResult(Fsr1Upscaler& fsr,VkResult submitResult){
+    struct Hands {void finishSceneIntegratedFrame(){}};
+    struct ImageState {bool owned()const{return false;}};
+    struct Hud {std::uintptr_t handle{};};
+    struct State {
+        Fsr1Upscaler& fsr1;
+        bool freshHandsWorldValid{true};
+        Hands handRenderer;
+        ImageState hudImageState;
+        Hud hudQuad;
+    } s{fsr};
+    const bool freshAerHands=false,nativeFrameValid=false;
+    const auto releaseAcquiredEyeImages=[]{};
+    const auto releaseImageChecked=[](std::uintptr_t,ImageState&){};
+    const auto log=[](const std::string&){};
+    const auto endEmptyFrame=[](const char*){};
+#include "../src/openxr/XrCopySubmitFailure.inc"
+}
+static VkResult injectedSubmitResult{VK_SUCCESS};
+static unsigned rejectedSubmits{};
+static VkResult VKAPI_CALL rejectCopySubmit(VkQueue queue,uint32_t count,const VkSubmitInfo* submits,VkFence){
+    check(queue&&count==1&&submits&&submits[0].commandBufferCount==1,
+        "Expected a recorded copy submission");
+    ++rejectedSubmits;
+    return injectedSubmitResult;
+}
+static PFN_vkCmdDispatch dispatchCompute{};
+static unsigned dispatchCount{};
+static void VKAPI_CALL countedDispatch(VkCommandBuffer cb,uint32_t x,uint32_t y,uint32_t z){
+    ++dispatchCount;
+    dispatchCompute(cb,x,y,z);
+}
+static PFN_vkCmdPipelineBarrier imageBarrier{};
+static unsigned undefinedTransitions{};
+static void VKAPI_CALL countedBarrier(VkCommandBuffer cb,VkPipelineStageFlags src,VkPipelineStageFlags dst,
+    VkDependencyFlags flags,uint32_t memoryCount,const VkMemoryBarrier* memory,
+    uint32_t bufferCount,const VkBufferMemoryBarrier* buffers,uint32_t imageCount,const VkImageMemoryBarrier* images){
+    for(uint32_t n=0;n<imageCount;++n)if(images[n].oldLayout==VK_IMAGE_LAYOUT_UNDEFINED)++undefinedTransitions;
+    imageBarrier(cb,src,dst,flags,memoryCount,memory,bufferCount,buffers,imageCount,images);
+}
 int main(){try{
     auto loader=LoadLibraryW(L"vulkan-1.dll");check(loader,"Vulkan loader unavailable");
     auto gipa=reinterpret_cast<PFN_vkGetInstanceProcAddr>(GetProcAddress(loader,"vkGetInstanceProcAddr"));
@@ -92,6 +135,8 @@ int main(){try{
     dispatch.cmdBindDescriptorSets=reinterpret_cast<PFN_vkCmdBindDescriptorSets>(vkGetDeviceProcAddr(device,"vkCmdBindDescriptorSets"));
     dispatch.cmdPushConstants=reinterpret_cast<PFN_vkCmdPushConstants>(vkGetDeviceProcAddr(device,"vkCmdPushConstants"));
     dispatch.cmdDispatch=reinterpret_cast<PFN_vkCmdDispatch>(vkGetDeviceProcAddr(device,"vkCmdDispatch"));
+    dispatchCompute=dispatch.cmdDispatch;dispatch.cmdDispatch=countedDispatch;
+    imageBarrier=dispatch.cmdPipelineBarrier;dispatch.cmdPipelineBarrier=countedBarrier;
     dispatch.createRenderPass=reinterpret_cast<PFN_vkCreateRenderPass>(vkGetDeviceProcAddr(device,"vkCreateRenderPass"));
     dispatch.destroyRenderPass=reinterpret_cast<PFN_vkDestroyRenderPass>(vkGetDeviceProcAddr(device,"vkDestroyRenderPass"));
     dispatch.createFramebuffer=reinterpret_cast<PFN_vkCreateFramebuffer>(vkGetDeviceProcAddr(device,"vkCreateFramebuffer"));
@@ -132,16 +177,40 @@ int main(){try{
         for(int e=0;e<2;++e){VkImageCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};ci.imageType=VK_IMAGE_TYPE_2D;ci.format=format;ci.extent={64,36,1};ci.mipLevels=ci.arrayLayers=1;ci.samples=VK_SAMPLE_COUNT_1_BIT;ci.tiling=VK_IMAGE_TILING_OPTIMAL;ci.usage=VK_IMAGE_USAGE_TRANSFER_SRC_BIT|VK_IMAGE_USAGE_TRANSFER_DST_BIT;ok(vkCreateImage(device,&ci,nullptr,&source[e]));vkGetImageMemoryRequirements(device,source[e],&req);sourceMemory[e]=allocate(req,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);ok(vkBindImageMemory(device,source[e],sourceMemory[e],0));}
         Fsr1Upscaler fsr;check(fsr.initialize(physical,device,dispatch,format,{64,36},{width,height}),"FSR initialization failed");
         for(uint64_t frame=1;frame<=3;++frame){
+            ok(vkResetCommandBuffer(cb,0));
+            VkCommandBufferBeginInfo abandoned{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};ok(vkBeginCommandBuffer(cb,&abandoned));
+            for(int e=0;e<2;++e){
+                transition(source[e],frame==1?VK_IMAGE_LAYOUT_UNDEFINED:VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+                check(fsr.record(cb,source[e],e,frame,{0,0,64,36},{width,height})!=VK_NULL_HANDLE,"Abandoned recording failed");
+            }
+            ok(vkEndCommandBuffer(cb));
+            if(frame==1){
+                fsr.discardRecordedFrame();
+            }else{
+                const auto savedSubmit=dispatch.queueSubmit;
+                dispatch.queueSubmit=rejectCopySubmit;
+                injectedSubmitResult=frame==2?VK_ERROR_OUT_OF_HOST_MEMORY:VK_ERROR_OUT_OF_DEVICE_MEMORY;
+                VkSubmitInfo rejected{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+                rejected.commandBufferCount=1;rejected.pCommandBuffers=&cb;
+                const auto result=dispatch.queueSubmit(queue,1,&rejected,VK_NULL_HANDLE);
+                check(result==injectedSubmitResult,"Copy submission did not return injected OOM");
+                handleCopySubmitResult(fsr,result);
+                dispatch.queueSubmit=savedSubmit;
+            }
+            dispatchCount=undefinedTransitions=0;
             ok(vkResetCommandBuffer(cb,0));VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};ok(vkBeginCommandBuffer(cb,&begin));
             std::array<std::array<float,3>,2> colors{{{0.1f*float(frame),0.2f,0.7f},{0.8f,0.1f*float(frame),0.1f}}};
             std::array<VkImage,2> outputs{};
             for(int e=0;e<2;++e){transition(source[e],frame==1?VK_IMAGE_LAYOUT_UNDEFINED:VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
                 VkClearColorValue color{{colors[e][0],colors[e][1],colors[e][2],1}};VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};vkCmdClearColorImage(cb,source[e],VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,&color,1,&range);transition(source[e],VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
                 outputs[e]=fsr.record(cb,source[e],e,frame,{0,0,64,36},{width,height});check(outputs[e],"FSR output missing");
+                handleCopySubmitResult(fsr,VK_SUCCESS);
                 check(fsr.record(cb,source[e],e,frame,{0,0,64,36},{width,height})==outputs[e],"Same-eye revision reuse failed");
                 VkBufferImageCopy copy{};copy.bufferOffset=bytes*e;copy.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};copy.imageExtent={width,height,1};vkCmdCopyImageToBuffer(cb,outputs[e],VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,readback,1,&copy);
             }
             check(outputs[0]!=outputs[1],"Eye outputs alias");
+            check(dispatchCount==4,"Discarded output reused or valid output recomputed");
+            check(undefinedTransitions==6,"Discarded FSR image layout reused");
             VkMemoryBarrier hostBarrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};hostBarrier.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;hostBarrier.dstAccessMask=VK_ACCESS_HOST_READ_BIT;vkCmdPipelineBarrier(cb,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&hostBarrier,0,nullptr,0,nullptr);
             ok(vkEndCommandBuffer(cb));VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};submit.commandBufferCount=1;submit.pCommandBuffers=&cb;ok(vkQueueSubmit(queue,1,&submit,VK_NULL_HANDLE));ok(vkQueueWaitIdle(queue));
             void* mapped{};ok(vkMapMemory(device,host,0,bytes*2,0,&mapped));auto data=static_cast<const unsigned char*>(mapped);
@@ -149,9 +218,10 @@ int main(){try{
                 check(std::abs(int(data[bytes*e+4*(y*width+x)+c])-int(std::lround(colors[e][c]*255)))<=4,"FSR current-eye color/revision mismatch");
             vkUnmapMemory(device,host);
         }
-        std::cout<<"format "<<format<<": 3 current pairs, distinct outputs, EASU+RCAS readback passed\n";
+        std::cout<<"format "<<format<<": abandoned recording and host/device OOM submissions recovered; same-revision EASU+RCAS, UNDEFINED layouts, cached reuse and both eye readbacks passed\n";
         fsr.releaseAfterCompletion();
         for(int e=0;e<2;++e){vkDestroyImage(device,source[e],nullptr);vkFreeMemory(device,sourceMemory[e],nullptr);}
     }
+    check(rejectedSubmits==8,"Missing OOM submission coverage");
     vkDestroyBuffer(device,readback,nullptr);vkFreeMemory(device,host,nullptr);vkDestroyCommandPool(device,pool,nullptr);vkDestroyDevice(device,nullptr);vkDestroyInstance(instance,nullptr);FreeLibrary(loader);return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

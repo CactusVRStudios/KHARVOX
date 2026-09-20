@@ -5,10 +5,29 @@
 #include <iostream>
 #include <stdexcept>
 #include <random>
+#include <array>
 
 void require(bool value){if(!value)throw std::runtime_error("Push replay mismatch");}
 int main(){try{
     kharvox::sfs::PushReplay replay;
+    const auto combinedLayout=reinterpret_cast<VkPipelineLayout>(uintptr_t(4));
+    constexpr VkShaderStageFlags combined=VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT;
+    std::array<uint32_t,4> combinedWords{1,2,3,4};
+    replay.write(combinedLayout,combined,0,16,combinedWords.data());
+    replay.write(combinedLayout,combined,4,4,combinedWords.data());
+    replay.replay([&](auto l,auto stages,auto offset,auto size,auto){
+        require(l==combinedLayout&&offset+size<=16);
+        if(stages!=combined)throw std::runtime_error("Replay split a combined push-constant stage mask");
+    });
+    replay.clear();
+    for(uint32_t value=0;value<10000;++value){
+        replay.write(combinedLayout,combined,0,4,&value);
+        require(replay.size()==1);
+    }
+    replay.replay([&](auto,auto stages,auto,auto,const void* data){
+        require(stages==combined&&*static_cast<const uint32_t*>(data)==9999);
+    });
+    replay.clear();
     using Value=std::pair<VkPipelineLayout,uint32_t>;
     std::map<std::pair<unsigned,unsigned>,Value> reference;
     std::mt19937 random(719);
@@ -21,16 +40,18 @@ int main(){try{
         for(unsigned bit=0;bit<6;++bit)if(flags&(1u<<bit))for(unsigned n=0;n<count;++n)reference[{bit,first+n}]={layout,words[n]};
         decltype(reference) observed;
         replay.replay([&](VkPipelineLayout l,VkShaderStageFlags stage,uint32_t offset,uint32_t size,const void* values){
-            unsigned bit=0;while((1u<<bit)!=stage)++bit;
             const auto words=static_cast<const uint32_t*>(values);
-            for(unsigned n=0;n<size/4;++n)observed[{bit,offset/4+n}]={l,words[n]};
+            for(unsigned bit=0;bit<6;++bit)if(stage&(1u<<bit))
+                for(unsigned n=0;n<size/4;++n)observed[{bit,offset/4+n}]={l,words[n]};
         });
         require(reference==observed);
     }
     replay.clear();std::array<uint32_t,64> words{};
     auto layout=reinterpret_cast<VkPipelineLayout>(uintptr_t(1));
     replay.write(layout,VK_SHADER_STAGE_VERTEX_BIT,0,sizeof(words),words.data());
-    require(replay.replay([](auto,auto,auto,auto,auto){})==1);
+    unsigned calls{};
+    replay.replay([&](auto,auto,auto,auto,auto){++calls;});
+    require(calls==1);
     // Microbenchmark the removed map/function pattern, not a game FPS claim.
     volatile uint64_t checksum=0;
     const auto before=std::chrono::steady_clock::now();

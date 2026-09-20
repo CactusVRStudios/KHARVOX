@@ -17,6 +17,7 @@ class NativePushReplay {
     };
     std::vector<Write> writes;
 public:
+    void clear(){writes.clear();}
     size_t size()const{return writes.size();}
     void write(VkPipelineLayout layout,VkShaderStageFlags stages,uint32_t offset,uint32_t size,const void* data){
         if(!layout||!stages||!data||!size||((offset|size)&3u)||offset>65536||size>65536-offset)

@@ -17,7 +17,7 @@ if((Test-Path -LiteralPath $package) -or (Test-Path -LiteralPath $archive)){thro
 Expand-Archive -LiteralPath $BaselineArchive -DestinationPath $package
 # Inherit the verified integration binaries, never SDK stubs from test builds.
 & "$PSScriptRoot/verify_package_integrations.ps1" -Package $package
-foreach($name in @('enable_live_ammo_calibration','enable_xr_session','TEST-NOTES.txt')){
+foreach($name in @('enable_live_ammo_calibration','enable_xr_session','TEST-NOTES.txt','fsr1_status.txt','hand_calibration_status.txt','renderer_status.txt','two_hand_status.txt')){
     $path=Join-Path $package $name
     if(Test-Path -LiteralPath $path){Remove-Item -LiteralPath $path}
 }

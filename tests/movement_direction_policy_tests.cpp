@@ -39,5 +39,19 @@ int main() {
         MovementDirectionMode::OffHand, -15.0f, true, NAN, -1.0f, 0.0f, 0.0f);
     if (yaw.usedOffHand || !near(yaw.degrees, -15.0f)) return 9;
 
+    for(float angle:{0.f,45.f,90.f,180.f,270.f}){
+        for(float radius:{0.f,.2f,.5f,.7f,.9f,1.f}){
+            auto stick=rotateMovementStickForDirection({0,radius},angle);
+            auto fixed=fullTravelMovementStick(stick);
+            float expected=radius<=.5f?radius:std::min(1.f,.5f+(radius-.5f)*1.25f);
+            if(!near(std::hypot(fixed.x,fixed.y),expected))return 10;
+            if(!near(stick.x*fixed.y-stick.y*fixed.x,0))return 11;
+        }
+    }
+    for(int x:{-32768,-1,0,1,32767})for(int y:{-32768,-1,0,1,32767}){
+        auto packed=packMovementAxes(int16_t(x),int16_t(y));
+        if(movementAxisX(packed)!=x||movementAxisY(packed)!=y)return 12;
+    }
+    if(fullTravelMovementStick({NAN,1}).y!=0)return 13;
     return 0;
 }

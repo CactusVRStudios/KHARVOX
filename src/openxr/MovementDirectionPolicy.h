@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cmath>
+#include <algorithm>
+#include <cstdint>
 
 namespace kharvox {
 
@@ -16,6 +18,20 @@ struct MovementStick2D {
     float x{};
     float y{};
 };
+
+// Keep low-speed precision; compensate controllers that stop short of full travel.
+inline MovementStick2D fullTravelMovementStick(MovementStick2D stick) {
+    if(!std::isfinite(stick.x)||!std::isfinite(stick.y))return {};
+    const float magnitude=std::hypot(stick.x,stick.y);
+    if(magnitude<=.5f)return stick;
+    const float target=std::min(1.f,.5f+(magnitude-.5f)*1.25f);
+    return {stick.x*target/magnitude,stick.y*target/magnitude};
+}
+inline uint32_t packMovementAxes(int16_t x,int16_t y){
+    return uint32_t(uint16_t(x))|(uint32_t(uint16_t(y))<<16);
+}
+inline int16_t movementAxisX(uint32_t axes){return int16_t(axes&65535);}
+inline int16_t movementAxisY(uint32_t axes){return int16_t(axes>>16);}
 
 inline MovementDirectionHand offHandForMovement(bool leftHanded) {
     return leftHanded ? MovementDirectionHand::Right

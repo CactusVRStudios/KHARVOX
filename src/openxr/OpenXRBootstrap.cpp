@@ -290,7 +290,7 @@ alignas(4) volatile LONG immersiveAdaptiveParticipantBypass{};
 alignas(4) volatile LONG nativeAdaptiveParticipantObserved{};
 using XInputGetStateFn=DWORD(WINAPI*)(DWORD,XINPUT_STATE*);
 using XInputSetStateFn=DWORD(WINAPI*)(DWORD,XINPUT_VIBRATION*);
-XInputGetStateFn originalXInputGetState{};XInputSetStateFn originalXInputSetState{};std::atomic<SHORT> virtualLeftX{},virtualLeftY{},virtualRightX{},virtualRightY{};std::atomic<BYTE> virtualLeftTrigger{},virtualRightTrigger{};std::atomic<WORD> virtualButtons{};std::atomic<DWORD> virtualPacket{1};std::atomic<uint32_t> nativeXInputRumble{};std::atomic<uint32_t> pendingXInputRumblePeaks{};bool xinputHookReady{};bool xinputSetStateHookReady{};
+XInputGetStateFn originalXInputGetState{};XInputSetStateFn originalXInputSetState{};std::atomic<uint32_t> virtualMovementAxes{};std::atomic<SHORT> virtualRightX{},virtualRightY{};std::atomic<BYTE> virtualLeftTrigger{},virtualRightTrigger{};std::atomic<WORD> virtualButtons{};std::atomic<DWORD> virtualPacket{1};std::atomic<uint32_t> nativeXInputRumble{};std::atomic<uint32_t> pendingXInputRumblePeaks{};bool xinputHookReady{};bool xinputSetStateHookReady{};
 PFN_vkGetInstanceProcAddr bridgeNextGipa=nullptr;
 thread_local bool bridgeSessionTrace=false;
 // Meta may invoke the XR_KHR_vulkan_enable2 callbacks from one of its own
@@ -663,10 +663,7 @@ void updateImmersiveCinematicRefresh(bool active,XrDuration displayPeriod){
     }
     ++hold.presents;
 }
-// Observe the values actually returned to DOOM without changing input publication.
-std::atomic<uint32_t> diagnosticDeliveredStick{};
-std::atomic<uint64_t> diagnosticXInputPolls{};
-DWORD WINAPI kharvoxXInputGetState(DWORD userIndex,XINPUT_STATE* state){DWORD result=originalXInputGetState?originalXInputGetState(userIndex,state):ERROR_DEVICE_NOT_CONNECTED;if(userIndex!=0||!state)return result;if(result!=ERROR_SUCCESS)ZeroMemory(state,sizeof(*state));state->dwPacketNumber=virtualPacket.load(std::memory_order_relaxed);state->Gamepad.sThumbLX=virtualLeftX.load(std::memory_order_relaxed);state->Gamepad.sThumbLY=virtualLeftY.load(std::memory_order_relaxed);state->Gamepad.sThumbRX=virtualRightX.load(std::memory_order_relaxed);state->Gamepad.sThumbRY=virtualRightY.load(std::memory_order_relaxed);state->Gamepad.bLeftTrigger=std::max(state->Gamepad.bLeftTrigger,virtualLeftTrigger.load(std::memory_order_relaxed));state->Gamepad.bRightTrigger=std::max(state->Gamepad.bRightTrigger,virtualRightTrigger.load(std::memory_order_relaxed));state->Gamepad.wButtons|=virtualButtons.load(std::memory_order_relaxed);diagnosticDeliveredStick.store(uint32_t(uint16_t(state->Gamepad.sThumbLX))|(uint32_t(uint16_t(state->Gamepad.sThumbLY))<<16),std::memory_order_relaxed);diagnosticXInputPolls.fetch_add(1,std::memory_order_relaxed);return ERROR_SUCCESS;}
+DWORD WINAPI kharvoxXInputGetState(DWORD userIndex,XINPUT_STATE* state){DWORD result=originalXInputGetState?originalXInputGetState(userIndex,state):ERROR_DEVICE_NOT_CONNECTED;if(userIndex!=0||!state)return result;if(result!=ERROR_SUCCESS)ZeroMemory(state,sizeof(*state));state->dwPacketNumber=virtualPacket.load(std::memory_order_relaxed);const auto movement=virtualMovementAxes.load(std::memory_order_relaxed);state->Gamepad.sThumbLX=kharvox::movementAxisX(movement);state->Gamepad.sThumbLY=kharvox::movementAxisY(movement);state->Gamepad.sThumbRX=virtualRightX.load(std::memory_order_relaxed);state->Gamepad.sThumbRY=virtualRightY.load(std::memory_order_relaxed);state->Gamepad.bLeftTrigger=std::max(state->Gamepad.bLeftTrigger,virtualLeftTrigger.load(std::memory_order_relaxed));state->Gamepad.bRightTrigger=std::max(state->Gamepad.bRightTrigger,virtualRightTrigger.load(std::memory_order_relaxed));state->Gamepad.wButtons|=virtualButtons.load(std::memory_order_relaxed);return ERROR_SUCCESS;}
 void retainPendingXInputRumblePeak(uint32_t packed){
     if(!packed)return;
     auto observed=pendingXInputRumblePeaks.load(std::memory_order_relaxed);
@@ -1181,50 +1178,13 @@ void updateHeadPose(const XrViewState& viewState,XrTime displayTime,bool nativeP
     publishGameCameraHeadPose(physicalHeadYaw,s.head.pitch,s.head.roll,forward,lateral,up,s.headCameraArmed,centeredNativeMenuActive);
 }
 void releaseBackWeaponKeyboardPulse();
-void releaseMovement(){s.handsJump={};const SHORT oldX=virtualLeftX.exchange(0,std::memory_order_relaxed),oldY=virtualLeftY.exchange(0,std::memory_order_relaxed);const SHORT oldRightX=virtualRightX.exchange(0,std::memory_order_relaxed),oldRightY=virtualRightY.exchange(0,std::memory_order_relaxed);if(oldX||oldY||oldRightX||oldRightY)virtualPacket.fetch_add(1,std::memory_order_relaxed);releaseBackWeaponKeyboardPulse();}
+void releaseMovement(){s.handsJump={};const auto oldMovement=virtualMovementAxes.exchange(0,std::memory_order_relaxed);const SHORT oldRightX=virtualRightX.exchange(0,std::memory_order_relaxed),oldRightY=virtualRightY.exchange(0,std::memory_order_relaxed);if(oldMovement||oldRightX||oldRightY)virtualPacket.fetch_add(1,std::memory_order_relaxed);releaseBackWeaponKeyboardPulse();}
 SHORT stickToXInput(float value){return static_cast<SHORT>(std::lround(std::clamp(value,-1.f,1.f)*(value<0.f?32768.f:32767.f)));}
-void updateVirtualLeftStick(XrVector2f stick,bool active){const SHORT x=active?stickToXInput(stick.x):0,y=active?stickToXInput(stick.y):0;const SHORT oldX=virtualLeftX.exchange(x,std::memory_order_relaxed),oldY=virtualLeftY.exchange(y,std::memory_order_relaxed);if(oldX!=x||oldY!=y)virtualPacket.fetch_add(1,std::memory_order_relaxed);}
-void recordMovementDiagnostic(XrVector2f raw,XrVector2f requested,bool active,bool gameplay,bool wheel,bool menu){
-    // 20 Hz buffered CSV; never write from the game's XInput polling thread.
-    static std::ofstream file;
-    static bool opened=false;
-    static uint64_t lastTick=0,lastFlush=0,lastLevel=0,lastPolls=0;
-    static float previous[3]{};
-    static bool previousValid=false;
-    const auto now=GetTickCount64();
-    if(lastTick&&now-lastTick<50)return;
-    if(!opened){
-        opened=true;
-        const auto name="movement-diagnostic-"+std::to_string(GetCurrentProcessId())+".csv";
-        file.open(kharvox::logPathA(name.c_str()),std::ios::trunc);
-        if(!file){log("[MOVE-DIAG] could not open CSV");return;}
-        file<<"time_ms,dt_ms,level,gameplay,menu,wheel,active,raw_x,raw_y,requested_x,requested_y,published_x,published_y,delivered_x,delivered_y,poll_count,polls_since_sample,physics_valid,physics_x,physics_y,physics_z,speed_mps,world_dx,world_dy,world_dz,head_yaw,offhand_mode,crouch,ledge,cutscene,roomscale_x,roomscale_y\n";
-        log("[MOVE-DIAG] 20Hz movement CSV: "+name+"; delivered values are latest XInput poll, not frame-synchronous");
-    }
-    if(!file)return;
-    float origin[3]{};
-    const bool valid=KharvoxCameraGetPlayerPhysicsOrigin(origin);
-    const auto level=KharvoxCameraLevelTransitionGeneration();
-    const auto dt=lastTick?now-lastTick:0;
-    float dx=0,dy=0,dz=0,speed=-1;
-    if(valid&&previousValid&&level==lastLevel&&dt>0&&dt<500&&s.worldScale>0){
-        dx=(origin[0]-previous[0])/s.worldScale;dy=(origin[1]-previous[1])/s.worldScale;dz=(origin[2]-previous[2])/s.worldScale;
-        speed=std::hypot(dx,dy)*1000.f/float(dt);
-    }
-    const auto delivered=diagnosticDeliveredStick.load(std::memory_order_relaxed);
-    const auto polls=diagnosticXInputPolls.load(std::memory_order_relaxed);
-    file<<now<<','<<dt<<','<<level<<','<<gameplay<<','<<menu<<','<<wheel<<','<<active
-        <<','<<raw.x<<','<<raw.y<<','<<requested.x<<','<<requested.y
-        <<','<<virtualLeftX.load()<<','<<virtualLeftY.load()
-        <<','<<int(int16_t(delivered&65535))<<','<<int(int16_t(delivered>>16))
-        <<','<<polls<<','<<(polls-lastPolls)<<','<<valid<<','<<origin[0]<<','<<origin[1]<<','<<origin[2]
-        <<','<<speed<<','<<dx<<','<<dy<<','<<dz<<','<<renderResidualHeadYaw()
-        <<','<<(s.movementDirectionMode==kharvox::MovementDirectionMode::OffHand)
-        <<','<<s.crouchPressed<<','<<KharvoxCameraLedgeTransitionActive()<<','<<KharvoxCameraCutsceneActive()
-        <<','<<s.roomscaleStick.x<<','<<s.roomscaleStick.y<<'\n';
-    if(now-lastFlush>=1000){file.flush();lastFlush=now;}
-    for(int i=0;i<3;++i)previous[i]=origin[i];
-    previousValid=valid;lastLevel=level;lastTick=now;lastPolls=polls;
+void updateVirtualLeftStick(XrVector2f stick,bool active){
+    const SHORT x=active?stickToXInput(stick.x):0,y=active?stickToXInput(stick.y):0;
+    const auto axes=kharvox::packMovementAxes(x,y);
+    if(virtualMovementAxes.exchange(axes,std::memory_order_relaxed)!=axes)
+        virtualPacket.fetch_add(1,std::memory_order_relaxed);
 }
 void updateVirtualRightStick(XrVector2f stick,bool active){const SHORT x=active?stickToXInput(stick.x):0,y=active?stickToXInput(stick.y):0;const SHORT oldX=virtualRightX.exchange(x,std::memory_order_relaxed),oldY=virtualRightY.exchange(y,std::memory_order_relaxed);if(oldX!=x||oldY!=y)virtualPacket.fetch_add(1,std::memory_order_relaxed);}
 XrVector2f centeredNativeUiStick(XrVector2f stick){
@@ -1272,8 +1232,9 @@ XrVector2f movementDirectionRelativeStick(XrVector2f stick,bool gameplay){
             +(right?"right":"left")
             +(direction.usedOffHand?"":" reason=tracking-invalid-or-near-vertical"));
     }
+    const auto travel=kharvox::fullTravelMovementStick({stick.x,stick.y});
     const auto rotated=kharvox::rotateMovementStickForDirection(
-        {stick.x,stick.y},direction.degrees);
+        travel,direction.degrees);
     return {rotated.x,rotated.y};
 }
 void updateVirtualButtons(bool fire,bool gamepadA,bool gamepadB,bool weaponMod,bool melee,bool use,
@@ -2320,7 +2281,6 @@ void updateGameplayActions(XrTime displayTime){
     const bool movementActive=!weaponWheelActive&&(moveActionActive||(gameplay&&(std::abs(movementStick.x)>.001f||std::abs(movementStick.y)>.001f)));
     if(std::abs(movementStick.x)>.15f||std::abs(movementStick.y)>.15f)focusDoomWindow();
     if(xinputHookReady)updateVirtualLeftStick(movementStick,movementActive);else{updateVirtualLeftStick({},false);updateVirtualRightStick({},false);}
-    recordMovementDiagnostic(s.leftStick,movementStick,movementActive,gameplay,weaponWheelActive,nativeUiMenu);
     const bool meleeDown=readBooleanAction(s.doomMelee);
     const bool meleeUseDown=gameplay&&meleeDown;
     if(meleeUseDown!=s.meleePressed){

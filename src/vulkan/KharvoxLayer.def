@@ -16,4 +16,8 @@ EXPORTS
     vkAcquireNextImage2KHR
     vkQueueSubmit
     vkQueueSubmit2
+    vkQueueSubmit2KHR
     vkQueuePresentKHR
+    vkQueueWaitIdle
+    vkQueueBindSparse
+    vkDeviceWaitIdle

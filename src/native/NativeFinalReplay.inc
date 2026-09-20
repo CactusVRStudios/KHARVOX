@@ -4,6 +4,7 @@
 #include <functional>
 #include <tuple>
 #include "NativeReplayRecording.h"
+#include "NativePushReplay.h"
 #include "NativePassInputIndex.h"
 #include "NativeSnapshotAccessClasses.h"
 #include "NativeImagePlan.h"
@@ -50,7 +51,8 @@ static const PassInputIndex<ImageInputs>::Group* indexedPassInputs(VkFramebuffer
 }
 struct ReplayState {
  std::map<uint64_t,ReplayCommand> state;
- std::vector<ReplayCommand> pushState,initial,commands;
+ NativePushReplay pushState,initialPushState;
+ std::vector<ReplayCommand> initial,commands;
  std::map<uint32_t,uint32_t> descriptorRanges;
  std::map<uint32_t,std::shared_ptr<DescriptorReplayPayload>> descriptorPayloads;
  VkRenderPassBeginInfo begin{};std::vector<VkClearValue> clears;
@@ -68,6 +70,7 @@ static std::map<VkCommandBuffer,ReplayState> replayStates;
 static std::set<VkCommandBuffer> rightEyeBindingCommands;
 static SnapshotBatchCache<VkCommandBuffer,VkDescriptorSet> snapshotBatchCache;
 static PFN_vkBeginCommandBuffer nextBeginCommand{};
+static PFN_vkCmdPushConstants nextPush{};
 static bool compiledImagePlans(){static const bool enabled=kharvox::rendererDefaults::compiledImagePlans;return enabled;}
 using ImagePlanKey=std::vector<uintptr_t>;
 static ImagePlanCache<ImagePlanKey> imagePlanCache;
@@ -325,14 +328,7 @@ static void record(VkCommandBuffer cb,uint64_t key,const Command& fn,bool state=
  if(!replayPreparationEnabled()){fn();return;}
  recordReplayCommand(replayStates[cb],key,fn,state);
 }
-static void guardLoadingCommandReuse(VkCommandBuffer cb){if(loadingDrain.active()&&loadingDrain.command()==reinterpret_cast<uintptr_t>(cb))fail("loading command reused before owner completion");}
-static VkResult VKAPI_CALL replayBeginCommand(VkCommandBuffer cb,const VkCommandBufferBeginInfo* info){std::scoped_lock lock(replayMutex);guardLoadingCommandReuse(cb);replayStates.erase(cb);resetStorageSnapshotBindings(cb);auto result=nextBeginCommand(cb,info);replayStates[cb].recording=result==VK_SUCCESS;return result;}
-static PFN_vkResetCommandBuffer nextResetCommand{};
-static VkResult VKAPI_CALL replayResetCommand(VkCommandBuffer cb,VkCommandBufferResetFlags flags){std::scoped_lock lock(replayMutex);guardLoadingCommandReuse(cb);auto result=nextResetCommand(cb,flags);if(result==VK_SUCCESS){replayStates.erase(cb);resetStorageSnapshotBindings(cb);}return result;}
-static PFN_vkResetCommandPool nextResetCommandPool{};
-static VkResult VKAPI_CALL replayResetCommandPool(VkDevice device,VkCommandPool pool,VkCommandPoolResetFlags flags){std::scoped_lock lock(replayMutex);if(loadingDrain.active())fail("command pool reset overlaps loading drain");snapshotBatchCache.clear();return nextResetCommandPool(device,pool,flags);}
-static PFN_vkFreeCommandBuffers nextFreeCommands{};
-static void VKAPI_CALL replayFreeCommands(VkDevice device,VkCommandPool pool,uint32_t count,const VkCommandBuffer* commands){std::scoped_lock lock(replayMutex);for(uint32_t i=0;i<count;++i)guardLoadingCommandReuse(commands[i]);nextFreeCommands(device,pool,count,commands);for(uint32_t i=0;i<count;++i){snapshotBatchCache.invalidate(commands[i]);replayStates.erase(commands[i]);boundStorageSnapshots.erase(commands[i]);}}
+#include "NativeCommandLifetime.inc"
 static void preserveStorageAttachmentInputs(VkCommandBuffer cb,const VkRenderPassBeginInfo& begin){
  if(!mirrorPreparationEnabled())return;
  // A color attachment may later become a readable/writable storage image.
@@ -391,7 +387,7 @@ static void VKAPI_CALL replayBeginPass(VkCommandBuffer cb,const VkRenderPassBegi
   trace::setEye(0);trace::row("final-original-begin",0,{reinterpret_cast<uintptr_t>(cb)});
   if(info->pNext||contents!=VK_SUBPASS_CONTENTS_INLINE)fail("final pass extensions/secondary command buffers unsupported");
   r.begin=*info;r.clears.clear();if(info->clearValueCount)r.clears.assign(info->pClearValues,info->pClearValues+info->clearValueCount);
-  r.initial.clear();for(auto&[key,fn]:r.state)r.initial.push_back(fn);for(auto&fn:r.pushState)r.initial.push_back(fn);r.commands.clear();
+  r.initial.clear();for(auto&[key,fn]:r.state)r.initial.push_back(fn);r.initialPushState=r.pushState;r.commands.clear();
   r.finalInputs.clear();r.finalInputVisits.clear();if(inputPlanCaptureEnabled())captureInputs(r.finalInputs,r.boundSets,&r.finalInputVisits);
   inside_final_pass_real=true;last_final_pass_framebuffer=info->framebuffer;
  }
@@ -422,6 +418,7 @@ static void VKAPI_CALL replayEndPass(VkCommandBuffer cb){
  const auto finalGpuSpan=beginGpuSpan(cb,"final-replay",1);
  prepareInputLayouts(cb,r.finalInputs,r.begin.framebuffer);
  for(auto&fn:r.initial)fn();
+ r.initialPushState.replay([cb](auto layout,auto stages,auto offset,auto size,const void* data){nextPush(cb,layout,stages,offset,size,data);});
  auto begin=r.begin;begin.pClearValues=r.clears.empty()?nullptr:r.clears.data();
  prepareAttachments(cb,begin);r.activeBegin=begin;
  activateGpuPass(cb,finalGpuSpan,&begin);
@@ -435,7 +432,8 @@ static void VKAPI_CALL replayEndPass(VkCommandBuffer cb){
  inside_final_pass_double=false;r.replaying=false;trace::setEye(2);
  endGpuPass(cb);
  // Restore the game's post-pass state so subsequent recording sees no clones.
- for(auto&[key,fn]:r.state)fn();for(auto&fn:r.pushState)fn();
+ for(auto&[key,fn]:r.state)fn();
+ r.pushState.replay([cb](auto layout,auto stages,auto offset,auto size,const void* data){nextPush(cb,layout,stages,offset,size,data);});
  final_pass_doubles.fetch_add(1);endFinal();
 }
 static void VKAPI_CALL replayPipeline(VkCommandBuffer cb,VkPipelineBindPoint point,VkPipeline pipeline){cpu::Scope profile(cpu::ReplayPipeline);std::scoped_lock lock(replayMutex);auto fn=[=]{if(point==VK_PIPELINE_BIND_POINT_GRAPHICS)executeReplayPipeline(replayStates[cb],pipeline,[=]{hook_cmd_bind_pipeline(cb,point,pipeline);});else hook_cmd_bind_pipeline(cb,point,pipeline);};if(point==VK_PIPELINE_BIND_POINT_GRAPHICS)record(cb,1,fn);else fn();}
@@ -503,11 +501,11 @@ static void VKAPI_CALL replayVertex(VkCommandBuffer cb,uint32_t first,uint32_t c
  if(cpu::current.active)cpu::current.identicalVertexStates+=reused;
 }
 static void VKAPI_CALL replayIndex(VkCommandBuffer cb,VkBuffer buffer,VkDeviceSize offset,VkIndexType type){std::scoped_lock lock(replayMutex);record(cb,2,[=]{hook_cmd_bind_index_buffer(cb,buffer,offset,type);});}
-static PFN_vkCmdPushConstants nextPush{};
 static void VKAPI_CALL replayPush(VkCommandBuffer cb,VkPipelineLayout layout,VkShaderStageFlags stages,uint32_t offset,uint32_t size,const void* data){
  if(!replayPreparationEnabled()){nextPush(cb,layout,stages,offset,size,data);return;}
- std::scoped_lock lock(replayMutex);std::vector<unsigned char> bytes(static_cast<const unsigned char*>(data),static_cast<const unsigned char*>(data)+size);
- auto fn=[=,bytes=std::move(bytes)]{nextPush(cb,layout,stages,offset,size,bytes.data());};auto&r=replayStates[cb];r.pushState.push_back(fn);record(cb,0,fn,false);
+ std::scoped_lock lock(replayMutex);
+ try{recordNativePush(replayStates[cb],layout,stages,offset,size,data,[cb](auto l,auto s,auto o,auto n,const void* bytes){nextPush(cb,l,s,o,n,bytes);});}
+ catch(const std::runtime_error& error){fail(error.what());}
 }
 static void traceNativeDraw(VkCommandBuffer cb,uint32_t vertices){
  static const bool enabled=kharvox::runtimeFileExists(L"capture_native_stereo_once")||sequenceDiagnostic();
@@ -530,8 +528,15 @@ static void VKAPI_CALL replayDrawIndexed(VkCommandBuffer cb,uint32_t a,uint32_t 
 static void VKAPI_CALL replayDrawIndirect(VkCommandBuffer cb,VkBuffer b,VkDeviceSize o,uint32_t c,uint32_t st){cpu::Scope profile(cpu::ReplayDraw);std::scoped_lock lock(replayMutex);record(cb,0,[=]{notePassWork(cb,false,0,true);validateStorageSnapshotsForDraw(cb);hook_cmd_draw_indirect(cb,b,o,c,st);},false);}
 static void VKAPI_CALL replayDrawIndexedIndirect(VkCommandBuffer cb,VkBuffer b,VkDeviceSize o,uint32_t c,uint32_t st){cpu::Scope profile(cpu::ReplayDraw);std::scoped_lock lock(replayMutex);record(cb,0,[=]{notePassWork(cb,false,0,true);validateStorageSnapshotsForDraw(cb);hook_cmd_draw_indexed_indirect(cb,b,o,c,st);},false);}
 static void VKAPI_CALL replayDepthBias(VkCommandBuffer cb,float a,float b,float c){std::scoped_lock lock(replayMutex);record(cb,3,[=]{hook_cmd_set_depth_bias(cb,a,b,c);});}
-static void VKAPI_CALL replayStencilCompare(VkCommandBuffer cb,VkStencilFaceFlags a,uint32_t b){std::scoped_lock lock(replayMutex);record(cb,0x50000+a,[=]{hook_cmd_set_stencil_compare_mask(cb,a,b);});}
-static void VKAPI_CALL replayStencilRef(VkCommandBuffer cb,VkStencilFaceFlags a,uint32_t b){std::scoped_lock lock(replayMutex);record(cb,0x60000+a,[=]{hook_cmd_set_stencil_reference(cb,a,b);});}
+template<class Bind>
+static void recordStencil(VkCommandBuffer cb,uint64_t base,VkStencilFaceFlags faces,uint32_t value,Bind bind){
+ std::scoped_lock lock(replayMutex);
+ const auto emit=[=](uint32_t face){bind(cb,face,value);};
+ if(!replayPreparationEnabled()){emit(faces);return;}
+ recordReplayFaces(replayStates[cb],base,faces,emit);
+}
+static void VKAPI_CALL replayStencilCompare(VkCommandBuffer cb,VkStencilFaceFlags a,uint32_t b){recordStencil(cb,0x50000,a,b,hook_cmd_set_stencil_compare_mask);}
+static void VKAPI_CALL replayStencilRef(VkCommandBuffer cb,VkStencilFaceFlags a,uint32_t b){recordStencil(cb,0x60000,a,b,hook_cmd_set_stencil_reference);}
 static PFN_vkCmdSetBlendConstants nextBlend{};
 static PFN_vkCmdSetDepthBounds nextDepthBounds{};
 static PFN_vkCmdSetLineWidth nextLineWidth{};
@@ -539,7 +544,7 @@ static PFN_vkCmdSetStencilWriteMask nextStencilWrite{};
 static void VKAPI_CALL replayBlend(VkCommandBuffer cb,const float values[4]){std::scoped_lock l(replayMutex);std::array<float,4> v{values[0],values[1],values[2],values[3]};record(cb,4,[=]{nextBlend(cb,v.data());});}
 static void VKAPI_CALL replayDepthBounds(VkCommandBuffer cb,float a,float b){std::scoped_lock l(replayMutex);record(cb,5,[=]{nextDepthBounds(cb,a,b);});}
 static void VKAPI_CALL replayLineWidth(VkCommandBuffer cb,float a){std::scoped_lock l(replayMutex);record(cb,6,[=]{nextLineWidth(cb,a);});}
-static void VKAPI_CALL replayStencilWrite(VkCommandBuffer cb,VkStencilFaceFlags a,uint32_t b){std::scoped_lock l(replayMutex);record(cb,0x70000+a,[=]{nextStencilWrite(cb,a,b);});}
+static void VKAPI_CALL replayStencilWrite(VkCommandBuffer cb,VkStencilFaceFlags a,uint32_t b){recordStencil(cb,0x70000,a,b,nextStencilWrite);}
 template<typename T,int Tag> struct UnsupportedFinal;
 template<int Tag,typename R,typename... A> struct UnsupportedFinal<R(VKAPI_PTR*)(VkCommandBuffer,A...),Tag>{
  using Fn=R(VKAPI_PTR*)(VkCommandBuffer,A...);static inline Fn next{};
@@ -623,6 +628,8 @@ PFN_vkVoidFunction wrapRecorded(const char* name,PFN_vkVoidFunction next){
  REPLAY(vkCmdSetDepthBounds,replayDepthBounds,nextDepthBounds)
  REPLAY(vkCmdSetLineWidth,replayLineWidth,nextLineWidth)
  REPLAY(vkCmdSetStencilWriteMask,replayStencilWrite,nextStencilWrite)
+ REPLAY(vkAllocateCommandBuffers,replayAllocateCommands,real_allocate_command_buffers)
+ REPLAY(vkDestroyCommandPool,replayDestroyCommandPool,real_destroy_command_pool)
  REPLAY(vkBeginCommandBuffer,replayBeginCommand,nextBeginCommand)
  REPLAY(vkResetCommandBuffer,replayResetCommand,nextResetCommand)
  REPLAY(vkResetCommandPool,replayResetCommandPool,nextResetCommandPool)

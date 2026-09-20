@@ -13,12 +13,6 @@ static std::optional<uint64_t> snapshotClass(VkPipeline pipeline,uint32_t set,Vk
 }
 static std::map<VkPipeline,std::set<std::pair<uint32_t,uint32_t>>> reportedStorageAccess;
 static std::map<VkCommandBuffer,std::map<uint32_t,StorageBindingSet>> boundStorageSnapshots;
-void releaseStorageBindingBookkeeping(){
- // Pool destruction implicitly frees its command buffers. At this verified
- // non-outstanding boundary it is safe to release all CPU-only capacity;
- // live command buffers repopulate it on their next descriptor binds.
- beforeDestroy("storage binding bookkeeping release",0);std::scoped_lock lock(replayMutex);boundStorageSnapshots.clear();snapshotBatchCache.clear();
-}
 static void resetStorageSnapshotBindings(VkCommandBuffer cb){
  snapshotBatchCache.invalidate(cb);
  const auto command=boundStorageSnapshots.find(cb);if(command==boundStorageSnapshots.end())return;

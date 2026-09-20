@@ -42,6 +42,8 @@ def summary(rows):
             'unit': 'ms' if scale == 1e6 else 'count_or_bytes',
             'median': statistics.median(values),
             'p95': values[max(0, math.ceil(.95*len(values))-1)],
+            'p99': values[max(0, math.ceil(.99*len(values))-1)],
+            'max': values[-1],
             'evenRows': len(even), 'oddRows': len(odd),
             'evenMedian': statistics.median(even) if even else None,
             'oddMedian': statistics.median(odd) if odd else None,
@@ -50,6 +52,12 @@ def summary(rows):
         }
     result['rootVersusVertexBindings'] = correlation([(r['rootNs'], r['vertexBindings']) for r in rows])
     result['queueWaitVersusXrWait'] = correlation([(r['xrQueueWaitNs'], r['xrWaitFrameNs']) for r in rows])
+    result['slowestFrames'] = [
+        {'frame': r['frame'], 'intervalMs': r['intervalNs']/1e6,
+         'deviceIdleMs': r['deviceIdleNs']/1e6, 'inputWaitMs': r['inputWaitNs']/1e6,
+         'xrCopyCompletionMs': r['xrCopyCompletionNs']/1e6}
+        for r in sorted(rows, key=lambda r: r['intervalNs'], reverse=True)[:10]
+    ]
     return result
 
 

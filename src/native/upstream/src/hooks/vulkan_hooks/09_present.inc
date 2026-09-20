@@ -5525,7 +5525,6 @@ static_assert(std::is_same_v<decltype(&hook_create_command_pool), PFN_vkCreateCo
 PFN_vkDestroyCommandPool real_destroy_command_pool{};
 void VKAPI_PTR hook_destroy_command_pool(VkDevice a, VkCommandPool b, const VkAllocationCallbacks* c) {
     kharvox::native::beforeDestroy("vkDestroyCommandPool",reinterpret_cast<uintptr_t>(b));
-    kharvox::native::releaseStorageBindingBookkeeping();
     FbHook fb_(FB_H_DESTROY_COMMAND_POOL);
     real_destroy_command_pool(a, b, c);
 }

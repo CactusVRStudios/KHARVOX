@@ -59,8 +59,10 @@ struct State {
     FrameUniforms renderUniforms;
     uint64_t sourcePoseSamples{};
     bool pending{},completed{true},frameValid{};
+    OwnerCompletion ownerCompletion;
+    void (*lockQueue)(){};void (*unlockQueue)(){};
     bool profileTiming{};
-    uint64_t profiledFrames{},retireNs{},uploadNs{},maxRetireNs{};
+    uint64_t profiledFrames{},retireNs{},uploadNs{},maxRetireNs{},ownerFenceRetirements{},deviceDrains{};
     std::unordered_map<VkShaderModule,std::vector<uint32_t>> shaders;
     std::unordered_map<std::string,VkShaderModule> compiled;
     std::unordered_map<VkRenderPass,VkRenderPass> passes;
@@ -385,10 +387,10 @@ VKAPI_ATTR void VKAPI_CALL uploadImage(VkCommandBuffer cb,VkBuffer buffer,VkImag
 COMMAND_END}
 }
 bool nativeProbeEnabled(){static const bool enabled=[] {char value[8]{};return GetEnvironmentVariableA("KHARVOX_SFS_NATIVE_PROBE",value,8)==1&&value[0]=='1';}();return enabled;}
-bool initialize(VkDevice d,VkPhysicalDevice,PFN_vkGetDeviceProcAddr gdpa,const VkPhysicalDeviceMemoryProperties& memory){
+bool initialize(VkDevice d,VkPhysicalDevice,PFN_vkGetDeviceProcAddr gdpa,const VkPhysicalDeviceMemoryProperties& memory,void(*lockQueue)(),void(*unlockQueue)()){
     if(!nativeProbeEnabled())return true;
     auto s=std::make_shared<State>();
-    try{s->device=d;s->dispatch.load(d,gdpa);
+    try{s->device=d;s->dispatch.load(d,gdpa);s->lockQueue=lockQueue;s->unlockQueue=unlockQueue;
         char timing[8]{};s->profileTiming=GetEnvironmentVariableA("KHARVOX_SFS_PROFILE_TIMING",timing,8)==1&&timing[0]=='1';wchar_t path[32768]{};auto n=GetEnvironmentVariableW(L"KHARVOX_SFS_PROFILE",path,32768);if(n&&n<32768)s->profile=path;
         VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};bi.size=sizeof(FrameUniforms);bi.usage=VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;if(FN(vkCreateBuffer)(d,&bi,nullptr,&s->params)!=VK_SUCCESS)return false;
         VkMemoryRequirements r{};FN(vkGetBufferMemoryRequirements)(d,s->params,&r);uint32_t index=UINT32_MAX;for(uint32_t j=0;j<memory.memoryTypeCount;++j)if((r.memoryTypeBits&(1u<<j))&&(memory.memoryTypes[j].propertyFlags&(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))==(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)){index=j;break;}
@@ -417,22 +419,32 @@ void prepare(VkDevice d,const native::FramePose& pose,const XrFovf& source){
     s->pendingUniforms=uniforms;s->pendingPose=pose;s->pending=true;
     s->sourcePoseHistory.remember(pose,uniforms);
 }
-void copyCompleted(VkDevice d){if(!vrEnabled())return;auto s=state(d);std::unique_lock<std::shared_mutex> lock(s->mutex);s->completed=true;}
+void submitted(VkDevice d,VkQueue queue,VkResult result){if(vrEnabled())state(d)->ownerCompletion.submitted(queue,result);}
+OwnerCopyCompletion captureOwnerCopy(VkDevice d,VkQueue queue,VkFence fence,uint64_t frame){
+    if(!vrEnabled())return {};return state(d)->ownerCompletion.capture(d,queue,fence,frame);
+}
+void copyCompleted(VkDevice d,const OwnerCopyCompletion& copy,VkResult submit,VkResult wait){
+    if(!vrEnabled())return;auto s=state(d);std::unique_lock<std::shared_mutex> lock(s->mutex);
+    s->ownerCompletion.completed(d,copy,submit,wait);
+    if(submit==VK_SUCCESS&&wait==VK_SUCCESS)s->completed=true;
+}
 void beginFrame(VkDevice d,VkSwapchainKHR chain,uint32_t imageIndex){
     if(!vrEnabled())return;auto s=state(d);std::unique_lock<std::shared_mutex> lock(s->mutex);
     if(s->pending&&s->completed){
-    // The prototype shares a uniform buffer across recorded command buffers.
-    // Retire all previous readers before writing; a frame ring can replace this
-    // conservative wait once multiple queued game frames have explicit ownership.
     const auto clockNow=[] {return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());};
     const auto retireStart=s->profileTiming?clockNow():0;
-    if(FN(vkDeviceWaitIdle)(d)!=VK_SUCCESS)commandFailure("SFS frame parameter retirement failed");
+    OwnerQueueAccess queueAccess(s->lockQueue,s->unlockQueue);
+    // ponytail: all command submissions count as readers; multi-queue frames drain until per-resource tracking is justified.
+    const bool ownerCompleted=queueAccess&&s->ownerCompletion.canRetire(d);
+    if(!ownerCompleted&&FN(vkDeviceWaitIdle)(d)!=VK_SUCCESS)commandFailure("SFS frame parameter retirement failed");
     s->pendingUniforms.previousClip=s->frameValid?s->renderUniforms.clip:s->pendingUniforms.clip;
     s->pendingUniforms.previousTranslation=s->frameValid?s->renderUniforms.translation:s->pendingUniforms.translation;
     const auto uploadStart=s->profileTiming?clockNow():0;
     void* mapped{};if(FN(vkMapMemory)(d,s->paramsMemory,0,sizeof(FrameUniforms),0,&mapped)!=VK_SUCCESS)commandFailure("SFS frame parameter map failed");
     std::memcpy(mapped,&s->pendingUniforms,sizeof(FrameUniforms));FN(vkUnmapMemory)(d,s->paramsMemory);
+    s->ownerCompletion.uploaded(s->pendingPose.serial);
     if(s->profileTiming){
+        if(ownerCompleted)++s->ownerFenceRetirements;else ++s->deviceDrains;
         const auto retire=uploadStart-retireStart;
         s->retireNs+=retire;s->uploadNs+=clockNow()-uploadStart;
         if(retire>s->maxRetireNs)s->maxRetireNs=retire;
@@ -446,10 +458,11 @@ void beginFrame(VkDevice d,VkSwapchainKHR chain,uint32_t imageIndex){
                 +" sampledLookupLockMeanUs="+std::to_string(double(wait)/double(samples)/1000.0)
                 +" sampledHookBodyMeanUs="+std::to_string(double(body)/double(samples)/1000.0)
                 +" estimatedAggregateHookMsPerFrame="+std::to_string(double(wait+body)*64.0/120000000.0));
-            note("parameter timing frames=120 deviceIdleMeanMs="+std::to_string(double(s->retireNs)/120000000.0)
-                +" deviceIdleMaxMs="+std::to_string(double(s->maxRetireNs)/1000000.0)
-                +" uploadMeanMs="+std::to_string(double(s->uploadNs)/120000000.0));
-            s->profiledFrames=s->retireNs=s->uploadNs=s->maxRetireNs=0;
+            note("parameter timing frames=120 retirementMeanMs="+std::to_string(double(s->retireNs)/120000000.0)
+                +" retirementMaxMs="+std::to_string(double(s->maxRetireNs)/1000000.0)
+                +" uploadMeanMs="+std::to_string(double(s->uploadNs)/120000000.0)
+                +" ownerFenceRetirements="+std::to_string(s->ownerFenceRetirements)+" deviceDrains="+std::to_string(s->deviceDrains));
+            s->profiledFrames=s->retireNs=s->uploadNs=s->maxRetireNs=s->ownerFenceRetirements=s->deviceDrains=0;
         }
     }
     s->renderPose=s->pendingPose;s->frameValid=true;s->pending=false;s->completed=false;
@@ -477,7 +490,7 @@ bool pair(VkDevice d,VkImage image,VkExtent2D extent,VkFormat format,native::Ste
                 +" count="+std::to_string(observed->count)+" ambiguous="+std::to_string(observed->ambiguous));
         if(observed->count&&!qualified)return false;
     }
-    result={};result.pose=pose;result.generation=pose.serial;
+    result={};result.pose=pose;result.generation=found->second.serial;
     for(uint32_t e=0;e<2;++e)result.eyes[e]={image,extent,format,sourceLayout(d,image,VK_IMAGE_LAYOUT_PRESENT_SRC_KHR),pose.views[e].pose,pose.views[e].fov,e,pose.serial};
     return true;
 }
@@ -487,6 +500,7 @@ void swapchainImages(VkDevice d,VkSwapchainKHR chain,uint32_t count,const VkImag
     auto& tracked=s->swapchains[chain];
     // Re-enumerating the same swapchain must not discard a valid acquisition.
     if(tracked==std::vector<VkImage>(images,images+count))return;
+    s->ownerCompletion.invalidate();
     for(auto image:tracked){s->imagePoses.erase(image);s->imageUniforms.erase(image);s->images.destroy(d,image,nullptr,nullptr);}
     tracked.assign(images,images+count);
     for(auto image:tracked)s->images.track(image,2);
@@ -495,6 +509,7 @@ void swapchainDestroyed(VkDevice d,VkSwapchainKHR chain){
     if(!nativeProbeEnabled())return;
     auto s=state(d);std::unique_lock<std::shared_mutex> lock(s->mutex);
     auto found=s->swapchains.find(chain);if(found==s->swapchains.end())return;
+    s->ownerCompletion.invalidate();
     for(auto image:found->second){s->imagePoses.erase(image);s->imageUniforms.erase(image);s->images.destroy(d,image,nullptr,nullptr);}
     s->swapchains.erase(found);
 }

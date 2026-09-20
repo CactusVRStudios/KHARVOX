@@ -42,6 +42,34 @@ class SequenceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             pacing.read_rows(b'Native frame pacing frame=123 rootMs=5')
 
+    def test_wait_tail_percentiles_and_slowest_frames(self):
+        rows = [row(f, f*1000000) for f in range(1, 101)]
+        original = [dict(r) for r in rows]
+        result = pacing.analyze(rows)['all']
+        for name in ('deviceIdleNs', 'inputWaitNs', 'xrCopyCompletionNs'):
+            self.assertEqual(result['fields'][name]['median'], 50.5)
+            self.assertEqual(result['fields'][name]['p95'], 95)
+            self.assertEqual(result['fields'][name]['p99'], 99)
+            self.assertEqual(result['fields'][name]['max'], 100)
+        self.assertEqual([r['frame'] for r in result['slowestFrames']], list(range(100, 90, -1)))
+        self.assertEqual(result['slowestFrames'][0], {
+            'frame': 100, 'intervalMs': 100, 'deviceIdleMs': 100,
+            'inputWaitMs': 100, 'xrCopyCompletionMs': 100})
+        self.assertEqual(rows, original)
+
+    def test_wait_tail_excludes_diagnostic_neighbors(self):
+        rows = [row(f, 1000000) for f in range(1, 5)]
+        rows[1]['logAfterRow'] = 1
+        rows[2]['intervalNs'] = rows[2]['deviceIdleNs'] = 100000000
+        result = pacing.analyze(rows)
+        self.assertEqual(result['all']['fields']['deviceIdleNs']['p99'], 100)
+        clean = result['withoutKnownDiagnosticNeighbors']
+        self.assertEqual(clean['fields']['deviceIdleNs']['p99'], 1)
+        self.assertNotIn(3, [r['frame'] for r in clean['slowestFrames']])
+        self.assertEqual(pacing.analyze([])['all']['slowestFrames'], [])
+        single = pacing.analyze([row(1, 1000000)])['all']['fields']['deviceIdleNs']
+        self.assertEqual(single['median'], single['p99'])
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -4,6 +4,8 @@
 #include "PushReplay.h"
 #include "DescriptorBindOrder.h"
 #include "CommandCpuTiming.h"
+#include "CommandBindings.h"
+#include "UnlockedDriverScope.h"
 #include "ShaderCompiler.h"
 #include "ShaderProfile.h"
 #include "PipelineIdentity.h"
@@ -39,7 +41,7 @@ struct CommandState {
     struct Descriptor {VkPipelineLayout layout{};VkDescriptorSet set{};std::vector<uint32_t> dynamic;};
     std::vector<Descriptor> descriptors;
     DescriptorBindOrder descriptorOrder;
-    std::map<uint64_t,std::function<void()>> bindings;
+    CommandBindings bindings;
     PushReplay pushes;
     std::vector<VkImageMemoryBarrier> imageBarriers;
     std::vector<VkImageSubresourceRange> clearRanges;
@@ -255,8 +257,8 @@ VKAPI_ATTR VkResult VKAPI_CALL graphics(VkDevice d,VkPipelineCache cache,uint32_
         info.pStages=monoStages.data();
         // Derivative batch indices must not escape their original batch.
         if(info.flags&VK_PIPELINE_CREATE_DERIVATIVE_BIT)throw std::runtime_error("SFS derivative pipelines need batch remapping");
-        auto r=FN(vkCreateGraphicsPipelines)(d,cache,1,&info,a,&out[j]);if(r!=VK_SUCCESS)return r;
-        info.pStages=stages.data();info.renderPass=s->passes.at(info.renderPass);VkPipeline stereo{};r=FN(vkCreateGraphicsPipelines)(d,cache,1,&info,a,&stereo);if(r!=VK_SUCCESS){FN(vkDestroyPipeline)(d,out[j],a);out[j]=VK_NULL_HANDLE;return r;}s->stereoPipelines[out[j]]=stereo;
+        VkResult r;{UnlockedDriverScope unlocked(lock);r=FN(vkCreateGraphicsPipelines)(d,cache,1,&info,a,&out[j]);}if(r!=VK_SUCCESS)return r;
+        info.pStages=stages.data();info.renderPass=s->passes.at(info.renderPass);VkPipeline stereo{};{UnlockedDriverScope unlocked(lock);r=FN(vkCreateGraphicsPipelines)(d,cache,1,&info,a,&stereo);}if(r!=VK_SUCCESS){FN(vkDestroyPipeline)(d,out[j],a);out[j]=VK_NULL_HANDLE;return r;}s->stereoPipelines[out[j]]=stereo;
     }return VK_SUCCESS;
 RESULT_END}
 VKAPI_ATTR VkResult VKAPI_CALL compute(VkDevice d,VkPipelineCache cache,uint32_t count,const VkComputePipelineCreateInfo* infos,const VkAllocationCallbacks* a,VkPipeline* out){RESULT_BEGIN
@@ -269,9 +271,9 @@ VKAPI_ATTR VkResult VKAPI_CALL compute(VkDevice d,VkPipelineCache cache,uint32_t
         const bool indirect=stereo&&!loadProfileShader(s->profile,profileHash(code.data(),uint32_t(code.size()*4)),0,VK_SHADER_STAGE_COMPUTE_BIT);
         std::array<VkShaderModule,2> modules{};
         if(indirect)for(int eye=0;eye<2;++eye){bool ignored{};modules[eye]=compiledModule(s,original,0,ignored,false,eye);}
-        auto r=FN(vkCreateComputePipelines)(d,cache,1,&info,a,&out[j]);if(r!=VK_SUCCESS)return r;
+        VkResult r;{UnlockedDriverScope unlocked(lock);r=FN(vkCreateComputePipelines)(d,cache,1,&info,a,&out[j]);}if(r!=VK_SUCCESS)return r;
         std::array<VkPipeline,2> eyes{};
-        if(indirect)for(int eye=0;eye<2;++eye){info.stage.module=modules[eye];r=FN(vkCreateComputePipelines)(d,cache,1,&info,a,&eyes[eye]);
+        if(indirect)for(int eye=0;eye<2;++eye){info.stage.module=modules[eye];{UnlockedDriverScope unlocked(lock);r=FN(vkCreateComputePipelines)(d,cache,1,&info,a,&eyes[eye]);}
             if(r!=VK_SUCCESS){for(auto p:eyes)if(p)FN(vkDestroyPipeline)(d,p,a);FN(vkDestroyPipeline)(d,out[j],a);out[j]=VK_NULL_HANDLE;return r;}}
         if(indirect)s->indirectPipelines[out[j]]=eyes;
         s->computeStereo[out[j]]=stereo;
@@ -303,16 +305,16 @@ VKAPI_ATTR void VKAPI_CALL bindSets(VkCommandBuffer cb,VkPipelineBindPoint point
     FN(vkCmdBindDescriptorSets)(cb,point,layout,first,count,sets,dynamicCount,dynamic);
 COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL bindVertices(VkCommandBuffer cb,uint32_t first,uint32_t count,const VkBuffer* buffers,const VkDeviceSize* offsets){COMMAND_BEGIN
-    for(uint32_t j=0;j<count;++j)s->commands.at(cb).bindings[0x20000ull+first+j]=[s,cb,index=first+j,b= buffers[j],o=offsets[j]]{FN(vkCmdBindVertexBuffers)(cb,index,1,&b,&o);};FN(vkCmdBindVertexBuffers)(cb,first,count,buffers,offsets);
+    auto& bindings=s->commands.at(cb).bindings;for(uint32_t j=0;j<count;++j)CommandBindings::set(bindings.vertices,first+j,CommandBindings::Vertex{buffers[j],offsets[j]});FN(vkCmdBindVertexBuffers)(cb,first,count,buffers,offsets);
 COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL bindIndex(VkCommandBuffer cb,VkBuffer buffer,VkDeviceSize offset,VkIndexType type){COMMAND_BEGIN
-    auto f=[s,cb,buffer,offset,type]{FN(vkCmdBindIndexBuffer)(cb,buffer,offset,type);};s->commands.at(cb).bindings[0x30000]=f;f();
+    s->commands.at(cb).bindings.index={buffer,offset,type};FN(vkCmdBindIndexBuffer)(cb,buffer,offset,type);
 COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL viewport(VkCommandBuffer cb,uint32_t first,uint32_t count,const VkViewport* values){COMMAND_BEGIN
-    for(uint32_t j=0;j<count;++j)s->commands.at(cb).bindings[0x40000ull+first+j]=[s,cb,index=first+j,v=values[j]]{FN(vkCmdSetViewport)(cb,index,1,&v);};FN(vkCmdSetViewport)(cb,first,count,values);
+    auto& bindings=s->commands.at(cb).bindings;for(uint32_t j=0;j<count;++j)CommandBindings::set(bindings.viewports,first+j,values[j]);FN(vkCmdSetViewport)(cb,first,count,values);
 COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL scissor(VkCommandBuffer cb,uint32_t first,uint32_t count,const VkRect2D* values){COMMAND_BEGIN
-    for(uint32_t j=0;j<count;++j)s->commands.at(cb).bindings[0x50000ull+first+j]=[s,cb,index=first+j,v=values[j]]{FN(vkCmdSetScissor)(cb,index,1,&v);};FN(vkCmdSetScissor)(cb,first,count,values);
+    auto& bindings=s->commands.at(cb).bindings;for(uint32_t j=0;j<count;++j)CommandBindings::set(bindings.scissors,first+j,values[j]);FN(vkCmdSetScissor)(cb,first,count,values);
 COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL push(VkCommandBuffer cb,VkPipelineLayout layout,VkShaderStageFlags flags,uint32_t offset,uint32_t size,const void* values){COMMAND_BEGIN
     s->commands.at(cb).pushes.write(layout,flags,offset,size,values);FN(vkCmdPushConstants)(cb,layout,flags,offset,size,values);
@@ -321,7 +323,7 @@ void replayBindings(const std::shared_ptr<State>& s,VkCommandBuffer cb){
     bindGraphics(s,cb);auto& command=s->commands.at(cb);
     if(!command.stereo)return;
     for(const auto index:command.descriptorOrder.indices()){const auto& binding=command.descriptors[index];if(binding.set)FN(vkCmdBindDescriptorSets)(cb,VK_PIPELINE_BIND_POINT_GRAPHICS,binding.layout,index,1,&binding.set,uint32_t(binding.dynamic.size()),binding.dynamic.data());}
-    for(const auto& binding:command.bindings)binding.second();
+    command.bindings.replay(s->dispatch,cb);
     command.pushes.replay([&](VkPipelineLayout layout,VkShaderStageFlags flags,uint32_t offset,uint32_t size,const void* values){FN(vkCmdPushConstants)(cb,layout,flags,offset,size,values);});
 }
 VKAPI_ATTR void VKAPI_CALL beginPass(VkCommandBuffer cb,const VkRenderPassBeginInfo* i,VkSubpassContents contents){COMMAND_BEGIN
@@ -330,24 +332,24 @@ COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL endPass(VkCommandBuffer cb){COMMAND_BEGIN FN(vkCmdEndRenderPass)(cb);s->commands.at(cb).stereo=false;COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL nextPass(VkCommandBuffer cb,VkSubpassContents contents){COMMAND_BEGIN FN(vkCmdNextSubpass)(cb,contents);replayBindings(s,cb);COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL lineWidth(VkCommandBuffer cb,float width){COMMAND_BEGIN
-    auto f=[s,cb,width]{FN(vkCmdSetLineWidth)(cb,width);};s->commands.at(cb).bindings[0x60000]=f;f();
+    s->commands.at(cb).bindings.line=width;FN(vkCmdSetLineWidth)(cb,width);
 COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL depthBias(VkCommandBuffer cb,float constant,float clamp,float slope){COMMAND_BEGIN
-    auto f=[s,cb,constant,clamp,slope]{FN(vkCmdSetDepthBias)(cb,constant,clamp,slope);};s->commands.at(cb).bindings[0x60001]=f;f();
+    s->commands.at(cb).bindings.bias={constant,clamp,slope};FN(vkCmdSetDepthBias)(cb,constant,clamp,slope);
 COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL blendConstants(VkCommandBuffer cb,const float* values){COMMAND_BEGIN
-    const std::array<float,4> constants{values[0],values[1],values[2],values[3]};auto f=[s,cb,constants]{FN(vkCmdSetBlendConstants)(cb,constants.data());};s->commands.at(cb).bindings[0x60002]=f;f();
+    s->commands.at(cb).bindings.blend={values[0],values[1],values[2],values[3]};FN(vkCmdSetBlendConstants)(cb,values);
 COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL depthBounds(VkCommandBuffer cb,float min,float max){COMMAND_BEGIN
-    auto f=[s,cb,min,max]{FN(vkCmdSetDepthBounds)(cb,min,max);};s->commands.at(cb).bindings[0x60003]=f;f();
+    s->commands.at(cb).bindings.bounds={min,max};FN(vkCmdSetDepthBounds)(cb,min,max);
 COMMAND_END}
 #define STENCIL_WRAPPER(handler,api,slot) \
 VKAPI_ATTR void VKAPI_CALL handler(VkCommandBuffer cb,VkStencilFaceFlags faces,uint32_t value){COMMAND_BEGIN \
-    for(uint32_t face=VK_STENCIL_FACE_FRONT_BIT;face<=VK_STENCIL_FACE_BACK_BIT;face<<=1)if(faces&face){auto f=[s,cb,face,value]{FN(api)(cb,face,value);};s->commands.at(cb).bindings[slot+face]=f;f();} \
+    s->commands.at(cb).bindings.setStencil(slot,faces,value);FN(api)(cb,faces,value); \
 COMMAND_END}
-STENCIL_WRAPPER(stencilCompare,vkCmdSetStencilCompareMask,0x61000)
-STENCIL_WRAPPER(stencilWrite,vkCmdSetStencilWriteMask,0x62000)
-STENCIL_WRAPPER(stencilReference,vkCmdSetStencilReference,0x63000)
+STENCIL_WRAPPER(stencilCompare,vkCmdSetStencilCompareMask,0)
+STENCIL_WRAPPER(stencilWrite,vkCmdSetStencilWriteMask,1)
+STENCIL_WRAPPER(stencilReference,vkCmdSetStencilReference,2)
 #undef STENCIL_WRAPPER
 VKAPI_ATTR void VKAPI_CALL dispatch(VkCommandBuffer cb,uint32_t x,uint32_t y,uint32_t z){COMMAND_BEGIN
     uint32_t depth{};if(!dispatchDepth(z,s->computeStereo.at(s->commands.at(cb).compute),65535,depth))throw std::runtime_error("Stereo dispatch exceeds limit");FN(vkCmdDispatch)(cb,x,y,depth);
@@ -367,7 +369,9 @@ VKAPI_ATTR void VKAPI_CALL dispatchIndirect(VkCommandBuffer cb,VkBuffer buffer,V
     FN(vkCmdBindPipeline)(cb,VK_PIPELINE_BIND_POINT_COMPUTE,pipeline);
 COMMAND_END}
 VkImageSubresourceRange range(const std::shared_ptr<State>& s,VkImage image,VkImageSubresourceRange value){if(s->images.layers(image)==2&&value.baseArrayLayer==0&&value.layerCount==1)value.layerCount=2;return value;}
-VKAPI_ATTR void VKAPI_CALL barriers(VkCommandBuffer cb,VkPipelineStageFlags src,VkPipelineStageFlags dst,VkDependencyFlags deps,uint32_t nm,const VkMemoryBarrier* m,uint32_t nb,const VkBufferMemoryBarrier* b,uint32_t ni,const VkImageMemoryBarrier* i){COMMAND_BEGIN
+VKAPI_ATTR void VKAPI_CALL barriers(VkCommandBuffer cb,VkPipelineStageFlags src,VkPipelineStageFlags dst,VkDependencyFlags deps,uint32_t nm,const VkMemoryBarrier* m,uint32_t nb,const VkBufferMemoryBarrier* b,uint32_t ni,const VkImageMemoryBarrier* i){
+    if(!ni){try{auto s=state(cb);FN(vkCmdPipelineBarrier)(cb,src,dst,deps,nm,m,nb,b,0,i);return;}catch(const std::exception& e){commandFailure(e.what());}}
+    COMMAND_BEGIN
     auto& images=s->commands.at(cb).imageBarriers;images.clear();if(ni)images.assign(i,i+ni);for(auto& image:images){image.subresourceRange=range(s,image.image,image.subresourceRange);
         if(s->sources&&s->sources->ownsImage(image.image)){
             if(image.oldLayout==VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)image.oldLayout=VK_IMAGE_LAYOUT_GENERAL;

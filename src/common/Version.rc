@@ -1,17 +1,17 @@
 #include <windows.h>
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 1,0,3,1031
- PRODUCTVERSION 1,0,3,1031
+ FILEVERSION 1,1,0,1100
+ PRODUCTVERSION 1,1,0,1100
  FILETYPE VFT_DLL
 BEGIN
  BLOCK "StringFileInfo"
  BEGIN
   BLOCK "040904b0"
   BEGIN
-   VALUE "FileDescription", "KHARVOX Vulkan layer 1.03\0"
-   VALUE "FileVersion", "1.0.3.1031\0"
+   VALUE "FileDescription", "KHARVOX Vulkan layer 1.1\0"
+   VALUE "FileVersion", "1.1.0.1100\0"
    VALUE "ProductName", "KHARVOX\0"
-   VALUE "ProductVersion", "1.0.3\0"
+   VALUE "ProductVersion", "1.1.0\0"
   END
  END
  BLOCK "VarFileInfo"

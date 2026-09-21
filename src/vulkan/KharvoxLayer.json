@@ -5,8 +5,8 @@
     "type": "GLOBAL",
     "library_path": ".\\KharvoxLayer.dll",
     "api_version": "1.3.0",
-    "implementation_version": "1031",
-    "description": "KHARVOX 1.03 Vulkan OpenXR layer (SFS / AER)",
+    "implementation_version": "1100",
+    "description": "KHARVOX 1.1 Vulkan OpenXR layer (SFS / AER)",
     "enable_environment": { "KHARVOX_ENABLE_LAYER": "1" },
     "disable_environment": { "KHARVOX_DISABLE_LAYER": "1" }
   }

@@ -35,6 +35,7 @@ internal sealed class VrGameIntroSession : IDisposable
     private readonly EventWaitHandle release;
     private readonly EventWaitHandle released;
     private Process? process;
+    private bool disposed;
 
     private VrGameIntroSession()
     {
@@ -88,6 +89,8 @@ internal sealed class VrGameIntroSession : IDisposable
 
     public void Dispose()
     {
+        if (disposed) return;
+        disposed = true;
         release.Set();
         if (process is not null)
         {

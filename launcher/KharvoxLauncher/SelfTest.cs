@@ -46,6 +46,10 @@ internal static class SelfTest
             Require(VrGameIntroSession.ShouldPlayIntro(false, true), "first intro required despite default disable checkbox");
             Require(!VrGameIntroSession.ShouldPlayIntro(true, true), "checked disables repeat intro");
             Require(VrGameIntroSession.ShouldPlayIntro(true, false), "unchecked repeats intro");
+            Require(KharvoxRunner.ShouldRestoreStartupFocus(1,1,2,false), "startup restores launcher-owned focus");
+            Require(KharvoxRunner.ShouldRestoreStartupFocus(2,1,2,false), "startup accepts existing game focus");
+            Require(KharvoxRunner.ShouldRestoreStartupFocus(0,1,2,true), "startup restores desktop focus");
+            Require(!KharvoxRunner.ShouldRestoreStartupFocus(3,1,2,false), "startup preserves unrelated app focus");
             var introSettingsPath = Path.Combine(testRoot, "intro-settings.json");
             LauncherSettingsStore.Save(introSettingsPath, new LauncherSettings { SettingsVersion = 31, DisableVrIntro = false });
             Require(!LauncherSettingsStore.Load(introSettingsPath).DisableVrIntro, "repeat intro preference persists");

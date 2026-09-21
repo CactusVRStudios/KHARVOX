@@ -16,8 +16,11 @@ inline void logDiagnosticDuration(const char* operation, long long begin,
     const double ms = frequency > 0 ? (end - begin) * 1000.0 / frequency : 0;
     if (ms < thresholdMs) return;
     try {
+        DWORD foregroundPid{};GetWindowThreadProcessId(GetForegroundWindow(),&foregroundPid);
         writeRuntimeLog("[KHARVOX][STALL]", std::string(operation) + " ms="
-            + std::to_string(ms) + " thread=" + std::to_string(GetCurrentThreadId()));
+            + std::to_string(ms) + " thread=" + std::to_string(GetCurrentThreadId())
+            + " foregroundPid=" + std::to_string(foregroundPid)
+            + " gameForeground=" + std::to_string(foregroundPid==GetCurrentProcessId()));
     } catch (...) {}
 }
 class DiagnosticDuration {

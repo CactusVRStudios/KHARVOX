@@ -141,7 +141,7 @@ internal sealed class KharvoxLaunchOptions
 
 internal static class KharvoxRunner
 {
-    internal const string BuildId = "2026.09.21-launcher-v1.1-render-test";
+    internal const string BuildId = "2026.09.21-launcher-v1.1-startup-test2";
     private const string LayerName = "VK_LAYER_KHARVOX_OPENXR";
     private const string RegistryPath = @"SOFTWARE\Khronos\Vulkan\ImplicitLayers";
     private static readonly CultureInfo Invariant = CultureInfo.InvariantCulture;
@@ -771,6 +771,29 @@ internal static class KharvoxRunner
             foreach (var path in temporaryFiles)
             {
                 try { File.Delete(path); } catch { }
+            }
+            if (launchSucceeded && currentGame is not null)
+            {
+                // Finish the helper handoff before the final startup activation.
+                // Do not activate windows from the renderer or keep stealing focus.
+                gameIntro?.Dispose();
+                await Task.Delay(250).ConfigureAwait(false);
+                try
+                {
+                    var foreground = GetForegroundWindow();
+                    var foregroundPid = ForegroundProcessId();
+                    using var launcher = Process.GetCurrentProcess();
+                    var shell = GetShellWindow();
+                    if (ShouldRestoreStartupFocus(foregroundPid, (uint)launcher.Id,
+                        (uint)currentGame.Id, foreground == IntPtr.Zero || foreground == shell))
+                    {
+                        var target = FindDoomWindow(currentGame);
+                        var focused = target != IntPtr.Zero && FocusWindow(target, currentGame.Id);
+                        AppendFocusLog(Path.Combine(Path.GetTempPath(), "KHARVOX.log"), "post-intro-handoff", focused, foregroundPid, 1);
+                    }
+                    else AppendFocusLog(Path.Combine(Path.GetTempPath(), "KHARVOX.log"), "post-handoff-other-app-preserved", false, foregroundPid, 0);
+                }
+                catch (InvalidOperationException) { }
             }
             if (!launchSucceeded)
             {
@@ -1510,6 +1533,10 @@ internal static class KharvoxRunner
         }
     }
 
+    internal static bool ShouldRestoreStartupFocus(uint foreground, uint launcher, uint game, bool desktop) =>
+        desktop || foreground == launcher || foreground == game;
+
+    [DllImport("user32.dll")] private static extern IntPtr GetShellWindow();
     private static uint ForegroundProcessId()
     {
         var foreground = GetForegroundWindow();

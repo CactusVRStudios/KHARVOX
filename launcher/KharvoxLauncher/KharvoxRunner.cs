@@ -141,7 +141,7 @@ internal sealed class KharvoxLaunchOptions
 
 internal static class KharvoxRunner
 {
-    internal const string BuildId = "2026.09.21-launcher-v1.1-startup-test2";
+    internal const string BuildId = "2026.09.21-launcher-v1.1-intro-test3";
     private const string LayerName = "VK_LAYER_KHARVOX_OPENXR";
     private const string RegistryPath = @"SOFTWARE\Khronos\Vulkan\ImplicitLayers";
     private static readonly CultureInfo Invariant = CultureInfo.InvariantCulture;
@@ -452,7 +452,6 @@ internal static class KharvoxRunner
             EnableLayerForGame(psi);
             psi.EnvironmentVariables.Remove("KHARVOX_VR_INTRO");
             psi.EnvironmentVariables.Remove("KHARVOX_VR_INTRO_HANDOFF");
-            if (gameIntro is not null) psi.EnvironmentVariables["KHARVOX_VR_INTRO_HANDOFF"] = gameIntro.Token;
             psi.EnvironmentVariables["KHARVOX_EXTENDED_LOGGING"] = options.ExtendedLogging ? "1" : "0";
             psi.EnvironmentVariables.Remove("VK_LOADER_DEBUG");
             if (options.ExtendedLogging)

@@ -22,6 +22,9 @@ foreach($name in @('enable_live_ammo_calibration','enable_xr_session','TEST-NOTE
     if(Test-Path -LiteralPath $path){Remove-Item -LiteralPath $path}
 }
 foreach($name in @('KharvoxLayer.dll','native_sfs_build.txt')){Copy-Item -LiteralPath (Join-Path $NativeOutput $name) -Destination $package}
+if(Test-Path -LiteralPath (Join-Path $NativeOutput 'KharvoxIntro.exe')){
+    Copy-Item -LiteralPath (Join-Path $NativeOutput 'KharvoxIntro.exe') -Destination $package
+}
 foreach($name in @('KharvoxLauncher.exe','KharvoxLauncher.exe.config')){Copy-Item -LiteralPath (Join-Path $LauncherOutput $name) -Destination $package}
 Copy-Item -LiteralPath "$source/src/vulkan/KharvoxLayer.json" -Destination $package
 foreach($name in @('hand_models_calibration_default.cfg','offhand_hud_default.cfg')){

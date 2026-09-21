@@ -91,7 +91,7 @@ struct IntroApp {
         dismissed=event(L"-dismissed");release=event(L"-release");released=event(L"-released");parent=OpenProcess(SYNCHRONIZE,FALSE,parentId);
         if(!dismissed||!release||!released||!parent)throw std::runtime_error("Intro launcher handshake unavailable");
         }
-        log<<"Launch mode: "<<(standalone?"direct demo; exit on button; no DOOM":"launcher; black handoff to DOOM")<<'\n'<<std::flush;
+        log<<"Launch mode: "<<(standalone?"direct demo; exit on button; no DOOM":"launcher; exit before DOOM starts")<<'\n'<<std::flush;
         loader=LoadLibraryExW(kharvox::runtimePath(L"openxr_loader.dll").c_str(),nullptr,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
         if(!loader)throw std::runtime_error("openxr_loader.dll unavailable");
         getProc=reinterpret_cast<PFN_xrGetInstanceProcAddr>(GetProcAddress(loader,"xrGetInstanceProcAddr"));if(!getProc)throw std::runtime_error("OpenXR loader entry unavailable");
@@ -219,18 +219,24 @@ struct IntroApp {
             input.presented=true;
             if(!firstShown){hr(music.start(),"Start intro chiptune");log<<"Music playing\n"<<std::flush;}
             firstShown=true;
-        }else if(dismissed)SetEvent(dismissed);}
+        }}
+        if(input.dismissed&&dismissed)SetEvent(dismissed);
         hr(music.status(),"Intro audio stream");
     }
     int run(){
         while(!stopping){
             kharvox::intro::DesktopPreview::pump();
+            if(preview.closeRequested()&&!input.dismissed){
+                input.dismissed=true;music.stop();
+                trace("Desktop close: dismiss intro and continue to DOOM");
+                if(dismissed)SetEvent(dismissed);
+            }
             auto now=GetTickCount64();
-            bool leave=standalone?input.dismissed:
-                (WaitForSingleObject(release,0)==WAIT_OBJECT_0||WaitForSingleObject(parent,0)==WAIT_OBJECT_0);
+            bool leave=input.dismissed||(!standalone&&
+                (WaitForSingleObject(release,0)==WAIT_OBJECT_0||WaitForSingleObject(parent,0)==WAIT_OBJECT_0));
             if(blackAt&&now-blackAt>120000)leave=true;
             if(!firstShown&&now-start>60000)throw std::runtime_error("Headset did not display intro within 60 seconds");
-            if(leave&&!exitRequested){if(running){trace("xrRequestExitSession begin");check(xrRequestExitSession(session),"Request intro handoff");trace("xrRequestExitSession completed");exitRequested=true;exitAt=now;log<<(standalone?"Direct demo finished; releasing XR session\n":"DOOM requests XR ownership; releasing black session\n")<<std::flush;}else break;}
+            if(leave&&!exitRequested){if(running){trace("xrRequestExitSession begin");check(xrRequestExitSession(session),"Request intro handoff");trace("xrRequestExitSession completed");exitRequested=true;exitAt=now;log<<(standalone?"Direct demo finished; releasing XR session\n":"Intro dismissed; releasing XR session before DOOM starts\n")<<std::flush;}else break;}
             if(exitRequested&&now-exitAt>5000)break;
             XrEventDataBuffer event{XR_TYPE_EVENT_DATA_BUFFER};
             while(xrPollEvent(instance,&event)==XR_SUCCESS){

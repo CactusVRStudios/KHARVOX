@@ -4,9 +4,11 @@ The launcher starts a dedicated instance of `KharvoxLauncher.exe --vr-intro` on
 the first actual Launch Game action and after upgrading to a newer release. Native rendering and embedded assets live
 in the existing `KharvoxLayer.dll`. The package also ships `KharvoxIntro.exe`
 as an independently clickable demo with the same embedded assets and renderer.
-It waits for the intro to submit black before starting DOOM. DOOM requests XR
-ownership immediately before creating its session; the helper acknowledges only
-after GPU completion and audio, desktop, OpenXR and COM cleanup.
+Closing the preview or dismissing the intro requests teardown. The launcher waits
+for the helper process to exit before starting DOOM, so the two applications do
+not hold VR sessions concurrently. If teardown stalls, the launcher terminates
+only its own intro helper after seven seconds and verifies process termination.
+The desktop close button also continues to DOOM; the standalone demo simply exits.
 
 Running `KharvoxLauncher.exe --vr-intro` without further arguments runs the demo independently. A button
 press exits without launching DOOM or updating the launcher's seen-release marker.

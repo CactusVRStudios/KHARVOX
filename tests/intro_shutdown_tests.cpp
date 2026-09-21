@@ -39,6 +39,9 @@ int main(){try{
             D3D_FEATURE_LEVEL level;
             require(SUCCEEDED(D3D11CreateDevice(nullptr,D3D_DRIVER_TYPE_WARP,nullptr,0,nullptr,0,D3D11_SDK_VERSION,&app.device,&level,&app.context)),"WARP unavailable");
             app.renderer.initialize(app.device.Get());app.preview.initialize(app.device.Get(),false);
+            require(!app.preview.closeRequested(),"preview starts closed");
+            SendMessageW(app.preview.handle(),WM_CLOSE,0,0);
+            require(app.preview.closeRequested(),"window close did not request dismissal");
             require(app.scene.makeText(),"font missing");app.renderer.prepare(app.context.Get(),app.scene,2.f);
             std::array<XrView,2> views{};for(auto& view:views)view.pose.orientation.w=1;
             app.preview.draw(app.context.Get(),app.renderer,app.scene,views,2.f,false);

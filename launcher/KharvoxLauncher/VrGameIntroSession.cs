@@ -3,7 +3,7 @@ using System.Threading;
 
 namespace KharvoxLauncher;
 
-// Hosts the VR scene in a dedicated launcher process, retaining the black handoff.
+// The owned helper must exit before DOOM can acquire the runtime and GPU.
 internal sealed class VrGameIntroSession : IDisposable
 {
     internal static string MarkerPath => Path.Combine(
@@ -75,16 +75,36 @@ internal sealed class VrGameIntroSession : IDisposable
             while (!intro.dismissed.WaitOne(0))
             {
                 if (intro.process.HasExited)
+                {
+                    if (intro.dismissed.WaitOne(0)) break;
                     throw StartupFailure(intro.process.ExitCode);
+                }
                 await Task.Delay(50).ConfigureAwait(false);
             }
+            status?.Invoke("Closing VR intro before starting DOOM ...");
+            intro.release.Set();
+            // Session teardown can block inside a runtime. Bound the wait and
+            // terminate only our helper, then verify OS process termination.
+            await Task.Run(() => intro.StopProcess()).ConfigureAwait(false);
             Directory.CreateDirectory(Path.GetDirectoryName(markerPath)!);
             if (NeedsIntroFile(markerPath))
                 File.WriteAllText(markerPath, ReleaseVersion + Environment.NewLine);
-            status?.Invoke("Starting DOOM - keeping the headset black until VR handoff ...");
+            status?.Invoke("VR intro closed. Starting DOOM ...");
             return intro;
         }
         catch { intro.Dispose(); throw; }
+    }
+
+    private void StopProcess()
+    {
+        if (process is null) return;
+        if (!process.WaitForExit(7000))
+        {
+            try { process.Kill(); }
+            catch (InvalidOperationException) when (process.HasExited) { }
+            if (!process.WaitForExit(5000))
+                throw new InvalidOperationException("VR intro could not be stopped. DOOM was not started to avoid overlapping VR sessions.");
+        }
     }
 
     public void Dispose()
@@ -96,12 +116,7 @@ internal sealed class VrGameIntroSession : IDisposable
         {
             try
             {
-                if (!process.WaitForExit(7000))
-                {
-                    // Only the helper instance created by this session is owned.
-                    process.Kill();
-                    process.WaitForExit(2000);
-                }
+                StopProcess();
             }
             catch (InvalidOperationException) { }
             finally { process.Dispose(); }

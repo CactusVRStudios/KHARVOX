@@ -17,9 +17,15 @@ class DesktopPreview {
     Microsoft::WRL::ComPtr<IDXGISwapChain1> swapchain;
     Microsoft::WRL::ComPtr<ID3D11RenderTargetView> target;
     ULONGLONG lastFrame{};
-    bool wasBlack{},visible{};
+    bool wasBlack{},visible{},closed{};
     static LRESULT CALLBACK windowProc(HWND window,UINT message,WPARAM w,LPARAM l){
-        if(message==WM_CLOSE){ShowWindow(window,SW_HIDE);return 0;}
+        if(message==WM_NCCREATE)SetWindowLongPtrW(window,GWLP_USERDATA,
+            reinterpret_cast<LONG_PTR>(reinterpret_cast<CREATESTRUCTW*>(l)->lpCreateParams));
+        if(message==WM_CLOSE){
+            auto* preview=reinterpret_cast<DesktopPreview*>(GetWindowLongPtrW(window,GWLP_USERDATA));
+            if(preview)preview->closed=true;
+            ShowWindow(window,SW_HIDE);return 0;
+        }
         if(message==WM_ERASEBKGND)return 1;
         return DefWindowProcW(window,message,w,l);
     }
@@ -35,7 +41,7 @@ public:
         constexpr DWORD style=WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX;
         RECT bounds{0,0,LONG(desktopWidth),LONG(desktopHeight)};AdjustWindowRect(&bounds,style,FALSE);
         window=CreateWindowExW(0,wc.lpszClassName,L"KHARVOX — VR Game Intro",style,CW_USEDEFAULT,CW_USEDEFAULT,
-            bounds.right-bounds.left,bounds.bottom-bounds.top,nullptr,nullptr,wc.hInstance,nullptr);
+            bounds.right-bounds.left,bounds.bottom-bounds.top,nullptr,nullptr,wc.hInstance,this);
         if(!window)throw std::runtime_error("Cannot create intro preview window");
         Microsoft::WRL::ComPtr<IDXGIDevice> dxgi;Microsoft::WRL::ComPtr<IDXGIAdapter> adapter;
         Microsoft::WRL::ComPtr<IDXGIFactory2> factory;
@@ -62,5 +68,6 @@ public:
         lastFrame=now;wasBlack=black;
     }
     HWND handle()const{return window;}
+    bool closeRequested()const{return closed;}
 };
 }

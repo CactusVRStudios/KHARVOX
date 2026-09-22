@@ -1,0 +1,3 @@
+- FSR fix in launcher
+- Minor Vulkan performance fixes
+- Trying to minimize low FPS on first launch (Known issue)

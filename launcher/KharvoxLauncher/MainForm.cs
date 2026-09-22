@@ -217,11 +217,13 @@ public sealed class MainForm : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 2,
+            RowCount = 1,
             Margin = Padding.Empty,
             Padding = Padding.Empty
         };
         renderScaleRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, renderingInputWidth));
         renderScaleRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        renderScaleRow.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         renderScale.Dock = DockStyle.Fill;
         useFsrUpscaling.Dock = DockStyle.Fill;
         useFsrUpscaling.CheckedChanged += OptionChanged;

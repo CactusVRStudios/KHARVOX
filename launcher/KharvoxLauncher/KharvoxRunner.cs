@@ -450,6 +450,7 @@ internal static class KharvoxRunner
                 RedirectStandardError = options.ExtendedLogging
             };
             EnableLayerForGame(psi);
+            DisableConflictingOpenXrApiLayers(psi);
             psi.EnvironmentVariables.Remove("KHARVOX_VR_INTRO");
             psi.EnvironmentVariables.Remove("KHARVOX_VR_INTRO_HANDOFF");
             psi.EnvironmentVariables["KHARVOX_EXTENDED_LOGGING"] = options.ExtendedLogging ? "1" : "0";
@@ -573,7 +574,8 @@ internal static class KharvoxRunner
                 " steamVrNativeSourceScale=" +
                     (steamVrLayerIsolation ? Inv(steamNativeSourceScale) + "%" : "inactive") +
                 " steamVrAsyncReprojection=" + steamVrAsyncReprojection +
-                " externalOpenXrApiLayer=" + (steamVrLayerIsolation ? "disabled" : "runtime-default") +
+                " reshadeOpenXrLayer=disabled" +
+                " externalOpenXrApiLayer=" + (steamVrLayerIsolation ? "isolated" : "runtime-default") +
                 " doomAsyncCompute=disabled renderer=" + (sfsEnabled ? "VULKAN_SFS" : nativeStereoEnabled ? "NATIVE (experimental; headset unvalidated)" : "AER") +
                 " fsr1=" + (fsr1Enabled ? "enabled" : "disabled") + Environment.NewLine +
                 "[KHARVOX][LAUNCHER] gameArguments=" + psi.Arguments + Environment.NewLine);
@@ -844,6 +846,15 @@ internal static class KharvoxRunner
         startInfo.EnvironmentVariables.Remove("KHARVOX_DISABLE_LAYER");
     }
 
+    internal static void DisableConflictingOpenXrApiLayers(ProcessStartInfo startInfo)
+    {
+        // ReShade registers an implicit OpenXR layer system-wide. Loading it
+        // alongside KHARVOX can introduce severe, progressive frame drops.
+        // Use ReShade's manifest-defined switch in the child environment so
+        // other OpenXR applications keep their existing configuration.
+        startInfo.EnvironmentVariables["DISABLE_XR_APILAYER_reshade_1"] = "1";
+    }
+
     internal static void DisableLayerRegistrationsOnExit()
     {
         // Do not interfere with a different launcher currently starting DOOM.
@@ -1032,7 +1043,8 @@ internal static class KharvoxRunner
             "DISABLE_VK_LAYER_VALVE_steam_overlay_1",
             "DISABLE_VK_LAYER_VALVE_steam_fossilize_1",
             "DISABLE_VULKAN_OBS_CAPTURE", "EOS_OVERLAY_DISABLE_VULKAN_WIN64",
-            "DISABLE_XR_APILAYER_VIRTUALDESKTOP_OCULUS_COMPATIBILITY"
+            "DISABLE_XR_APILAYER_VIRTUALDESKTOP_OCULUS_COMPATIBILITY",
+            "DISABLE_XR_APILAYER_reshade_1"
         })
         {
             var value = processStart.EnvironmentVariables[name];

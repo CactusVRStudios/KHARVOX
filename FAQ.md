@@ -112,34 +112,14 @@ If the launcher says it is still running as administrator, Windows UAC may be di
 
 ## ReShade / OpenXR API Layer Conflict
 
-An old or active ReShade OpenXR API layer can prevent VR from starting correctly.
+An old or active ReShade OpenXR API layer can prevent VR from starting correctly or cause severe frame drops after several minutes of gameplay.
 
 ### Fix
 
-1. Press `Windows + R`.
-2. Type `regedit`.
-3. Go to:
+- Update KHARVOX to a release whose launcher disables the ReShade OpenXR layer for DOOM.
+- Restart DOOM and the KHARVOX launcher after updating.
 
-```text
-HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Khronos\OpenXR\1\ApiLayers\Implicit
-```
-
-4. Look for an entry similar to:
-
-```text
-C:\ProgramData\ReShade\ReShade32_XR.json
-```
-
-5. Either change its value to `1` or delete the entry.
-
-```text
-1 = disabled
-0 = enabled
-```
-
-6. Restart Virtual Desktop Streamer on your PC.
-
-This can help if the game does not start directly in VR or if there is a ReShade/OpenXR conflict.
+KHARVOX uses ReShade's per-process disable switch. It does not change the registry or disable ReShade for other games.
 
 ## Pancake Mode After Playing in VR
 

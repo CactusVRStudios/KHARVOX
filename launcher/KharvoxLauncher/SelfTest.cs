@@ -679,6 +679,15 @@ internal static class SelfTest
         Require(Environment.GetEnvironmentVariable("KHARVOX_ENABLE_LAYER") == previousEnable,
             "layer opt-in does not modify launcher environment");
 
+        var previousReShadeDisable = Environment.GetEnvironmentVariable(
+            "DISABLE_XR_APILAYER_reshade_1");
+        KharvoxRunner.DisableConflictingOpenXrApiLayers(game);
+        Require(game.EnvironmentVariables["DISABLE_XR_APILAYER_reshade_1"] == "1",
+            "DOOM disables the conflicting ReShade OpenXR layer");
+        Require(Environment.GetEnvironmentVariable("DISABLE_XR_APILAYER_reshade_1")
+            == previousReShadeDisable,
+            "ReShade isolation does not modify the launcher or global environment");
+
         var testKey = @"Software\KHARVOX\SelfTest\" + Guid.NewGuid().ToString("N");
         using var hive = Microsoft.Win32.RegistryKey.OpenBaseKey(
             Microsoft.Win32.RegistryHive.CurrentUser, Microsoft.Win32.RegistryView.Registry64);

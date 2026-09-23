@@ -4,6 +4,7 @@
 #include "PushReplay.h"
 #include "DescriptorBindOrder.h"
 #include "CommandCpuTiming.h"
+#include "CommandLookupCache.h"
 #include "CommandBindings.h"
 #include "UnlockedDriverScope.h"
 #include "ShaderCompiler.h"
@@ -122,6 +123,9 @@ template<class T>std::shared_ptr<State> state(T handle){
 [[noreturn]] void commandFailure(const char* message){note(message);RaiseFailFastException(nullptr,nullptr,0);std::terminate();}
 #define COMMAND_BEGIN try {CommandCpuTiming timing;auto s=state(cb);std::shared_lock<std::shared_mutex> lock(s->mutex);timing.acquired();
 #define COMMAND_END }catch(const std::exception& e){commandFailure(e.what());}
+// One hash lookup per command buffer per thread instead of one to three per
+// command. Every erase of s->commands below calls CommandLookupCache::invalidate().
+CommandState& commandOf(const std::shared_ptr<State>& s,VkCommandBuffer cb){return CommandLookupCache::find(s.get(),s->commands,cb);}
 
 VkShaderModule compiledModule(const std::shared_ptr<State>& s,VkShaderModule original,uint64_t variant,bool& stereoCompute,bool shadowProjection=false,int indirectEye=-1,bool monoView=false){
     const auto found=s->shaders.find(original);if(found==s->shaders.end())throw std::runtime_error("Untracked game shader module");
@@ -280,82 +284,82 @@ VKAPI_ATTR VkResult VKAPI_CALL compute(VkDevice d,VkPipelineCache cache,uint32_t
     }return VK_SUCCESS;
 RESULT_END}
 VKAPI_ATTR void VKAPI_CALL destroyPipeline(VkDevice d,VkPipeline pipeline,const VkAllocationCallbacks* a){auto s=state(d);std::unique_lock<std::shared_mutex> lock(s->mutex);auto it=s->stereoPipelines.find(pipeline);if(it!=s->stereoPipelines.end()){FN(vkDestroyPipeline)(d,it->second,a);s->stereoPipelines.erase(it);}auto indirect=s->indirectPipelines.find(pipeline);if(indirect!=s->indirectPipelines.end()){for(auto eye:indirect->second)FN(vkDestroyPipeline)(d,eye,a);s->indirectPipelines.erase(indirect);}s->computeStereo.erase(pipeline);FN(vkDestroyPipeline)(d,pipeline,a);}
-VKAPI_ATTR VkResult VKAPI_CALL beginCommand(VkCommandBuffer cb,const VkCommandBufferBeginInfo* i){try{auto s=state(cb);std::shared_lock<std::shared_mutex> lock(s->mutex);if(i->pInheritanceInfo&&i->pInheritanceInfo->renderPass)return VK_ERROR_FEATURE_NOT_PRESENT;auto& command=s->commands.at(cb);command.stereo=false;command.compute=VK_NULL_HANDLE;command.graphics=VK_NULL_HANDLE;for(auto& descriptor:command.descriptors)descriptor.set=VK_NULL_HANDLE;command.descriptorOrder.clear();command.bindings.clear();command.pushes.clear();return FN(vkBeginCommandBuffer)(cb,i);}catch(const std::exception& e){note(e.what());return VK_ERROR_INITIALIZATION_FAILED;}}
+VKAPI_ATTR VkResult VKAPI_CALL beginCommand(VkCommandBuffer cb,const VkCommandBufferBeginInfo* i){try{auto s=state(cb);std::shared_lock<std::shared_mutex> lock(s->mutex);if(i->pInheritanceInfo&&i->pInheritanceInfo->renderPass)return VK_ERROR_FEATURE_NOT_PRESENT;auto& command=commandOf(s,cb);command.stereo=false;command.compute=VK_NULL_HANDLE;command.graphics=VK_NULL_HANDLE;for(auto& descriptor:command.descriptors)descriptor.set=VK_NULL_HANDLE;command.descriptorOrder.clear();command.bindings.clear();command.pushes.clear();return FN(vkBeginCommandBuffer)(cb,i);}catch(const std::exception& e){note(e.what());return VK_ERROR_INITIALIZATION_FAILED;}}
 VKAPI_ATTR VkResult VKAPI_CALL allocateCommands(VkDevice d,const VkCommandBufferAllocateInfo* i,VkCommandBuffer* out){RESULT_BEGIN
     auto r=FN(vkAllocateCommandBuffers)(d,i,out);if(r==VK_SUCCESS)for(uint32_t j=0;j<i->commandBufferCount;++j){s->commandPools[out[j]]=i->commandPool;s->commands.try_emplace(out[j]);}return r;
 RESULT_END}
-VKAPI_ATTR void VKAPI_CALL freeCommands(VkDevice d,VkCommandPool pool,uint32_t count,const VkCommandBuffer* commands){auto s=state(d);std::unique_lock<std::shared_mutex> lock(s->mutex);for(uint32_t j=0;j<count;++j){s->commands.erase(commands[j]);s->commandPools.erase(commands[j]);}FN(vkFreeCommandBuffers)(d,pool,count,commands);}
-VKAPI_ATTR void VKAPI_CALL destroyCommandPool(VkDevice d,VkCommandPool pool,const VkAllocationCallbacks* a){auto s=state(d);std::unique_lock<std::shared_mutex> lock(s->mutex);for(auto it=s->commandPools.begin();it!=s->commandPools.end();)if(it->second==pool){s->commands.erase(it->first);it=s->commandPools.erase(it);}else ++it;FN(vkDestroyCommandPool)(d,pool,a);}
+VKAPI_ATTR void VKAPI_CALL freeCommands(VkDevice d,VkCommandPool pool,uint32_t count,const VkCommandBuffer* commands){auto s=state(d);std::unique_lock<std::shared_mutex> lock(s->mutex);for(uint32_t j=0;j<count;++j){s->commands.erase(commands[j]);s->commandPools.erase(commands[j]);}CommandLookupCache::invalidate();FN(vkFreeCommandBuffers)(d,pool,count,commands);}
+VKAPI_ATTR void VKAPI_CALL destroyCommandPool(VkDevice d,VkCommandPool pool,const VkAllocationCallbacks* a){auto s=state(d);std::unique_lock<std::shared_mutex> lock(s->mutex);for(auto it=s->commandPools.begin();it!=s->commandPools.end();)if(it->second==pool){s->commands.erase(it->first);it=s->commandPools.erase(it);}else ++it;CommandLookupCache::invalidate();FN(vkDestroyCommandPool)(d,pool,a);}
 void bindGraphics(const std::shared_ptr<State>& s,VkCommandBuffer cb){
-    auto& command=s->commands.at(cb);if(!command.graphics)return;
+    auto& command=commandOf(s,cb);if(!command.graphics)return;
     auto found=s->stereoPipelines.find(command.graphics);if(found==s->stereoPipelines.end())throw std::runtime_error("Untracked SFS graphics pipeline");
     FN(vkCmdBindPipeline)(cb,VK_PIPELINE_BIND_POINT_GRAPHICS,command.stereo?found->second:command.graphics);
 }
 VKAPI_ATTR void VKAPI_CALL bindPipeline(VkCommandBuffer cb,VkPipelineBindPoint point,VkPipeline pipeline){COMMAND_BEGIN
-    auto& command=s->commands.at(cb);if(point==VK_PIPELINE_BIND_POINT_COMPUTE){command.compute=pipeline;FN(vkCmdBindPipeline)(cb,point,pipeline);return;}
+    auto& command=commandOf(s,cb);if(point==VK_PIPELINE_BIND_POINT_COMPUTE){command.compute=pipeline;FN(vkCmdBindPipeline)(cb,point,pipeline);return;}
     command.graphics=pipeline;bindGraphics(s,cb);
 COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL bindSets(VkCommandBuffer cb,VkPipelineBindPoint point,VkPipelineLayout layout,uint32_t first,uint32_t count,const VkDescriptorSet* sets,uint32_t dynamicCount,const uint32_t* dynamic){COMMAND_BEGIN
-    auto& descriptors=s->commands.at(cb).descriptors;
+    auto& descriptors=commandOf(s,cb).descriptors;
     if(point==VK_PIPELINE_BIND_POINT_GRAPHICS&&descriptors.size()<size_t(first)+count)descriptors.resize(size_t(first)+count);
     uint32_t offset=0;for(uint32_t j=0;j<count;++j){auto set=sets[j];const auto n=s->setDynamicCounts.at(set);if(n>dynamicCount-offset)throw std::runtime_error("SFS dynamic descriptor offset mismatch");
         if(point==VK_PIPELINE_BIND_POINT_GRAPHICS){auto& cached=descriptors[first+j];cached.layout=layout;cached.set=set;cached.dynamic.clear();if(n)cached.dynamic.assign(dynamic+offset,dynamic+offset+n);}offset+=n;}
     if(offset!=dynamicCount)throw std::runtime_error("SFS unexpected dynamic descriptor offsets");
-    if(point==VK_PIPELINE_BIND_POINT_GRAPHICS)s->commands.at(cb).descriptorOrder.record(first,count);
+    if(point==VK_PIPELINE_BIND_POINT_GRAPHICS)commandOf(s,cb).descriptorOrder.record(first,count);
     FN(vkCmdBindDescriptorSets)(cb,point,layout,first,count,sets,dynamicCount,dynamic);
 COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL bindVertices(VkCommandBuffer cb,uint32_t first,uint32_t count,const VkBuffer* buffers,const VkDeviceSize* offsets){COMMAND_BEGIN
-    auto& bindings=s->commands.at(cb).bindings;for(uint32_t j=0;j<count;++j)CommandBindings::set(bindings.vertices,first+j,CommandBindings::Vertex{buffers[j],offsets[j]});FN(vkCmdBindVertexBuffers)(cb,first,count,buffers,offsets);
+    auto& bindings=commandOf(s,cb).bindings;for(uint32_t j=0;j<count;++j)CommandBindings::set(bindings.vertices,first+j,CommandBindings::Vertex{buffers[j],offsets[j]});FN(vkCmdBindVertexBuffers)(cb,first,count,buffers,offsets);
 COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL bindIndex(VkCommandBuffer cb,VkBuffer buffer,VkDeviceSize offset,VkIndexType type){COMMAND_BEGIN
-    s->commands.at(cb).bindings.index={buffer,offset,type};FN(vkCmdBindIndexBuffer)(cb,buffer,offset,type);
+    commandOf(s,cb).bindings.index={buffer,offset,type};FN(vkCmdBindIndexBuffer)(cb,buffer,offset,type);
 COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL viewport(VkCommandBuffer cb,uint32_t first,uint32_t count,const VkViewport* values){COMMAND_BEGIN
-    auto& bindings=s->commands.at(cb).bindings;for(uint32_t j=0;j<count;++j)CommandBindings::set(bindings.viewports,first+j,values[j]);FN(vkCmdSetViewport)(cb,first,count,values);
+    auto& bindings=commandOf(s,cb).bindings;for(uint32_t j=0;j<count;++j)CommandBindings::set(bindings.viewports,first+j,values[j]);FN(vkCmdSetViewport)(cb,first,count,values);
 COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL scissor(VkCommandBuffer cb,uint32_t first,uint32_t count,const VkRect2D* values){COMMAND_BEGIN
-    auto& bindings=s->commands.at(cb).bindings;for(uint32_t j=0;j<count;++j)CommandBindings::set(bindings.scissors,first+j,values[j]);FN(vkCmdSetScissor)(cb,first,count,values);
+    auto& bindings=commandOf(s,cb).bindings;for(uint32_t j=0;j<count;++j)CommandBindings::set(bindings.scissors,first+j,values[j]);FN(vkCmdSetScissor)(cb,first,count,values);
 COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL push(VkCommandBuffer cb,VkPipelineLayout layout,VkShaderStageFlags flags,uint32_t offset,uint32_t size,const void* values){COMMAND_BEGIN
-    s->commands.at(cb).pushes.write(layout,flags,offset,size,values);FN(vkCmdPushConstants)(cb,layout,flags,offset,size,values);
+    commandOf(s,cb).pushes.write(layout,flags,offset,size,values);FN(vkCmdPushConstants)(cb,layout,flags,offset,size,values);
 COMMAND_END}
 void replayBindings(const std::shared_ptr<State>& s,VkCommandBuffer cb){
-    bindGraphics(s,cb);auto& command=s->commands.at(cb);
+    bindGraphics(s,cb);auto& command=commandOf(s,cb);
     if(!command.stereo)return;
     for(const auto index:command.descriptorOrder.indices()){const auto& binding=command.descriptors[index];if(binding.set)FN(vkCmdBindDescriptorSets)(cb,VK_PIPELINE_BIND_POINT_GRAPHICS,binding.layout,index,1,&binding.set,uint32_t(binding.dynamic.size()),binding.dynamic.data());}
     command.bindings.replay(s->dispatch,cb);
     command.pushes.replay([&](VkPipelineLayout layout,VkShaderStageFlags flags,uint32_t offset,uint32_t size,const void* values){FN(vkCmdPushConstants)(cb,layout,flags,offset,size,values);});
 }
 VKAPI_ATTR void VKAPI_CALL beginPass(VkCommandBuffer cb,const VkRenderPassBeginInfo* i,VkSubpassContents contents){COMMAND_BEGIN
-    auto info=*i;auto& command=s->commands.at(cb);command.stereo=s->framebufferStereo.at(i->framebuffer);if(s->mixedFramebuffers.at(i->framebuffer))s->mixedPasses.fetch_add(1,std::memory_order_relaxed);if(command.stereo)info.renderPass=s->passes.at(i->renderPass);FN(vkCmdBeginRenderPass)(cb,&info,contents);replayBindings(s,cb);
+    auto info=*i;auto& command=commandOf(s,cb);command.stereo=s->framebufferStereo.at(i->framebuffer);if(s->mixedFramebuffers.at(i->framebuffer))s->mixedPasses.fetch_add(1,std::memory_order_relaxed);if(command.stereo)info.renderPass=s->passes.at(i->renderPass);FN(vkCmdBeginRenderPass)(cb,&info,contents);replayBindings(s,cb);
 COMMAND_END}
-VKAPI_ATTR void VKAPI_CALL endPass(VkCommandBuffer cb){COMMAND_BEGIN FN(vkCmdEndRenderPass)(cb);s->commands.at(cb).stereo=false;COMMAND_END}
+VKAPI_ATTR void VKAPI_CALL endPass(VkCommandBuffer cb){COMMAND_BEGIN FN(vkCmdEndRenderPass)(cb);commandOf(s,cb).stereo=false;COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL nextPass(VkCommandBuffer cb,VkSubpassContents contents){COMMAND_BEGIN FN(vkCmdNextSubpass)(cb,contents);replayBindings(s,cb);COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL lineWidth(VkCommandBuffer cb,float width){COMMAND_BEGIN
-    s->commands.at(cb).bindings.line=width;FN(vkCmdSetLineWidth)(cb,width);
+    commandOf(s,cb).bindings.line=width;FN(vkCmdSetLineWidth)(cb,width);
 COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL depthBias(VkCommandBuffer cb,float constant,float clamp,float slope){COMMAND_BEGIN
-    s->commands.at(cb).bindings.bias={constant,clamp,slope};FN(vkCmdSetDepthBias)(cb,constant,clamp,slope);
+    commandOf(s,cb).bindings.bias={constant,clamp,slope};FN(vkCmdSetDepthBias)(cb,constant,clamp,slope);
 COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL blendConstants(VkCommandBuffer cb,const float* values){COMMAND_BEGIN
-    s->commands.at(cb).bindings.blend={values[0],values[1],values[2],values[3]};FN(vkCmdSetBlendConstants)(cb,values);
+    commandOf(s,cb).bindings.blend={values[0],values[1],values[2],values[3]};FN(vkCmdSetBlendConstants)(cb,values);
 COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL depthBounds(VkCommandBuffer cb,float min,float max){COMMAND_BEGIN
-    s->commands.at(cb).bindings.bounds={min,max};FN(vkCmdSetDepthBounds)(cb,min,max);
+    commandOf(s,cb).bindings.bounds={min,max};FN(vkCmdSetDepthBounds)(cb,min,max);
 COMMAND_END}
 #define STENCIL_WRAPPER(handler,api,slot) \
 VKAPI_ATTR void VKAPI_CALL handler(VkCommandBuffer cb,VkStencilFaceFlags faces,uint32_t value){COMMAND_BEGIN \
-    s->commands.at(cb).bindings.setStencil(slot,faces,value);FN(api)(cb,faces,value); \
+    commandOf(s,cb).bindings.setStencil(slot,faces,value);FN(api)(cb,faces,value); \
 COMMAND_END}
 STENCIL_WRAPPER(stencilCompare,vkCmdSetStencilCompareMask,0)
 STENCIL_WRAPPER(stencilWrite,vkCmdSetStencilWriteMask,1)
 STENCIL_WRAPPER(stencilReference,vkCmdSetStencilReference,2)
 #undef STENCIL_WRAPPER
 VKAPI_ATTR void VKAPI_CALL dispatch(VkCommandBuffer cb,uint32_t x,uint32_t y,uint32_t z){COMMAND_BEGIN
-    uint32_t depth{};if(!dispatchDepth(z,s->computeStereo.at(s->commands.at(cb).compute),65535,depth))throw std::runtime_error("Stereo dispatch exceeds limit");FN(vkCmdDispatch)(cb,x,y,depth);
+    uint32_t depth{};if(!dispatchDepth(z,s->computeStereo.at(commandOf(s,cb).compute),65535,depth))throw std::runtime_error("Stereo dispatch exceeds limit");FN(vkCmdDispatch)(cb,x,y,depth);
 COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL dispatchIndirect(VkCommandBuffer cb,VkBuffer buffer,VkDeviceSize offset){COMMAND_BEGIN
-    const auto pipeline=s->commands.at(cb).compute;
+    const auto pipeline=commandOf(s,cb).compute;
     if(!s->computeStereo.at(pipeline)){
         s->indirectMono.fetch_add(1,std::memory_order_relaxed);
         FN(vkCmdDispatchIndirect)(cb,buffer,offset);return;
@@ -372,7 +376,7 @@ VkImageSubresourceRange range(const std::shared_ptr<State>& s,VkImage image,VkIm
 VKAPI_ATTR void VKAPI_CALL barriers(VkCommandBuffer cb,VkPipelineStageFlags src,VkPipelineStageFlags dst,VkDependencyFlags deps,uint32_t nm,const VkMemoryBarrier* m,uint32_t nb,const VkBufferMemoryBarrier* b,uint32_t ni,const VkImageMemoryBarrier* i){
     if(!ni){try{auto s=state(cb);FN(vkCmdPipelineBarrier)(cb,src,dst,deps,nm,m,nb,b,0,i);return;}catch(const std::exception& e){commandFailure(e.what());}}
     COMMAND_BEGIN
-    auto& images=s->commands.at(cb).imageBarriers;images.clear();if(ni)images.assign(i,i+ni);for(auto& image:images){image.subresourceRange=range(s,image.image,image.subresourceRange);
+    auto& images=commandOf(s,cb).imageBarriers;images.clear();if(ni)images.assign(i,i+ni);for(auto& image:images){image.subresourceRange=range(s,image.image,image.subresourceRange);
         if(s->sources&&s->sources->ownsImage(image.image)){
             if(image.oldLayout==VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)image.oldLayout=VK_IMAGE_LAYOUT_GENERAL;
             if(image.newLayout==VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)image.newLayout=VK_IMAGE_LAYOUT_GENERAL;
@@ -380,10 +384,10 @@ VKAPI_ATTR void VKAPI_CALL barriers(VkCommandBuffer cb,VkPipelineStageFlags src,
     }FN(vkCmdPipelineBarrier)(cb,src,dst,deps,nm,m,nb,b,ni,images.data());
 COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL clearColor(VkCommandBuffer cb,VkImage image,VkImageLayout layout,const VkClearColorValue* value,uint32_t count,const VkImageSubresourceRange* ranges){COMMAND_BEGIN
-    auto& copies=s->commands.at(cb).clearRanges;copies.clear();if(count)copies.assign(ranges,ranges+count);for(auto& r:copies)r=range(s,image,r);FN(vkCmdClearColorImage)(cb,image,layout,value,count,copies.data());
+    auto& copies=commandOf(s,cb).clearRanges;copies.clear();if(count)copies.assign(ranges,ranges+count);for(auto& r:copies)r=range(s,image,r);FN(vkCmdClearColorImage)(cb,image,layout,value,count,copies.data());
 COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL clearDepth(VkCommandBuffer cb,VkImage image,VkImageLayout layout,const VkClearDepthStencilValue* value,uint32_t count,const VkImageSubresourceRange* ranges){COMMAND_BEGIN
-    auto& copies=s->commands.at(cb).clearRanges;copies.clear();if(count)copies.assign(ranges,ranges+count);for(auto& r:copies)r=range(s,image,r);FN(vkCmdClearDepthStencilImage)(cb,image,layout,value,count,copies.data());
+    auto& copies=commandOf(s,cb).clearRanges;copies.clear();if(count)copies.assign(ranges,ranges+count);for(auto& r:copies)r=range(s,image,r);FN(vkCmdClearDepthStencilImage)(cb,image,layout,value,count,copies.data());
 COMMAND_END}
 template<class T>std::vector<T> copyRegions(const std::shared_ptr<State>& s,VkImage src,VkImage dst,uint32_t count,const T* regions){
     std::vector<T> result;for(uint32_t j=0;j<count;++j){auto region=regions[j];result.push_back(region);if(s->images.layers(dst)==2&&region.dstSubresource.baseArrayLayer==0&&region.dstSubresource.layerCount==1){region.dstSubresource.baseArrayLayer=1;if(s->images.layers(src)==2)region.srcSubresource.baseArrayLayer=1;result.push_back(region);}}return result;
@@ -408,7 +412,7 @@ bool initialize(VkDevice d,VkPhysicalDevice,PFN_vkGetDeviceProcAddr gdpa,const V
         {std::lock_guard<std::mutex> lock(devicesMutex);devices[dispatchKey(d)]=s;deviceGeneration.fetch_add(1,std::memory_order_release);}note(vrEnabled()?"native SFS experimental OpenXR producer initialized":"native multiview probe initialized; fixed identity projection; NOT VR");return true;
     }catch(const std::exception& e){note(e.what());if(s->params)FN(vkDestroyBuffer)(d,s->params,nullptr);if(s->paramsMemory)FN(vkFreeMemory)(d,s->paramsMemory,nullptr);return false;}
 }
-void shutdown(VkDevice d){if(!nativeProbeEnabled())return;std::shared_ptr<State> s;try{s=state(d);}catch(const std::exception&){return;}std::unique_lock<std::shared_mutex> lock(s->mutex);s->commands.clear();if(s->sources){if(FN(vkDeviceWaitIdle)(d)!=VK_SUCCESS)commandFailure("SFS source shutdown retirement failed");s->sources->clearAfterDeviceIdle();}for(auto& entry:s->eyeViews)for(auto eye:entry.second)if(eye)FN(vkDestroyImageView)(d,eye,nullptr);s->eyeViews.clear();for(auto& module:s->compiled)FN(vkDestroyShaderModule)(d,module.second,nullptr);FN(vkDestroyBuffer)(d,s->params,nullptr);FN(vkFreeMemory)(d,s->paramsMemory,nullptr);std::lock_guard<std::mutex> devicesLock(devicesMutex);for(auto it=devices.begin();it!=devices.end();)if(it->second==s)it=devices.erase(it);else ++it;deviceGeneration.fetch_add(1,std::memory_order_release);}
+void shutdown(VkDevice d){if(!nativeProbeEnabled())return;std::shared_ptr<State> s;try{s=state(d);}catch(const std::exception&){return;}std::unique_lock<std::shared_mutex> lock(s->mutex);s->commands.clear();CommandLookupCache::invalidate();if(s->sources){if(FN(vkDeviceWaitIdle)(d)!=VK_SUCCESS)commandFailure("SFS source shutdown retirement failed");s->sources->clearAfterDeviceIdle();}for(auto& entry:s->eyeViews)for(auto eye:entry.second)if(eye)FN(vkDestroyImageView)(d,eye,nullptr);s->eyeViews.clear();for(auto& module:s->compiled)FN(vkDestroyShaderModule)(d,module.second,nullptr);FN(vkDestroyBuffer)(d,s->params,nullptr);FN(vkFreeMemory)(d,s->paramsMemory,nullptr);std::lock_guard<std::mutex> devicesLock(devicesMutex);for(auto it=devices.begin();it!=devices.end();)if(it->second==s)it=devices.erase(it);else ++it;deviceGeneration.fetch_add(1,std::memory_order_release);}
 bool vrEnabled(){static const bool enabled=[] {char value[8]{};return GetEnvironmentVariableA("KHARVOX_SFS_NATIVE_VR",value,8)==1&&value[0]=='1';}();return nativeProbeEnabled()&&enabled;}
 bool eyeAttachmentView(VkDevice d,VkImageView original,uint32_t eye,VkImageView& result){
     result=VK_NULL_HANDLE;if(!nativeProbeEnabled()||eye>1)return false;

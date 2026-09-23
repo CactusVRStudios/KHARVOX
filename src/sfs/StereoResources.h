@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <limits>
 #include <mutex>
+#include <shared_mutex>
 #include <unordered_map>
 #include <vector>
 
@@ -29,12 +30,15 @@ inline VkImageCreateInfo imageInfo(const VkImageCreateInfo& original) {
 // Device-owned registry. Store only successful allocations, and erase before
 // destruction so a recycled driver handle cannot inherit stereo classification.
 class Images {
-    std::mutex mutex_;
+    // Read on every image barrier and copy across several recording threads;
+    // written only when images are created/destroyed. Readers must not queue
+    // behind each other.
+    std::shared_mutex mutex_;
     std::unordered_map<VkImage,uint32_t> layers_;
 public:
-    void track(VkImage image,uint32_t count){std::lock_guard<std::mutex> lock(mutex_);layers_[image]=count;}
+    void track(VkImage image,uint32_t count){std::unique_lock<std::shared_mutex> lock(mutex_);layers_[image]=count;}
     uint32_t layers(VkImage image) {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::shared_lock<std::shared_mutex> lock(mutex_);
         const auto found=layers_.find(image);return found==layers_.end()?0:found->second;
     }
     VkResult create(VkDevice device, const VkImageCreateInfo& input,
@@ -48,18 +52,18 @@ public:
         VkImage image{};
         const auto result=next(device,&info,allocator,&image);
         if(result!=VK_SUCCESS)return result;
-        { std::lock_guard<std::mutex> lock(mutex_); layers_[image]=stereo?2:1; }
+        { std::unique_lock<std::shared_mutex> lock(mutex_); layers_[image]=stereo?2:1; }
         *output=image;
         return result;
     }
     void destroy(VkDevice device,VkImage image,const VkAllocationCallbacks* allocator,
                  PFN_vkDestroyImage next) {
-        { std::lock_guard<std::mutex> lock(mutex_); layers_.erase(image); }
+        { std::unique_lock<std::shared_mutex> lock(mutex_); layers_.erase(image); }
         if(next)next(device,image,allocator);
     }
     VkImageViewCreateInfo viewInfo(const VkImageViewCreateInfo& original) {
         auto result=original;
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::shared_lock<std::shared_mutex> lock(mutex_);
         const auto found=layers_.find(original.image);
         // CreateImageView RVA 0x1a6620: 2D (1) -> 2D_ARRAY (5), one layer -> two.
         if(found!=layers_.end() && found->second==2 &&

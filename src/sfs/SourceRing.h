@@ -6,6 +6,7 @@
 #include <condition_variable>
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
 #include <unordered_map>
 #include <vector>
 
@@ -18,6 +19,12 @@ class SourceRing {
     VkDevice device_{}; VkQueue queue_{}; VkPhysicalDeviceMemoryProperties memory_{};
     void (*lockQueue_)(){}; void (*unlockQueue_)(){};
     std::mutex mutex_; std::condition_variable available_;
+    // mutex_ is held across fence waits and queue submits in acquire()/present().
+    // The image-barrier hook asks ownsImage() for every barrier on every
+    // recording thread, so it must never wait on mutex_. It reads this small
+    // registry instead, which is only ever locked for a brief vector update.
+    // Lock order when both are needed: mutex_ then imagesMutex_.
+    std::shared_mutex imagesMutex_; std::vector<VkImage> ownedImages_;
     std::unordered_map<VkSwapchainKHR,std::unique_ptr<Chain>> chains_;
 #define SOURCE_FUNCTIONS(X) \
     X(vkCreateImage) X(vkDestroyImage) X(vkGetImageMemoryRequirements) \
@@ -29,6 +36,16 @@ class SourceRing {
     VkResult submit(VkQueue queue,const VkSubmitInfo& info,VkFence fence) {
         struct Guard { SourceRing& owner; Guard(SourceRing& s):owner(s){if(owner.lockQueue_)owner.lockQueue_();} ~Guard(){if(owner.unlockQueue_)owner.unlockQueue_();} } guard(*this);
         return vkQueueSubmit(queue,1,&info,fence);
+    }
+    void publishImages(const Chain& chain) {
+        std::unique_lock<std::shared_mutex> lock(imagesMutex_);
+        for(const auto& slot:chain.slots)if(slot.image)ownedImages_.push_back(slot.image);
+    }
+    // Withdraw before the images are destroyed so a recycled driver handle
+    // cannot be mistaken for one of ours.
+    void withdrawImages(const Chain& chain) {
+        std::unique_lock<std::shared_mutex> lock(imagesMutex_);
+        for(const auto& slot:chain.slots)if(slot.image)ownedImages_.erase(std::remove(ownedImages_.begin(),ownedImages_.end(),slot.image),ownedImages_.end());
     }
     void dispose(Chain& chain) {
         for(auto& slot:chain.slots){
@@ -50,9 +67,9 @@ public:
 #undef SOURCE_FUNCTIONS
     bool owns(VkSwapchainKHR handle) {std::lock_guard<std::mutex> lock(mutex_);return chains_.count(handle)!=0;}
     bool ownsImage(VkImage image) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        for(const auto& entry:chains_)for(const auto& slot:entry.second->slots)if(image&&slot.image==image)return true;
-        return false;
+        if(!image)return false;
+        std::shared_lock<std::shared_mutex> lock(imagesMutex_);
+        return std::find(ownedImages_.begin(),ownedImages_.end(),image)!=ownedImages_.end();
     }
     VkResult create(const VkSwapchainCreateInfoKHR& input,VkSwapchainKHR* output) {
         if(!output||input.flags||input.pNext||input.imageArrayLayers!=2||!input.imageExtent.width||!input.imageExtent.height||input.minImageCount>5)
@@ -82,6 +99,7 @@ public:
             if(result!=VK_SUCCESS){dispose(*chain);return result;}
         }
         const auto handle=reinterpret_cast<VkSwapchainKHR>(chain.get());
+        publishImages(*chain);
         chains_.emplace(handle,std::move(chain));
         if(input.oldSwapchain)chains_.at(input.oldSwapchain)->retired=true;
         *output=handle;return VK_SUCCESS;
@@ -143,8 +161,13 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);auto found=chains_.find(handle);
         if(found==chains_.end())return VK_ERROR_OUT_OF_DATE_KHR;
         for(const auto& slot:found->second->slots)if(slot.pending){const auto result=vkWaitForFences(device_,1,&slot.retired,VK_TRUE,UINT64_MAX);if(result!=VK_SUCCESS)return result;}
+        withdrawImages(*found->second);
         dispose(*found->second);chains_.erase(found);return VK_SUCCESS;
     }
-    void clearAfterDeviceIdle(){std::lock_guard<std::mutex> lock(mutex_);for(auto& entry:chains_)dispose(*entry.second);chains_.clear();}
+    void clearAfterDeviceIdle(){
+        std::lock_guard<std::mutex> lock(mutex_);
+        {std::unique_lock<std::shared_mutex> images(imagesMutex_);ownedImages_.clear();}
+        for(auto& entry:chains_)dispose(*entry.second);chains_.clear();
+    }
 };
 }

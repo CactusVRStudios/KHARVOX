@@ -143,6 +143,12 @@ struct CinematicAdaptiveTickHold {
     uint64_t presents{};
 };
 struct State {
+    // Metadata for the last successfully released/submitted SFS eye images.
+    bool sfsLastProjectionValid{},sfsTransitionHolding{};
+    XrTime sfsLastProjectionTime{};
+    XrSpace sfsLastProjectionSpace{};
+    kharvox::native::FrameSourceIdentity sfsLastProjectionSource{};
+    std::array<XrCompositionLayerProjectionView,2> sfsLastProjectionViews{};
     kharvox::ControllerFrameYaw controllerFrameYaw;
     kharvox::AerInputHistory<AerCapturedInput> aerInputHistory;
     ControllerPose aerPairInputLeft{},aerPairInputRight{};
@@ -2996,6 +3002,8 @@ bool initializeSwapchainImages(EyeSwapchain& swapchain) {
 #include "PauseBindings.inc"
 
 bool createSwapchains() {
+    s.sfsLastProjectionValid=false;
+    s.sfsTransitionHolding=false;
     uint32_t viewCount{};
     auto r = s.enumerateViews(
         s.instance, s.system, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO,
@@ -4021,6 +4029,8 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
     updateGameplayActions(frame.predictedDisplayTime);updateXInputHaptics();updatePresentationMode();updatePsvr2TriggerPolicy();
     kharvox::native::StereoFrame nativeFrame{};
     bool nativeFrameValid=false;
+    kharvox::native::FrameSourceIdentity desiredSfsSource{};
+    bool desiredSfsViewSpace=false;
     if(nativeBackend){
         nativeFrameValid=sfsBackend?kharvox::sfs::pair(s.device,it->second.images[srcIndex],it->second.extent,it->second.format,nativeFrame,&aerSourceObservation):kharvox::native::pair(it->second.images[srcIndex],it->second.extent,it->second.format,nativeFrame);
     }
@@ -4165,6 +4175,8 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
                 next.views[e].pose.position.z+=s.immersiveCinematicLayerPosition.z-locatedMonoPose.position.z;
             }
         }
+        desiredSfsSource=next.source;
+        desiredSfsViewSpace=next.viewSpace;
         nativeFrameValid=nativeFrameValid&&kharvox::native::sameSceneContext(
             nativeFrame.pose.source,next.source,nativeFrame.pose.viewSpace,next.viewSpace);
         if(sfsBackend){
@@ -4451,8 +4463,29 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
         lastFreshHandsState=freshHandsState;
     }
     if(!freshAerHands)s.freshHandsWorldValid=false;
-    const bool updateEyeSwapchains=aerSourceMode?sourcePairWillPublish:kharvox::freshAerHandsUpdateTargets(
-        steamXrAerReusePublishedPair,freshAerHands,s.freshHandsWorldValid);
+    // Re-submit the runtime's last released images without acquiring or writing
+    // either eye. Preserve their original poses, FOVs and reference space.
+    static const bool sfsTransitionHoldEnabled=[](){
+        const bool enabled=!kharvox::runtimeFileExists(L"disable_sfs_transition_hold");
+        log(enabled?"[SFS-TRANSITION-HOLD] enabled; maximum age 100 ms"
+            :"[SFS-TRANSITION-HOLD] disabled by runtime marker");
+        return enabled;
+    }();
+    const bool holdSfsProjection=sfsTransitionHoldEnabled&&sfsBackend&&!s.quadMode&&!nativeFrameValid
+        &&s.sfsLastProjectionValid&&kharvox::native::canHoldSfsTransition(
+            s.sfsLastProjectionSource,desiredSfsSource,
+            s.sfsLastProjectionSpace==(desiredSfsViewSpace?s.viewSpace:s.space),
+            frame.predictedDisplayTime-s.sfsLastProjectionTime);
+    if(holdSfsProjection!=s.sfsTransitionHolding){
+        log(holdSfsProjection?"[SFS-TRANSITION-HOLD] retaining last stereo projection (maximum 100 ms)"
+            :"[SFS-TRANSITION-HOLD] hold ended");
+        s.sfsTransitionHolding=holdSfsProjection;
+    }
+    const bool updateEyeSwapchains=!holdSfsProjection&&(aerSourceMode?sourcePairWillPublish:kharvox::freshAerHandsUpdateTargets(
+        steamXrAerReusePublishedPair,freshAerHands,s.freshHandsWorldValid));
+    // Any new acquisition may replace the last released image, even if this
+    // frame subsequently fails. Only a completed submission can re-arm reuse.
+    if(!holdSfsProjection)s.sfsLastProjectionValid=false;
     const bool steamLinkAdaptivePairEligible=s.steamMetaCompatibilityMode&&nvidiaAfwMarker&&!s.quadMode&&!s.centeredQuadTransitionPending&&KharvoxCameraWorldActive()&&!s.immersiveCinematicActive;
     const bool steamXrCommonSourcePose=steamRuntime&&nvidiaAfwMarker&&!s.quadMode&&!s.centeredQuadTransitionPending&&KharvoxCameraWorldActive()&&!s.immersiveCinematicActive;
     float steamLinkHeadAngularVelocity=0.0f;
@@ -4549,10 +4582,12 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
     VkSemaphore afwWaitSemaphore{};uint64_t afwWaitValue{};const bool afwPrepared=false;
     std::array<uint32_t,2> xi{};
     std::array<bool,2> eyeImageAcquired{};
+    bool imageReleaseFailed=false;
     auto releaseImageChecked=[&](XrSwapchain swapchain){
         QueueAccessScope queueAccess;
         XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
         const XrResult released=s.releaseImage(swapchain,&ri);
+        if(XR_FAILED(released))imageReleaseFailed=true;
         if(nativeFrameValid&&XR_FAILED(released))kharvox::native::fail("Native XR image release failed; resources retained");
     };
     auto releaseAcquiredEyeImages=[&](){
@@ -5430,6 +5465,10 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
         ?s.viewSpace:s.space;
     projection.viewCount=2;
     projection.views=pv.data();
+    if(holdSfsProjection){
+        pv=s.sfsLastProjectionViews;
+        projection.space=s.sfsLastProjectionSpace;
+    }
 
     auto& quadEye=s.eyes[0];
     XrCompositionLayerQuad quad{XR_TYPE_COMPOSITION_LAYER_QUAD};
@@ -5533,8 +5572,8 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
     ei.environmentBlendMode=XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
     // Never submit uninitialized/mislabelled projection images while priming.
     // Keep the frame lifecycle and future eye programming running.
-    ei.layerCount=(aerSourceMode&&!s.steamXrAerPairReady)
-        ||(nativeBackend&&!s.quadMode&&!nativeFrameValid)?0:layerCount;
+    ei.layerCount=imageReleaseFailed||(aerSourceMode&&!s.steamXrAerPairReady)
+        ||(nativeBackend&&!s.quadMode&&!nativeFrameValid&&!holdSfsProjection)?0:layerCount;
     ei.layers=layers.data();
     const std::string layerReason=hudImageCopied?"projection+hud-quad":(s.quadMode?"quad-layer":"projection-layer");
     if(nativeFrameValid)QueryPerformanceCounter(&nativeEndAt);
@@ -5568,6 +5607,14 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
         if(sfsBackend)kharvox::sfs::copyCompleted(s.device);
         s.handRenderer.finishSceneIntegratedFrame();
     }
+    if(sfsBackend&&nativeFrameValid&&!s.quadMode&&updateEyeSwapchains
+        &&ei.layerCount&&!imageReleaseFailed&&XR_SUCCEEDED(r)&&copyLifetime.canRetireResources()){
+        s.sfsLastProjectionViews=pv;
+        s.sfsLastProjectionSpace=projection.space;
+        s.sfsLastProjectionSource=nativeFrame.pose.source;
+        s.sfsLastProjectionTime=frame.predictedDisplayTime;
+        s.sfsLastProjectionValid=true;
+    }else if(holdSfsProjection&&(XR_FAILED(r)||imageReleaseFailed))s.sfsLastProjectionValid=false;
     if(nativeFrameValid){
         static uint64_t releaseSamples{};
         static const auto qpcFrequency=[](){LARGE_INTEGER frequency{};QueryPerformanceFrequency(&frequency);return frequency.QuadPart;}();

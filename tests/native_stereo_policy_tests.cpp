@@ -9,6 +9,18 @@
 using namespace kharvox::native;
 int main(){int errors=0;auto check=[&](bool b){if(!b)++errors;};
  FrameSourceIdentity source{41,7,SceneDomain::Gameplay};
+ const FrameSourceIdentity cinematic{42,7,SceneDomain::Cinematic};
+ check(canHoldSfsTransition(source,cinematic,true,0));
+ check(canHoldSfsTransition(source,cinematic,true,100000000));
+ check(canHoldSfsTransition(cinematic,source,true,20000000));
+ check(!canHoldSfsTransition(source,cinematic,true,100000001));
+ check(!canHoldSfsTransition(source,cinematic,true,-1));
+ check(!canHoldSfsTransition(source,cinematic,false,10000000));
+ check(!canHoldSfsTransition(source,{42,8,SceneDomain::Cinematic},true,10000000));
+ check(!canHoldSfsTransition(source,source,true,10000000));
+ check(!canHoldSfsTransition(source,{42,7,SceneDomain::Inactive},true,10000000));
+ check(!canHoldSfsTransition(source,{42,7,SceneDomain::Scripted},true,10000000));
+ check(!canHoldSfsTransition({},cinematic,true,10000000));
  check(sourcePoseStable(source,41,41,7));
  check(!sourcePoseStable(source,40,41,7));check(!sourcePoseStable(source,41,42,7));
  check(!sourcePoseStable(source,41,41,8));check(!sourcePoseStable({},0,0,0));

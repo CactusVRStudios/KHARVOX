@@ -21,4 +21,13 @@ constexpr bool sameSceneContext(FrameSourceIdentity source,FrameSourceIdentity d
         &&source.domain==desired.domain&&source.level==desired.level
         &&sourceViewSpace==desiredViewSpace;
 }
+// A display-only hold never makes an old producer pair valid for rendering.
+constexpr bool canHoldSfsTransition(FrameSourceIdentity previous,FrameSourceIdentity desired,
+                                    bool sameSpace,int64_t ageNanoseconds){
+    const bool cameraTransition=
+        (previous.domain==SceneDomain::Gameplay&&desired.domain==SceneDomain::Cinematic)
+        ||(previous.domain==SceneDomain::Cinematic&&desired.domain==SceneDomain::Gameplay);
+    return previous.poseId&&desired.poseId&&cameraTransition&&previous.level==desired.level
+        &&sameSpace&&ageNanoseconds>=0&&ageNanoseconds<=100000000;
+}
 }

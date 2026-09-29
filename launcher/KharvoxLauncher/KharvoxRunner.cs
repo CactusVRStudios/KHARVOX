@@ -316,6 +316,8 @@ internal static class KharvoxRunner
             await bhaptics.WaitForStartupAsync(statusUpdate);
         var launchSucceeded = false;
 
+        // Units per meter increase as the apparent world size decreases.
+        var worldUnitsPerMeter = Inv(39.3701m / 0.77m);
         var temporaryFiles = new List<string>();
         void WriteTemporary(string name, string? content = null)
         {
@@ -393,7 +395,7 @@ internal static class KharvoxRunner
             if (options.CinewindowFollowsHeadset)
                 WriteTemporary("enable_cinewindow_head_follow");
 
-            WriteTemporary("weapon_scale.cfg", "0.77");
+            WriteTemporary("weapon_scale.cfg", "1");
             WriteTemporary("weapon_pivot.cfg", "0 0 0");
             WriteTemporary("weapon_yaw.cfg", ReadCalibrationWithDefault(
                 runtimeDir, "weapon_yaw_saved.cfg", "weapon_yaw_default.cfg", "-8"));
@@ -402,7 +404,7 @@ internal static class KharvoxRunner
             WriteTemporary("weapon_pitch.cfg", ReadCalibrationWithDefault(
                 runtimeDir, "weapon_pitch_saved.cfg", "weapon_pitch_default.cfg", "-3"));
             WriteTemporary("hands_projection_scale.cfg", "1");
-            WriteTemporary("world_scale.cfg", "39.3701");
+            WriteTemporary("world_scale.cfg", worldUnitsPerMeter);
 
             using var userHive = RegistryKey.OpenBaseKey(RegistryHive.CurrentUser, RegistryView.Registry64);
             using var key = userHive.CreateSubKey(RegistryPath, true)
@@ -512,9 +514,9 @@ internal static class KharvoxRunner
             psi.EnvironmentVariables["KHARVOX_BACK_WEAPON"] = options.BackWeapon;
             psi.EnvironmentVariables["KHARVOX_MOTION_WEAPON_WHEEL"] = "1";
             psi.EnvironmentVariables["KHARVOX_LASER_SIGHT"] = options.LaserSight ? "1" : "0";
-            psi.EnvironmentVariables["KHARVOX_WEAPON_SCALE"] = "0.77";
+            psi.EnvironmentVariables["KHARVOX_WEAPON_SCALE"] = "1";
             psi.EnvironmentVariables["KHARVOX_HANDS_PROJECTION_SCALE"] = "1";
-            psi.EnvironmentVariables["KHARVOX_WORLD_SCALE"] = "39.3701";
+            psi.EnvironmentVariables["KHARVOX_WORLD_SCALE"] = worldUnitsPerMeter;
             psi.EnvironmentVariables["KHARVOX_HUD_DEBUG"] = options.HudDebugging ? "1" : "0";
             psi.EnvironmentVariables["KHARVOX_SHOW_HANDS"] = options.ShowHands ? "1" : "0";
             psi.EnvironmentVariables["KHARVOX_HAND_CALIBRATION"] = options.HandCalibrationMode;

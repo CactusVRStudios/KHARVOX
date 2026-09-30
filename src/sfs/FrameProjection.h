@@ -16,9 +16,13 @@ struct alignas(16) FrameUniforms {
 static_assert(sizeof(FrameUniforms)==384,"std140 SFS frame layout");
 // Exact x/y projection for parallel eye cameras. Canted/longitudinal eye offsets
 // need the game's depth projection, and must not silently use this approximation.
+// Tolerance covers measured HP Reverb G2 headsets (dot=0.999991, |offset.z|=0.78mm
+// via SteamVR): gross cant (e.g. Pimax-style) is still rejected.
 inline bool frameProjection(const XrPosef& center,const XrFovf& source,
                             const std::array<XrView,2>& eyes,float unitsPerMeter,
                             bool world,FrameUniforms& output){
+    constexpr float kMinEyeDot = 0.9999f;   // ~0.81 deg eye-vs-head mismatch
+    constexpr float kMaxEyeOffsetZ = 0.002f; // 2.0 mm longitudinal eye offset
     FrameUniforms result;
     if(!world){output=result;return true;}
     if(!std::isfinite(unitsPerMeter)||unitsPerMeter<=0)return false;
@@ -34,10 +38,10 @@ inline bool frameProjection(const XrPosef& center,const XrFovf& source,
     for(unsigned e=0;e<2;++e){
         const auto orientation=eyes[e].pose.orientation;
         const float dot=q.x*orientation.x+q.y*orientation.y+q.z*orientation.z+q.w*orientation.w;
-        if(!std::isfinite(dot)||std::abs(dot)<0.99999f)return false;
+        if(!std::isfinite(dot)||std::abs(dot)<kMinEyeDot)return false;
         const auto p=eyes[e].pose.position;
         const auto offset=rotateInverse({p.x-center.position.x,p.y-center.position.y,p.z-center.position.z});
-        if(!std::isfinite(offset.x+offset.y+offset.z)||std::abs(offset.z)>0.0005f)return false;
+        if(!std::isfinite(offset.x+offset.y+offset.z)||std::abs(offset.z)>kMaxEyeOffsetZ)return false;
         const float l=std::tan(eyes[e].fov.angleLeft),r=std::tan(eyes[e].fov.angleRight);
         const float b=std::tan(eyes[e].fov.angleDown),t=std::tan(eyes[e].fov.angleUp);
         if(!(r>l&&t>b)||!std::isfinite(l+r+b+t))return false;

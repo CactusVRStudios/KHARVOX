@@ -421,7 +421,57 @@ bool eyeAttachmentView(VkDevice d,VkImageView original,uint32_t eye,VkImageView&
 void prepare(VkDevice d,const native::FramePose& pose,const XrFovf& source){
     if(!vrEnabled())return;auto s=state(d);std::unique_lock<std::shared_mutex> lock(s->mutex);
     FrameUniforms uniforms;
-    if(!frameProjection(pose.head,source,pose.views,pose.worldScale,pose.gameplay||pose.cinematic||pose.scripted,uniforms))commandFailure("SFS headset projection unsupported: requires parallel eye cameras");
+    const bool world = pose.gameplay||pose.cinematic||pose.scripted;
+    if(!frameProjection(pose.head,source,pose.views,pose.worldScale,world,uniforms)){
+        // Log which frameProjection sub-check rejects the headset before
+        // fail-fast. Only fires on failure; helps diagnose canted-display
+        // headsets (e.g. HP Reverb G2) without guessing from the generic message.
+        const float sourceX=std::tan(source.angleRight)-std::tan(source.angleLeft);
+        const float sourceY=std::tan(source.angleUp)-std::tan(source.angleDown);
+        note(std::string("[SFS-DIAG-PROJECTION] world=")+std::to_string(world)
+            +" gameplay="+std::to_string(pose.gameplay)
+            +" cinematic="+std::to_string(pose.cinematic)
+            +" scripted="+std::to_string(pose.scripted)
+            +" viewSpace="+std::to_string(pose.viewSpace)
+            +" serial="+std::to_string(pose.serial)
+            +" worldScale="+std::to_string(pose.worldScale)
+            +" sourceLRUD="+std::to_string(source.angleLeft)+"/"+std::to_string(source.angleRight)
+            +"/"+std::to_string(source.angleUp)+"/"+std::to_string(source.angleDown)
+            +" sourceX="+std::to_string(sourceX)+" sourceY="+std::to_string(sourceY));
+        const auto q=pose.head.orientation;
+        note(std::string("[SFS-DIAG-HEAD] pos=")
+            +std::to_string(pose.head.position.x)+","+std::to_string(pose.head.position.y)+","+std::to_string(pose.head.position.z)
+            +" quat="+std::to_string(q.x)+","+std::to_string(q.y)+","+std::to_string(q.z)+","+std::to_string(q.w));
+        for(unsigned e=0;e<2;++e){
+            const auto o=pose.views[e].pose.orientation;
+            const float dot=q.x*o.x+q.y*o.y+q.z*o.z+q.w*o.w;
+            const auto p=pose.views[e].pose.position;
+            const float dx=p.x-pose.head.position.x;
+            const float dy=p.y-pose.head.position.y;
+            const float dz=p.z-pose.head.position.z;
+            const float ux=-q.x, uy=-q.y, uz=-q.z;
+            const float tx=2*(uy*dz-uz*dy);
+            const float ty=2*(uz*dx-ux*dz);
+            const float tz=2*(ux*dy-uy*dx);
+            const float ox=dx+q.w*tx+uy*tz-uz*ty;
+            const float oy=dy+q.w*ty+uz*tx-ux*tz;
+            const float oz=dz+q.w*tz+ux*ty-uy*tx;
+            const auto f=pose.views[e].fov;
+            const float l=std::tan(f.angleLeft), r=std::tan(f.angleRight);
+            const float b=std::tan(f.angleDown), t=std::tan(f.angleUp);
+            note(std::string("[SFS-DIAG-EYE")+std::to_string(e)+"] dot="+std::to_string(dot)
+                +" absDot="+std::to_string(std::abs(dot))
+                +" offsetXYZ="+std::to_string(ox)+","+std::to_string(oy)+","+std::to_string(oz)
+                +" absOffsetZ="+std::to_string(std::abs(oz))
+                +" pos="+std::to_string(p.x)+","+std::to_string(p.y)+","+std::to_string(p.z)
+                +" quat="+std::to_string(o.x)+","+std::to_string(o.y)+","+std::to_string(o.z)+","+std::to_string(o.w)
+                +" fovLRUD="+std::to_string(f.angleLeft)+"/"+std::to_string(f.angleRight)
+                +"/"+std::to_string(f.angleUp)+"/"+std::to_string(f.angleDown)
+                +" tanLRBT="+std::to_string(l)+"/"+std::to_string(r)
+                +"/"+std::to_string(b)+"/"+std::to_string(t));
+        }
+        commandFailure("SFS headset projection unsupported: requires parallel eye cameras");
+    }
     s->pendingUniforms=uniforms;s->pendingPose=pose;s->pending=true;
     s->sourcePoseHistory.remember(pose,uniforms);
 }

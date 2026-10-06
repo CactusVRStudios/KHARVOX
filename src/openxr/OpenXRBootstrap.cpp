@@ -57,6 +57,7 @@
 #include "MotionWeaponWheelPolicy.h"
 #include "../bhaptics/BhapticsIpcClient.h"
 #include "../psvr2/Psvr2IpcClient.h"
+#include "../protube/ProtubeClient.h"
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
 #include <algorithm>
@@ -689,6 +690,7 @@ DWORD WINAPI kharvoxXInputSetState(DWORD userIndex,XINPUT_VIBRATION* vibration){
 bool installXInputHook(){
     KharvoxBhapticsIpcStart();
     KharvoxPsvr2IpcStart();
+    KharvoxProtubeStart();
     if(xinputHookReady&&xinputSetStateHookReady)return true;
     auto module=reinterpret_cast<uint8_t*>(GetModuleHandleW(nullptr));
     if(!module)return false;
@@ -810,6 +812,22 @@ void updatePsvr2TriggerPolicy(){
         s.leftHanded,
         psvr2InactiveReason()};
     KharvoxPsvr2SubmitTrigger(kharvox::psvr2::selectTriggerCommand(input));
+}
+// ProTubeVR ProVolver/ForceTube recoil. Uses the same gameplay gate as the
+// PSVR2 adaptive triggers: primary fire after weapon-wheel and calibration
+// ownership are removed, outside menus and passive cinematics.
+void updateProtubeRecoil(){
+    const bool menu=KharvoxHudPauseMenuActive()
+        ||KharvoxHudFullscreenMenuActive()||KharvoxHudDeathMenuActive()
+        ||KharvoxHudEndOfLevelMenuActive();
+    const bool passiveCinematic=KharvoxCameraCutsceneActive()
+        &&!KharvoxCameraPlayerWeaponControlActive();
+    const bool gameplay=s.sessionState==XR_SESSION_STATE_FOCUSED
+        &&KharvoxCameraGameplayActive()&&KharvoxCameraWorldActive()
+        &&!menu&&!passiveCinematic;
+    const auto weapon=KharvoxWeaponCurrentKind();
+    KharvoxProtubeUpdate({GetTickCount64(),gameplay,s.primaryFireDown,
+        weapon,KharvoxWeaponGetAmmoState(weapon)});
 }
 void logHapticError(const std::string&message){
     ++s.hapticErrorCount;
@@ -3302,7 +3320,7 @@ static void initializeOpenXR(VkInstance instance){std::lock_guard<std::mutex>l(m
     log(std::string("core function table ")+(core?"ready":"INCOMPLETE"));if(!core)return;
     bool graphics=false;if(s.enable2)graphics=load("xrGetVulkanGraphicsRequirements2KHR",s.requirements2)&&load("xrGetVulkanGraphicsDevice2KHR",s.graphicsDevice2)&&load("xrCreateVulkanInstanceKHR",s.createVulkanInstance)&&load("xrCreateVulkanDeviceKHR",s.createVulkanDevice);else graphics=load("xrGetVulkanGraphicsRequirementsKHR",s.requirements1)&&load("xrGetVulkanGraphicsDeviceKHR",s.graphicsDevice1)&&load("xrGetVulkanInstanceExtensionsKHR",s.instanceExtensions)&&load("xrGetVulkanDeviceExtensionsKHR",s.deviceExtensions);log(std::string("Vulkan XR functions ")+(graphics?"ready":"INCOMPLETE"));if(s.enable2){log("XR_KHR_vulkan_enable2 active");log(std::string("xrCreateVulkanInstanceKHR ")+(s.createVulkanInstance?"available":"MISSING"));log(std::string("xrCreateVulkanDeviceKHR ")+(s.createVulkanDevice?"available":"MISSING"));log(std::string("xrGetVulkanGraphicsDevice2KHR ")+(s.graphicsDevice2?"available":"MISSING"));}if(!graphics)return;XrSystemGetInfo gi{XR_TYPE_SYSTEM_GET_INFO};gi.formFactor=XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;log("calling xrGetSystem");r=s.getSystem(s.instance,&gi,&s.system);log("xrGetSystem result="+std::to_string(r)+" system="+std::to_string(s.system));if(XR_SUCCEEDED(r)){XrGraphicsRequirementsVulkanKHR requirements{XR_TYPE_GRAPHICS_REQUIREMENTS_VULKAN_KHR};const XrResult requirementsResult=s.enable2?s.requirements2(s.instance,s.system,&requirements):s.requirements1(s.instance,s.system,&requirements);if(XR_SUCCEEDED(requirementsResult)){s.runtimeMaxVulkanApiVersion=VK_MAKE_API_VERSION(0,XR_VERSION_MAJOR(requirements.maxApiVersionSupported),XR_VERSION_MINOR(requirements.maxApiVersionSupported),XR_VERSION_PATCH(requirements.maxApiVersionSupported));log("Runtime Vulkan API range min="+std::to_string(XR_VERSION_MAJOR(requirements.minApiVersionSupported))+"."+std::to_string(XR_VERSION_MINOR(requirements.minApiVersionSupported))+" max="+std::to_string(XR_VERSION_MAJOR(requirements.maxApiVersionSupported))+"."+std::to_string(XR_VERSION_MINOR(requirements.maxApiVersionSupported)));}else log("Runtime Vulkan requirements query failed "+result(requirementsResult));}if(!s.enable2&&XR_SUCCEEDED(r)){uint32_t size=0;s.instanceExtensions(s.instance,s.system,0,&size,nullptr);std::vector<char>b(size);s.instanceExtensions(s.instance,s.system,size,&size,b.data());log(std::string("Required instance extensions: ")+b.data());size=0;s.deviceExtensions(s.instance,s.system,0,&size,nullptr);b.assign(size,0);s.deviceExtensions(s.instance,s.system,size,&size,b.data());log(std::string("Required device extensions: ")+b.data());}}
 
-void KharvoxXRShutdownHaptics(){clearXInputHapticState();KharvoxPsvr2SubmitTrigger(kharvox::psvr2::offCommand(s.leftHanded,kharvox::psvr2::TriggerOffReason::SessionEnd));KharvoxPsvr2IpcRequestStop();KharvoxBhapticsIpcRequestStop();}
+void KharvoxXRShutdownHaptics(){clearXInputHapticState();KharvoxPsvr2SubmitTrigger(kharvox::psvr2::offCommand(s.leftHanded,kharvox::psvr2::TriggerOffReason::SessionEnd));KharvoxPsvr2IpcRequestStop();KharvoxBhapticsIpcRequestStop();KharvoxProtubeRequestStop();}
 void KharvoxXRDeviceDestroyed(){std::lock_guard<std::mutex>l(mutex);s.handRenderer.shutdown();if(s.sfsCopyTiming.pool){if(s.vk.queueWaitIdle(s.queue)==VK_SUCCESS)s.sfsCopyTiming.shutdownAfterCompletion();}}
 
 bool KharvoxXRMediationEnabled(){return GetFileAttributesW(kharvox::runtimePath(L"enable_xr_mediated").c_str())!=INVALID_FILE_ATTRIBUTES;}
@@ -4018,7 +4036,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
     // the next prediction; compositing fresh hands onto it creates a time skew.
     const auto sourceLeftGripController=s.leftGripController;
     const auto sourceRightGripController=s.rightGripController;
-    updateGameplayActions(frame.predictedDisplayTime);updateXInputHaptics();updatePresentationMode();updatePsvr2TriggerPolicy();
+    updateGameplayActions(frame.predictedDisplayTime);updateXInputHaptics();updatePresentationMode();updatePsvr2TriggerPolicy();updateProtubeRecoil();
     kharvox::native::StereoFrame nativeFrame{};
     bool nativeFrameValid=false;
     if(nativeBackend){

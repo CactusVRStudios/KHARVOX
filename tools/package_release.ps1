@@ -20,7 +20,7 @@ $nativeFiles = @(
     'hand_models.cfg','hand_models_calibration_default.cfg',
     'hud_flat_calibration_default.cfg','hud_profile_calibration_default.cfg','hud_quad_scale_default.cfg',
     'two_hand_weapon_profiles_default.cfg','weapon_pitch_default.cfg',
-    'weapon_roll_default.cfg','weapon_yaw_default.cfg',
+    'weapon_roll_default.cfg','weapon_yaw_default.cfg','protube.ini',
     'assets/3D/DOOM_LEFT_HAND_FIST.glb','assets/3D/DOOM_LEFT_HAND_GUN.glb',
     'assets/3D/DOOM_RIGHT_HAND_FIST.glb','assets/3D/DOOM_RIGHT_HAND_GUN.glb'
 )

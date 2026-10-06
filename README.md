@@ -176,6 +176,16 @@ bHaptics feedback requires compatible gear and the [bHaptics Player for Windows]
 
 **Enable bHaptics** may remain selected without connected hardware. Missing equipment, an unavailable Player or a local bridge error does not block DOOM; normal controller rumble remains independent.
 
+### ProTubeVR ProVolver / ForceTube
+
+KHARVOX can drive ProTubeVR recoil devices (ProVolver and ForceTube) through ProTubeVR's ForceTube SDK.
+
+1. Pair the device in Windows Bluetooth settings and close the ProTubeVR Companion app.
+2. Copy `ForceTubeVR_API_x64.dll` from ProTubeVR's public SDK into the KHARVOX folder, next to `KharvoxLayer.dll`. Recoil is enabled whenever this DLL is present.
+3. Optionally tune `protube.ini` in the same folder: overall power, device channel and per-weapon kick, rumble and fire cadence.
+
+DOOM does not report individual shots, so kicks are timed from the fire trigger using per-weapon fire rates. Kicks stop when a weapon is empty and outside gameplay, menus and passive cinematics. Fast weapons are automatically capped to a kick power the solenoid can repeat. Diagnostics are written to `%TEMP%\KHARVOX-PROTUBE.log`.
+
 ### PSVR2 Toolkit
 
 **Use PSVR2 Toolkit** is experimental and works only with PlayStation VR2 hardware. It requires PSVR2 Toolkit 1.0 or later and a working PSVR2 SteamVR setup. KHARVOX applies weapon-specific adaptive-trigger resistance to the weapon hand; the support hand remains disabled and normal controller rumble is unaffected. Missing or inactive Toolkit software never blocks game startup.

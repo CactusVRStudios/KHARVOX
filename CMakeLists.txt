@@ -159,7 +159,7 @@ if(KHARVOX_BUILD_LAYER)
   endif()
   target_compile_definitions(KharvoxNativeStereo PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX VK_NO_PROTOTYPES VK_USE_PLATFORM_WIN32_KHR DOOMVR_RESEARCH_TOOLS=1)
   target_include_directories(KharvoxNativeStereo PRIVATE src/native/upstream/include third-party/minhook/include third-party/vulkan-headers/include third-party/openxr-sdk/include)
-  add_library(KharvoxLayer SHARED $<TARGET_OBJECTS:KharvoxNativeStereo> src/vulkan/KharvoxLayer.cpp src/openxr/OpenXRBootstrap.cpp src/bhaptics/BhapticsIpcClient.cpp src/psvr2/Psvr2IpcClient.cpp src/fsr/Fsr1Upscaler.cpp src/hands/HandRenderer.cpp src/hands/HandSceneDepthTracker.cpp src/camera/CameraHook.cpp src/hud/HudHook.cpp src/hud/HudGpuDiagnostic.cpp src/weapon/WeaponHook.cpp src/debug/CameraScanner.cpp src/vulkan/KharvoxLayer.def src/common/Version.rc)
+  add_library(KharvoxLayer SHARED $<TARGET_OBJECTS:KharvoxNativeStereo> src/vulkan/KharvoxLayer.cpp src/openxr/OpenXRBootstrap.cpp src/bhaptics/BhapticsIpcClient.cpp src/psvr2/Psvr2IpcClient.cpp src/protube/ProtubeClient.cpp src/fsr/Fsr1Upscaler.cpp src/hands/HandRenderer.cpp src/hands/HandSceneDepthTracker.cpp src/camera/CameraHook.cpp src/hud/HudHook.cpp src/hud/HudGpuDiagnostic.cpp src/weapon/WeaponHook.cpp src/debug/CameraScanner.cpp src/vulkan/KharvoxLayer.def src/common/Version.rc)
   target_compile_features(KharvoxLayer PRIVATE cxx_std_17)
   if(KHARVOX_BUILD_SFS_COMPILER)
     target_sources(KharvoxLayer PRIVATE src/sfs/NativeSfs.cpp)
@@ -271,7 +271,10 @@ if(KHARVOX_BUILD_LAYER)
       "$<TARGET_FILE_DIR:KharvoxLayer>/weapon_pitch_default.cfg"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
       "${CMAKE_CURRENT_SOURCE_DIR}/config/two_hand_weapon_profiles_default.cfg"
-      "$<TARGET_FILE_DIR:KharvoxLayer>/two_hand_weapon_profiles_default.cfg")
+      "$<TARGET_FILE_DIR:KharvoxLayer>/two_hand_weapon_profiles_default.cfg"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${CMAKE_CURRENT_SOURCE_DIR}/config/protube.ini"
+      "$<TARGET_FILE_DIR:KharvoxLayer>/protube.ini")
 endif()
 
 if(WIN32)
@@ -433,6 +436,10 @@ if(BUILD_TESTING)
     tests/psvr2_trigger_policy_tests.cpp)
   target_compile_features(KharvoxPsvr2TriggerPolicyTests PRIVATE cxx_std_17)
   add_test(NAME psvr2-trigger-policy COMMAND KharvoxPsvr2TriggerPolicyTests)
+
+  add_executable(KharvoxProtubeShotPolicyTests tests/protube_shot_policy_tests.cpp)
+  target_compile_features(KharvoxProtubeShotPolicyTests PRIVATE cxx_std_17)
+  add_test(NAME protube-shot-policy COMMAND KharvoxProtubeShotPolicyTests)
 
   add_executable(KharvoxPsvr2ProtocolTests tests/psvr2_protocol_tests.cpp)
   target_compile_features(KharvoxPsvr2ProtocolTests PRIVATE cxx_std_17)

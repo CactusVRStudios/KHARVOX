@@ -62,12 +62,12 @@ inline ProfileTable defaultProfiles() {
     //                         mode         kick rumble ms  interval ramp charge
     set(K::Pistol,            {M::Repeat,    150,  90,  40,  330,     0,   0});
     set(K::Shotgun,           {M::Repeat,    230, 180,  70,  900,     0,   0});
-    set(K::HeavyAssaultRifle, {M::Repeat,    170, 120,  40,  100,     0,   0});
-    set(K::PlasmaRifle,       {M::Repeat,     60, 140,  50,   95,     0,   0});
+    set(K::HeavyAssaultRifle, {M::Repeat,     80, 120,  40,  100,     0,   0});
+    set(K::PlasmaRifle,       {M::Repeat,     40, 140,  50,   95,     0,   0});
     set(K::RocketLauncher,    {M::Repeat,    255, 200,  90,  900,     0,   0});
     set(K::SuperShotgun,      {M::Repeat,    255, 255, 100, 1300,     0,   0});
     set(K::GaussCannon,       {M::Repeat,    255, 160,  80, 1500,     0,   0});
-    set(K::Chaingun,          {M::Repeat,     90, 160,  40,   70,   600,   0});
+    set(K::Chaingun,          {M::Repeat,     40, 160,  40,   70,   600,   0});
     set(K::Bfg,               {M::Charge,    255, 220, 120,    0,     0, 750});
     set(K::Chainsaw,          {M::Continuous,  0, 200, 100,   90,     0,   0});
     set(K::AssaultRifle,      {M::Repeat,    160, 110,  40,  110,     0,   0});

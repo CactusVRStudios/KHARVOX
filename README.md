@@ -192,6 +192,8 @@ Made by Cactus.
 
 **Thanks:** Crementif, Hoshi82, Galaghan, thefreemike, nabelo, VR DaD, Tino, Vince Crusty, BaggyG and Team Beef.
 
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/M7G028RQIE)
+
 ## Building from source
 
 ### Requirements

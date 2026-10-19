@@ -23,9 +23,9 @@ Keep all extracted KHARVOX files together in the same folder. Start DOOM through
 
 #### Known issues and limitations
 
-**Works only with a legal Steam version of Doom 2016**
+**Compatible with legally acquired Steam and GOG versions of DOOM (2016).**
 
-KHARVOX has been tested with the Steam release of DOOM (2016). It changes the game's rendering, camera and controls, so compatibility or startup issues may occur. Some hardware, including AMD graphics cards and less common headsets, may need additional setup. If a launch fails, close any remaining DOOM window and select **Launch Game** again.
+KHARVOX has been tested with the Steam and GOG releases of DOOM (2016). It changes the game's rendering, camera and controls, so compatibility or startup issues may occur. Some hardware, including AMD graphics cards and less common headsets, may need additional setup. If a launch fails, close any remaining DOOM window and select **Launch Game** again.
 
 Changing graphics quality while a level is loaded can freeze or crash the game. Change quality in the main menu before loading a level.
 
@@ -192,7 +192,13 @@ Made by Cactus.
 
 **Thanks:** Crementif, Hoshi82, Galaghan, thefreemike, nabelo, VR DaD, Tino, Vince Crusty, BaggyG and Team Beef.
 
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/M7G028RQIE)
+## Support me
+
+If you enjoy KHARVOX, you can support its development on Ko-fi. Thank you!
+
+<a href="https://ko-fi.com/cactusvrstudios/tip">
+  <img src="assets/branding/kofi-support.png" alt="Support me on Ko-fi" width="320">
+</a>
 
 ## Building from source
 

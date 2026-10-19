@@ -1,3 +1,4 @@
+#include "../common/DoomBuild.h"
 #include "AerCameraPairCache.h"
 #include "../sfs/NativeSfs.h"
 #include "CyberdemonQuadPolicy.h"
@@ -252,7 +253,7 @@ unsigned char* findTextSignature(const unsigned char* signature, size_t bytes) {
     if (nt->Signature != IMAGE_NT_SIGNATURE) return nullptr;
     auto section = IMAGE_FIRST_SECTION(nt);
     for (unsigned i = 0; i < nt->FileHeader.NumberOfSections; ++i, ++section) {
-        if (std::memcmp(section->Name, ".text", 5)) continue;
+        if (kharvox::game::compare(section->Name, ".text", 5)) continue;
         auto begin = image + section->VirtualAddress;
         const size_t size = section->Misc.VirtualSize;
         for (size_t offset = 0; offset + bytes <= size; ++offset) {
@@ -309,14 +310,14 @@ bool installPlayerFocusTraceHook(unsigned char* image) {
     if (!image) return false;
     // DOOM 2016 Vulkan FocusTracker.cpp trace construction. The displaced
     // instructions finish the two native endpoints at +0xBC and +0xC8.
-    constexpr uintptr_t focusTraceRva = 0xD48938;
+    const uintptr_t focusTraceRva = kharvox::game::rva(0xD48938);
     constexpr unsigned char signature[] = {
         0xF3,0x0F,0x11,0xBE,0xD4,0x00,0x00,0x00,
         0x41,0x0F,0x11,0x07,
         0x0F,0x28,0x45,0x80
     };
     auto target = image + focusTraceRva;
-    if (std::memcmp(target, signature, sizeof(signature))) {
+    if (kharvox::game::compare(target, signature, sizeof(signature))) {
         log("[FOCUS] FocusTracker trace signature mismatch; HMD USE ray disabled");
         return false;
     }
@@ -353,7 +354,7 @@ bool installPlayerFocusTraceHook(unsigned char* image) {
     emit8(p,0x41); emit8(p,0x5B); emit8(p,0x41); emit8(p,0x5A);
     emit8(p,0x41); emit8(p,0x59); emit8(p,0x41); emit8(p,0x58);
     emit8(p,0x5A); emit8(p,0x59); emit8(p,0x58); emit8(p,0x9D);
-    std::memcpy(p, signature, sizeof(signature)); p += sizeof(signature);
+    std::memcpy(p, target, sizeof(signature)); p += sizeof(signature);
     emit8(p,0xFF); emit8(p,0x25); emit8(p,0); emit8(p,0); emit8(p,0); emit8(p,0);
     emit64(p,reinterpret_cast<unsigned long long>(target + sizeof(signature)));
 
@@ -407,14 +408,14 @@ bool installPlayerLedgeTraceAxisHook(unsigned char* image) {
     if (!image) return false;
     // idPlayerMechanicLedgeGrab prepares its normalized forward axis before
     // deriving the perpendicular trace basis at this instruction boundary.
-    constexpr uintptr_t ledgeAxisRva = 0xDA1870;
+    const uintptr_t ledgeAxisRva = kharvox::game::rva(0xDA1870);
     constexpr unsigned char signature[] = {
         0x48,0x8B,0x43,0x10,
         0x48,0x8B,0x88,0x08,0x08,0x00,0x00,
         0x48,0x8B,0x01
     };
     auto target = image + ledgeAxisRva;
-    if (std::memcmp(target, signature, sizeof(signature))) {
+    if (kharvox::game::compare(target, signature, sizeof(signature))) {
         log("[LEDGE] player ledge trace-axis signature mismatch; HMD ledge direction disabled");
         return false;
     }
@@ -450,7 +451,7 @@ bool installPlayerLedgeTraceAxisHook(unsigned char* image) {
     emit8(p,0x41); emit8(p,0x5B); emit8(p,0x41); emit8(p,0x5A);
     emit8(p,0x41); emit8(p,0x59); emit8(p,0x41); emit8(p,0x58);
     emit8(p,0x5A); emit8(p,0x59); emit8(p,0x58); emit8(p,0x9D);
-    std::memcpy(p, signature, sizeof(signature)); p += sizeof(signature);
+    std::memcpy(p, target, sizeof(signature)); p += sizeof(signature);
     emit8(p,0xFF); emit8(p,0x25); emit8(p,0); emit8(p,0); emit8(p,0); emit8(p,0);
     emit64(p,reinterpret_cast<unsigned long long>(target + sizeof(signature)));
 
@@ -483,14 +484,14 @@ bool installPlayerLedgeStateCapture(unsigned char* image) {
     if (!image) return false;
     // Tail of idPlayerMechanicLedgeGrab::SetState. The first two writes retain
     // the old state and the third commits EBP as the new native state.
-    constexpr uintptr_t stateCommitRva = 0xDA24A3;
+    const uintptr_t stateCommitRva = kharvox::game::rva(0xDA24A3);
     constexpr unsigned char signature[] = {
         0x8B,0x86,0x58,0x52,0x00,0x00,
         0x89,0x86,0x5C,0x52,0x00,0x00,
         0x89,0xAE,0x58,0x52,0x00,0x00
     };
     auto target = image + stateCommitRva;
-    if (std::memcmp(target, signature, sizeof(signature))) {
+    if (kharvox::game::compare(target, signature, sizeof(signature))) {
         log("[CINEMATIC-CLASS] Ledge state signature mismatch; Jump/Ledge exception disabled");
         return false;
     }
@@ -502,7 +503,7 @@ bool installPlayerLedgeStateCapture(unsigned char* image) {
         return false;
     }
     auto p = stub;
-    std::memcpy(p, signature, sizeof(signature)); p += sizeof(signature);
+    std::memcpy(p, target, sizeof(signature)); p += sizeof(signature);
     emit8(p,0x9C); emit8(p,0x50); emit8(p,0x51); emit8(p,0x52);
     emit8(p,0x41); emit8(p,0x50); emit8(p,0x41); emit8(p,0x51);
     emit8(p,0x41); emit8(p,0x52); emit8(p,0x41); emit8(p,0x53);
@@ -549,20 +550,20 @@ bool installPlayerLedgeStateCapture(unsigned char* image) {
 
 bool validateSyncAttackClassifier(unsigned char* image) {
     if (!image) return false;
-    constexpr uintptr_t startSyncAttackRva = 0xDA7980;
+    const uintptr_t startSyncAttackRva = kharvox::game::rva(0xDA7980);
     constexpr unsigned char startSignature[] = {
         0x48,0x8B,0xC4,0x57,0x41,0x54,0x41,0x55,
         0x41,0x56,0x41,0x57,0x48,0x83,0xEC,0x60
     };
     // The native usability path reads idPlayer+0x3DC9 immediately before its
     // explicit "instigating a sync attack" diagnostic.
-    constexpr uintptr_t instigatorFlagReadRva = 0x9B2908;
+    const uintptr_t instigatorFlagReadRva = kharvox::game::rva(0x9B2908);
     constexpr unsigned char flagReadSignature[] = {
         0x80,0xB8,0xC9,0x3D,0x00,0x00,0x00,0x74,0x26
     };
-    const bool supported = !std::memcmp(
+    const bool supported = !kharvox::game::compare(
             image + startSyncAttackRva, startSignature, sizeof(startSignature))
-        && !std::memcmp(image + instigatorFlagReadRva,
+        && !kharvox::game::compare(image + instigatorFlagReadRva,
             flagReadSignature, sizeof(flagReadSignature));
     syncAttackClassifierSupported.store(supported, std::memory_order_release);
     log(supported
@@ -577,11 +578,11 @@ bool validatePlayerControlClassifier(unsigned char* image) {
     // the idPlayer field offset; the high dword identifies a four-byte value.
     // Validate the record before reading the live player object so an unknown
     // executable revision fails closed to the Comfort Cinewindow.
-    constexpr uintptr_t inhibitFlagsRecordRva = 0x30AACD8;
+    const uintptr_t inhibitFlagsRecordRva = kharvox::game::rva(0x30AACD8);
     constexpr unsigned char reflectedFieldSignature[]{
         0x4C,0x4C,0x01,0x00, 0x04,0x00,0x00,0x00
     };
-    const bool supported = !std::memcmp(
+    const bool supported = !kharvox::game::compare(
         image + inhibitFlagsRecordRva + 0x18,
         reflectedFieldSignature, sizeof(reflectedFieldSignature));
     playerControlClassifierSupported.store(supported, std::memory_order_release);
@@ -770,7 +771,7 @@ extern "C" const float* __fastcall getVRGameplayViewAxis(void* player) {
 
     const auto imageBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
     const auto caller = reinterpret_cast<uintptr_t>(_ReturnAddress());
-    const uintptr_t callerRva = imageBase && caller >= imageBase ? caller - imageBase : 0;
+    const uintptr_t callerRva = imageBase && caller >= imageBase ? kharvox::game::canonicalRva(caller - imageBase) : 0;
     // The normal gameplay render camera obtains this axis at RVA 0xE3F8F6
     // (return address 0xE3F8FC). CameraHook composes OpenXR orientation there
     // after publishing the untouched native body pose. Returning the combined
@@ -841,7 +842,7 @@ extern "C" const float* __fastcall capturePlayerPhysicsOrigin(void* player) {
 }
 
 bool installPlayerPhysicsOriginCapture(unsigned char* image) {
-    constexpr uintptr_t callsiteRva = 0xE3F8D3;
+    const uintptr_t callsiteRva = kharvox::game::rva(0xE3F8D3);
     auto target = image + callsiteRva;
     constexpr unsigned char signature[] = {
         0x48,0x8B,0x03,
@@ -849,7 +850,7 @@ bool installPlayerPhysicsOriginCapture(unsigned char* image) {
         0xFF,0x90,0x70,0x03,0x00,0x00,
         0x48,0x8B,0xCB
     };
-    if (std::memcmp(target, signature, sizeof(signature))) {
+    if (kharvox::game::compare(target, signature, sizeof(signature))) {
         log("player physics-origin capture signature mismatch; stable weapon anchor disabled");
         return false;
     }
@@ -964,13 +965,13 @@ extern "C" void* __fastcall nativeShaderParseContextHook(void* destination, void
 }
 
 bool installNativeShaderArenaGuard(unsigned char* image) {
-    constexpr uintptr_t shaderParseContextRva = 0x1CCD5A0;
+    const uintptr_t shaderParseContextRva = kharvox::game::rva(0x1CCD5A0);
     auto target = image + shaderParseContextRva;
     constexpr unsigned char signature[] = {
         0x40,0x53,0x48,0x83,0xEC,0x20,0x48,0x89,0x11,0x48,
         0x8B,0xD9,0x4C,0x8B,0x9A,0x98,0x00,0x00,0x00
     };
-    if (std::memcmp(target, signature, sizeof(signature))) {
+    if (kharvox::game::compare(target, signature, sizeof(signature))) {
         log("[Stereo] Vulkan shader parse-context signature mismatch; native stereo disabled");
         return false;
     }
@@ -981,7 +982,7 @@ bool installNativeShaderArenaGuard(unsigned char* image) {
         return false;
     }
     auto cursor = trampoline;
-    std::memcpy(cursor, signature, sizeof(signature));
+    std::memcpy(cursor, target, sizeof(signature));
     cursor += sizeof(signature);
     emit8(cursor, 0xFF); emit8(cursor, 0x25);
     emit8(cursor, 0); emit8(cursor, 0); emit8(cursor, 0); emit8(cursor, 0);
@@ -1028,13 +1029,13 @@ extern "C" void __fastcall nativeVulkanBackendResizeHook(void* context) {
 }
 
 bool installNativeVulkanBackendGuard(unsigned char* image) {
-    constexpr uintptr_t backendResizeRva = 0x17B9330;
+    const uintptr_t backendResizeRva = kharvox::game::rva(0x17B9330);
     auto target = image + backendResizeRva;
     constexpr unsigned char signature[] = {
         0x40,0x56,0x57,0x41,0x56,0x48,0x83,0xEC,0x40,
         0x48,0xC7,0x44,0x24,0x30,0xFE,0xFF,0xFF,0xFF
     };
-    if (std::memcmp(target, signature, sizeof(signature))) {
+    if (kharvox::game::compare(target, signature, sizeof(signature))) {
         log("[Stereo] Vulkan backend-resize signature mismatch; native stereo disabled");
         return false;
     }
@@ -1045,7 +1046,7 @@ bool installNativeVulkanBackendGuard(unsigned char* image) {
         return false;
     }
     auto cursor = trampoline;
-    std::memcpy(cursor, signature, sizeof(signature));
+    std::memcpy(cursor, target, sizeof(signature));
     cursor += sizeof(signature);
     emit8(cursor, 0xFF); emit8(cursor, 0x25);
     emit8(cursor, 0); emit8(cursor, 0); emit8(cursor, 0); emit8(cursor, 0);
@@ -1116,13 +1117,13 @@ extern "C" void __fastcall nativeVulkanBackendOwnerInitHook(void* owner) {
 }
 
 bool installNativeVulkanBackendOwnerGuard(unsigned char* image) {
-    constexpr uintptr_t backendOwnerInitRva = 0x186E000;
+    const uintptr_t backendOwnerInitRva = kharvox::game::rva(0x186E000);
     auto target = image + backendOwnerInitRva;
     constexpr unsigned char signature[] = {
         0x48,0x89,0x5C,0x24,0x08,0x48,0x89,0x74,0x24,0x10,
         0x57,0x48,0x83,0xEC,0x30,0x48,0x8B,0xF9
     };
-    if (std::memcmp(target, signature, sizeof(signature))) {
+    if (kharvox::game::compare(target, signature, sizeof(signature))) {
         log("[Stereo] Vulkan backend-owner signature mismatch; native stereo disabled");
         return false;
     }
@@ -1133,7 +1134,7 @@ bool installNativeVulkanBackendOwnerGuard(unsigned char* image) {
         return false;
     }
     auto cursor = trampoline;
-    std::memcpy(cursor, signature, sizeof(signature));
+    std::memcpy(cursor, target, sizeof(signature));
     cursor += sizeof(signature);
     emit8(cursor, 0xFF); emit8(cursor, 0x25);
     emit8(cursor, 0); emit8(cursor, 0); emit8(cursor, 0); emit8(cursor, 0);
@@ -1181,15 +1182,15 @@ bool installNativeSameFrameStereo() {
     // physically accepted alternating-eye path remains untouched by default.
     auto image = reinterpret_cast<unsigned char*>(GetModuleHandleW(nullptr));
     if (!image) return false;
-    constexpr uintptr_t viewLayoutSlotRva = 0x36111E8;
-    constexpr uintptr_t primaryViewListRva = 0x360F610;
-    constexpr uintptr_t primaryViewStorageRva = 0x360F630;
-    constexpr uintptr_t singleLayoutRva = 0x284FFC8;
-    constexpr uintptr_t leftRightNameRecordRva = 0x2850068;
-    constexpr uintptr_t leftRightNameRva = 0x2850230;
-    constexpr uintptr_t leftRightLayoutRva = 0x2850090;
-    constexpr uintptr_t nextModeNameRecordRva = 0x28500E0;
-    constexpr uintptr_t multiViewCurrentRva = 0x5FB8B20;
+    const uintptr_t viewLayoutSlotRva = kharvox::game::rva(0x36111E8);
+    const uintptr_t primaryViewListRva = kharvox::game::rva(0x360F610);
+    const uintptr_t primaryViewStorageRva = kharvox::game::rva(0x360F630);
+    const uintptr_t singleLayoutRva = kharvox::game::rva(0x284FFC8);
+    const uintptr_t leftRightNameRecordRva = kharvox::game::rva(0x2850068);
+    const uintptr_t leftRightNameRva = kharvox::game::rva(0x2850230);
+    const uintptr_t leftRightLayoutRva = kharvox::game::rva(0x2850090);
+    const uintptr_t nextModeNameRecordRva = kharvox::game::rva(0x28500E0);
+    const uintptr_t multiViewCurrentRva = kharvox::game::rva(0x5FB8B20);
 
     auto layoutSlot = reinterpret_cast<void* volatile*>(image + viewLayoutSlotRva);
     struct ViewListHeader {
@@ -1270,12 +1271,12 @@ void finishNativeStereoBootstrap() {
         nativeStereoBootstrapStage.store(0, std::memory_order_release);
         return;
     }
-    constexpr uintptr_t viewLayoutSlotRva = 0x36111E8;
-    constexpr uintptr_t primaryViewListRva = 0x360F610;
-    constexpr uintptr_t primaryViewStorageRva = 0x360F630;
-    constexpr uintptr_t reserveViewsRva = 0x1188C70;
-    constexpr uintptr_t constructViewRva = 0x117AF50;
-    constexpr uintptr_t leftRightLayoutRva = 0x2850090;
+    const uintptr_t viewLayoutSlotRva = kharvox::game::rva(0x36111E8);
+    const uintptr_t primaryViewListRva = kharvox::game::rva(0x360F610);
+    const uintptr_t primaryViewStorageRva = kharvox::game::rva(0x360F630);
+    const uintptr_t reserveViewsRva = kharvox::game::rva(0x1188C70);
+    const uintptr_t constructViewRva = kharvox::game::rva(0x117AF50);
+    const uintptr_t leftRightLayoutRva = kharvox::game::rva(0x2850090);
     constexpr size_t viewBytes = 0x920;
     struct ViewListHeader {
         void* data;
@@ -1316,9 +1317,9 @@ void completeNativeStereoBootstrapAfterRender() {
             expectedStage, 0, std::memory_order_acq_rel)) return;
     auto image = reinterpret_cast<unsigned char*>(GetModuleHandleW(nullptr));
     if (!image) return;
-    constexpr uintptr_t viewLayoutSlotRva = 0x36111E8;
-    constexpr uintptr_t primaryViewListRva = 0x360F610;
-    constexpr uintptr_t singleLayoutRva = 0x284FFC8;
+    const uintptr_t viewLayoutSlotRva = kharvox::game::rva(0x36111E8);
+    const uintptr_t primaryViewListRva = kharvox::game::rva(0x360F610);
+    const uintptr_t singleLayoutRva = kharvox::game::rva(0x284FFC8);
     constexpr size_t viewBytes = 0x920;
     struct ViewListHeader { void* data; LONG count; LONG capacity; };
     auto views = reinterpret_cast<ViewListHeader*>(image + primaryViewListRva);
@@ -1359,7 +1360,7 @@ extern "C" bool __fastcall renderFrontendStereoProof(void* context, void* arg2, 
         }
         auto image = reinterpret_cast<unsigned char*>(GetModuleHandleW(nullptr));
         if (!image) return originalRenderFrontend(context, arg2, arg3);
-        constexpr uintptr_t viewLayoutSlotRva = 0x36111E8;
+        const uintptr_t viewLayoutSlotRva = kharvox::game::rva(0x36111E8);
         auto layoutSlot = reinterpret_cast<void* volatile*>(image + viewLayoutSlotRva);
         auto savedLayout = *layoutSlot;
         // Native layout eye signs provide separation; suppress the alternating
@@ -1426,9 +1427,9 @@ bool installSameFrameProofHook() {
         return false;
     }
     auto image = reinterpret_cast<unsigned char*>(GetModuleHandleW(nullptr));
-    auto target = image ? image + 0xDC80D0 : nullptr;
+    auto target = image ? image + kharvox::game::rva(0xDC80D0) : nullptr;
     constexpr unsigned char prefix[] = {0x48,0x89,0x5C,0x24,0x10,0x56,0x48,0x83,0xEC,0x30,0x48,0x8B,0x01,0x49,0x8B,0xF0};
-    if (!target || std::memcmp(target, prefix, sizeof(prefix))) {
+    if (!target || kharvox::game::compare(target, prefix, sizeof(prefix))) {
         log("[Stereo] DC80D0 render-front-end signature mismatch; proof hook not installed");
         return false;
     }
@@ -1483,7 +1484,7 @@ bool installCutsceneFovHook() {
     auto stub=static_cast<unsigned char*>(VirtualAlloc(nullptr,160,MEM_COMMIT|MEM_RESERVE,PAGE_EXECUTE_READWRITE));
     if(!stub)return false;
     auto p=stub;
-    std::memcpy(p,signature,4);p+=4;                 // addss xmm0,xmm0
+    std::memcpy(p,target,4);p+=4;                 // addss xmm0,xmm0
     emit8(p,0x49);emit8(p,0xBB);                    // mov r11, &cutsceneFovHits
     emit64(p,reinterpret_cast<unsigned long long>(&cutsceneFovHits));
     emit8(p,0xF0);emit8(p,0x49);emit8(p,0xFF);emit8(p,0x03); // lock inc qword [r11]
@@ -1511,7 +1512,7 @@ bool installCutsceneFovHook() {
     auto originalWrite=p;
     emit8(p,0xF3);emit8(p,0x0F);emit8(p,0x11);emit8(p,0x00); // movss [rax],xmm0
     auto epilogue=p;
-    std::memcpy(p,signature+8,6);p+=6;              // stack restore + return
+    std::memcpy(p,target+8,6);p+=6;              // stack restore + return
     const auto disabledRelative=static_cast<unsigned int>(originalWrite-(disabledJump+4));
     std::memcpy(disabledJump,&disabledRelative,sizeof(disabledRelative));
     const auto epilogueRelative=static_cast<unsigned int>(epilogue-(epilogueJump+4));
@@ -1534,7 +1535,7 @@ extern "C" void __fastcall patchCamera(void* rawContext, void* rawReturnAddress)
     const uintptr_t context = reinterpret_cast<uintptr_t>(rawContext);
     const uintptr_t returnAddress = reinterpret_cast<uintptr_t>(rawReturnAddress);
     const auto imageBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
-    const uintptr_t callerRva = imageBase ? returnAddress - imageBase : 0;
+    const uintptr_t callerRva = imageBase ? kharvox::game::canonicalRva(returnAddress - imageBase) : 0;
     const auto unmodifiedCameraBytes = reinterpret_cast<unsigned char*>(rawContext);
     const auto unmodifiedPosition = reinterpret_cast<float*>(unmodifiedCameraBytes + 0xC0);
     const auto unmodifiedBasis = reinterpret_cast<float*>(unmodifiedCameraBytes + 0xCC);
@@ -2117,7 +2118,7 @@ bool KharvoxCameraInstallDiagnosticHook() {
     auto p = stub;
     // Execute the two displaced matrix copies, then process the fully
     // populated camera object in rcx, matching the reference hook timing.
-    std::memcpy(p, signature, sizeof(signature) - 1);
+    std::memcpy(p, target, sizeof(signature) - 1);
     p += sizeof(signature) - 1;
     emit8(p, 0x48); emit8(p, 0x8B); emit8(p, 0x14); emit8(p, 0x24); // rdx = return address
     emit8(p, 0x50);                                      // push rax
@@ -2229,8 +2230,8 @@ void KharvoxCameraPollDiagnostic() {
                    || nativeStereoBootstrapStage.load(std::memory_order_acquire) != 0)) {
             auto image = reinterpret_cast<unsigned char*>(GetModuleHandleW(nullptr));
             if (image) {
-                constexpr uintptr_t viewLayoutSlotRva = 0x36111E8;
-                constexpr uintptr_t singleLayoutRva = 0x284FFC8;
+                const uintptr_t viewLayoutSlotRva = kharvox::game::rva(0x36111E8);
+                const uintptr_t singleLayoutRva = kharvox::game::rva(0x284FFC8);
                 InterlockedExchangePointer(
                     reinterpret_cast<void* volatile*>(image + viewLayoutSlotRva),
                     image + singleLayoutRva);
@@ -2312,22 +2313,22 @@ bool readNativeSequencePlayer(uintptr_t& owner){
         uint64_t listField{};
         constexpr unsigned char globalRead[]{0x48,0x8b,0x05,0x2c,0x50,0x7b,0x05};
         unsigned char actual[sizeof(globalRead)]{};
-        return readBossSequenceBytes(image+0x3035f10,&listField,8)
+        return readBossSequenceBytes(image+kharvox::game::rva(0x3035f10),&listField,8)
             &&listField==0x20000a5d48ull
-            &&readBossSequenceBytes(image+0x35a69d,actual,sizeof(actual))
-            &&!std::memcmp(actual,globalRead,sizeof(actual));
+            &&readBossSequenceBytes(image+kharvox::game::rva(0x35a69d),actual,sizeof(actual))
+            &&!kharvox::game::compare(reinterpret_cast<const void*>(image+kharvox::game::rva(0x35a69d)),globalRead,sizeof(actual));
     }();
     uintptr_t game{},gameAgain{},vtable{},entries{},entriesAgain{};
     int count{};
     struct Managed {uint32_t id,check;uintptr_t entity;};
     Managed player{},again{};
-    if(!supported||!readBossSequenceBytes(image+0x5b0f6d0,&game,8)||!game
-        ||!readBossSequenceBytes(game,&vtable,8)||vtable!=image+0x201e3d8
+    if(!supported||!readBossSequenceBytes(image+kharvox::game::rva(0x5b0f6d0),&game,8)||!game
+        ||!readBossSequenceBytes(game,&vtable,8)||vtable!=image+kharvox::game::rva(0x201e3d8)
         ||!readBossSequenceBytes(game+0xa5d50,&entries,8)||!entries
         ||!readBossSequenceBytes(game+0xa5d58,&count,4)||count<1||count>4
         ||!readBossSequenceBytes(entries,&player,sizeof(player))||!player.entity
         ||player.id!=player.check||player.id==0x1fffffe
-        ||!readBossSequenceBytes(image+0x5b0f6d0,&gameAgain,8)||gameAgain!=game
+        ||!readBossSequenceBytes(image+kharvox::game::rva(0x5b0f6d0),&gameAgain,8)||gameAgain!=game
         ||!readBossSequenceBytes(game+0xa5d50,&entriesAgain,8)||entriesAgain!=entries
         ||!readBossSequenceBytes(entries,&again,sizeof(again))
         ||player.id!=again.id||player.entity!=again.entity||player.check!=again.check)return false;
@@ -2340,15 +2341,15 @@ BossObservation readHellGuardsMapCamera(uintptr_t owner,bool prime,char (&name)[
     const auto image=reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
     static const bool supported=[&]{
         uint64_t spawnedField{},workingField{};
-        return readBossSequenceBytes(image+0x3035ad8,&spawnedField,8)
+        return readBossSequenceBytes(image+kharvox::game::rva(0x3035ad8),&spawnedField,8)
             &&spawnedField==0x20000a54d0ull
-            &&readBossSequenceBytes(image+0x300f600,&workingField,8)
+            &&readBossSequenceBytes(image+kharvox::game::rva(0x300f600),&workingField,8)
             &&workingField==0x100004e98ull;
     }();
     if(!supported)return BossObservation::Inactive;
     uintptr_t game{},vtable{};
-    const bool validGame=readBossSequenceBytes(image+0x5b0f6d0,&game,8)&&game
-        &&readBossSequenceBytes(game,&vtable,8)&&vtable==image+0x201e3d8;
+    const bool validGame=readBossSequenceBytes(image+kharvox::game::rva(0x5b0f6d0),&game,8)&&game
+        &&readBossSequenceBytes(game,&vtable,8)&&vtable==image+kharvox::game::rva(0x201e3d8);
     // A null global game pointer is normal between DOOM update phases. It does
     // not end a map cinematic whose validated native entity is still active.
     struct Candidate {uintptr_t entity{},decl{};std::array<char,128> name{};};
@@ -2378,7 +2379,7 @@ BossObservation readHellGuardsMapCamera(uintptr_t owner,bool prime,char (&name)[
         for(const auto& ref:snapshot){
             Candidate candidate{};uintptr_t text{};
             if(!ref.entity||ref.id!=ref.check||ref.id==0x1fffffe
-                ||!readBossSequenceBytes(ref.entity,&vtable,8)||vtable!=image+0x21ab128
+                ||!readBossSequenceBytes(ref.entity,&vtable,8)||vtable!=image+kharvox::game::rva(0x21ab128)
                 ||!readBossSequenceBytes(ref.entity+0x6d0,&candidate.decl,8)||!candidate.decl
                 ||!readBossSequenceBytes(candidate.decl+8,&text,8)||!text
                 ||!readBossSequenceBytes(text,candidate.name.data(),candidate.name.size()))continue;
@@ -2397,7 +2398,7 @@ BossObservation readHellGuardsMapCamera(uintptr_t owner,bool prime,char (&name)[
     bool unavailable=false;
     for(size_t i=0;i<candidateCount;++i){
         const auto& candidate=candidates[i];uintptr_t decl{};unsigned char working{};
-        if(!readBossSequenceBytes(candidate.entity,&vtable,8)||vtable!=image+0x21ab128
+        if(!readBossSequenceBytes(candidate.entity,&vtable,8)||vtable!=image+kharvox::game::rva(0x21ab128)
             ||!readBossSequenceBytes(candidate.entity+0x6d0,&decl,8)||decl!=candidate.decl
             ||!readBossSequenceBytes(candidate.entity+0x4e98,&working,1)){
             unavailable=true;continue;
@@ -2420,9 +2421,9 @@ BossObservation readCurrentBossSequenceAt(uintptr_t owner,uintptr_t referenceOff
     const auto image=reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
     static const bool supported=[&]{
         uint64_t masterField{},savedField{},declField{};
-        return readBossSequenceBytes(image+0x30aa120,&masterField,8)
-            &&readBossSequenceBytes(image+0x30aa1f8,&savedField,8)
-            &&readBossSequenceBytes(image+0x307b400,&declField,8)
+        return readBossSequenceBytes(image+kharvox::game::rva(0x30aa120),&masterField,8)
+            &&readBossSequenceBytes(image+kharvox::game::rva(0x30aa1f8),&savedField,8)
+            &&readBossSequenceBytes(image+kharvox::game::rva(0x307b400),&declField,8)
             &&masterField==0x200000d198ull&&savedField==0x200000da18ull
             &&declField==0x8000006d0ull;
     }();
@@ -2433,7 +2434,7 @@ BossObservation readCurrentBossSequenceAt(uintptr_t owner,uintptr_t referenceOff
     if(!readBossSequenceBytes(owner+referenceOffset,&master,sizeof(master)))return BossObservation::Unknown;
     if(!master.entity)return BossObservation::Inactive;
     if(master.id!=master.check||master.id==0x1fffffe
-        ||!readBossSequenceBytes(master.entity,&vtable,8)||vtable!=image+0x21ab128
+        ||!readBossSequenceBytes(master.entity,&vtable,8)||vtable!=image+kharvox::game::rva(0x21ab128)
         ||!readBossSequenceBytes(master.entity+0x6d0,&decl,8)||!decl
         ||!readBossSequenceBytes(decl+8,&text,8)||!text)return BossObservation::Unknown;
     if(!readBossSequenceBytes(text,name,sizeof(name))){
@@ -2679,12 +2680,12 @@ void KharvoxCameraSetNativeStereoParameters(float halfEyeSeparationUnits, float 
     auto image = reinterpret_cast<unsigned char*>(GetModuleHandleW(nullptr));
     if (!image) return;
     // idCVar float current values live at object + 0x34 in this executable.
-    constexpr uintptr_t worldSeparationCurrentRva = 0x5FB88A4;
-    constexpr uintptr_t screenSeparationCurrentRva = 0x5FB8944;
+    const uintptr_t worldSeparationCurrentRva = kharvox::game::rva(0x5FB88A4);
+    const uintptr_t screenSeparationCurrentRva = kharvox::game::rva(0x5FB8944);
     // Keep DOOM's native left/right target order. For an HMD the projection
     // screen separation is zero; only desktop/3D-TV convergence uses a
     // non-zero screen-space offset.
-    constexpr uintptr_t swapEyesCurrentRva = 0x5FB8A80;
+    const uintptr_t swapEyesCurrentRva = kharvox::game::rva(0x5FB8A80);
     LONG worldBits{}, screenBits{};
     static_assert(sizeof(worldBits) == sizeof(halfEyeSeparationUnits));
     std::memcpy(&worldBits, &halfEyeSeparationUnits, sizeof(worldBits));

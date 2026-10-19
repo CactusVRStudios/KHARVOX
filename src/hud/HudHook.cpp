@@ -1,3 +1,4 @@
+#include "../common/DoomBuild.h"
 #include "../common/DiagnosticLogging.h"
 #include "HudHook.h"
 #include "OffhandHudPolicy.h"
@@ -444,7 +445,7 @@ extern "C" void __fastcall setRenderEntityOriginHudHook(
     auto entity = static_cast<unsigned char*>(rawEntity);
     const auto image = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
     const auto returnAddress = reinterpret_cast<uintptr_t>(_ReturnAddress());
-    if (image && returnAddress - image == 0xF91F58)
+    if (image && kharvox::game::canonicalRva(returnAddress - image) == 0xF91F58)
         KharvoxHudPrepareOriginTransform(rawEntity, const_cast<float*>(nativeOrigin));
 
     // Complete DOOM's small native origin setter directly. HUD5 hooks this
@@ -459,12 +460,12 @@ extern "C" void __fastcall setRenderEntityOriginHudHook(
 bool installHudOriginHook() {
     auto image = reinterpret_cast<unsigned char*>(GetModuleHandleW(nullptr));
     if (!image) return false;
-    auto target = image + 0x3B7500;
+    auto target = image + kharvox::game::rva(0x3B7500);
     constexpr std::array<unsigned char, 17> signature{
         0x0F,0xB6,0x41,0x71,0x84,0x41,0x70,0x75,0x1A,
         0x8B,0x02,0x89,0x81,0xC8,0x00,0x00,0x00
     };
-    if (std::memcmp(target, signature.data(), signature.size())) {
+    if (kharvox::game::compare(target, signature.data(), signature.size())) {
         log("HUD5 origin-setter signature mismatch at RVA 0x3B7500; HUD transform disabled");
         return false;
     }
@@ -487,13 +488,13 @@ bool installHudOriginHook() {
 bool installCrosshairCaptureHook() {
     auto image = reinterpret_cast<unsigned char*>(GetModuleHandleW(nullptr));
     if (!image) return false;
-    auto target = image + 0xC317BE;
+    auto target = image + kharvox::game::rva(0xC317BE);
     constexpr std::array<unsigned char, 16> signature{
         0x41, 0x8B, 0x85, 0xBC, 0x00, 0x00, 0x00,
         0x89, 0x86, 0x90, 0x00, 0x00, 0x00,
         0x41, 0x8B, 0xD7
     };
-    if (std::memcmp(target, signature.data(), signature.size())) {
+    if (kharvox::game::compare(target, signature.data(), signature.size())) {
         log("DOOMHUDCrosshair signature mismatch at RVA 0xC317BE; hard off-screen fallback unavailable");
         return false;
     }
@@ -518,7 +519,7 @@ bool installCrosshairCaptureHook() {
     stub[cursor++] = 0x33;
     stub[cursor++] = 0x41; // pop r11
     stub[cursor++] = 0x5B;
-    std::memcpy(stub + cursor, signature.data(), signature.size());
+    std::memcpy(stub + cursor, target, signature.size());
     cursor += signature.size();
     appendAbsoluteJump(stub + cursor, target + signature.size());
     FlushInstructionCache(GetCurrentProcess(), stub, stubSize);
@@ -583,7 +584,7 @@ using HudCanvasSizeFn=void(__fastcall*)(void*,int,int,float,float);
 HudCanvasSizeFn originalHudCanvasSize{};
 void __fastcall offhandHudCanvasSize(void* entity,int width,int height,float extentX,float extentY){
     const auto image=reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
-    const auto caller=reinterpret_cast<uintptr_t>(_ReturnAddress())-image;
+    const auto caller=kharvox::game::canonicalRva(reinterpret_cast<uintptr_t>(_ReturnAddress())-image);
     auto pending=offhandCanvasSubmission;
     if(pending.surface==0)progSource=pending;
     offhandCanvasSubmission={};
@@ -631,10 +632,10 @@ bool installOffhandCanvasHook(){
     auto image=reinterpret_cast<unsigned char*>(GetModuleHandleW(nullptr));
     // Two complete instructions, no RIP-relative operands.
     constexpr std::array<unsigned char,14> signature{0xf3,0x0f,0x10,0x54,0x24,0x28,0xf3,0x0f,0x11,0x99,0xcc,0x4e,0,0};
-    if(!image||!readableRange(image+0x1590d60,signature.size())
-        ||std::memcmp(image+0x1590d60,signature.data(),signature.size())){
+    if(!image||!readableRange(image+kharvox::game::rva(0x1590d60),signature.size())
+        ||kharvox::game::compare(image+kharvox::game::rva(0x1590d60),signature.data(),signature.size())){
         log("[OFFHAND-HUD] canvas signature mismatch; retaining standard HUD");return false;}
-    return installEntryHook(image+0x1590d60,signature,reinterpret_cast<const void*>(&offhandHudCanvasSize),originalHudCanvasSize,"Offhand centered canvas");
+    return installEntryHook(image+kharvox::game::rva(0x1590d60),signature,reinterpret_cast<const void*>(&offhandHudCanvasSize),originalHudCanvasSize,"Offhand centered canvas");
 }
 
 using LocalizedTextLookup=const char*(__fastcall*)(const void*);
@@ -668,10 +669,10 @@ void installLocalizedBindingHook(){
     // Tutorial_Text calls it at C5793A/C57984 before copying into its widgets.
     constexpr std::array<unsigned char,15> signature{
         0x4C,0x8B,0xDC,0x48,0x83,0xEC,0x58,0x49,0xC7,0x43,0xC8,0xFE,0xFF,0xFF,0xFF};
-    if(!image||std::memcmp(image+0x280580,signature.data(),signature.size())){
+    if(!image||kharvox::game::compare(image+kharvox::game::rva(0x280580),signature.data(),signature.size())){
         log("[TUTORIAL-BINDING] lookup signature mismatch; native labels retained");return;
     }
-    if(installEntryHook(image+0x280580,signature,reinterpret_cast<const void*>(&localizedTextBindingHook),
+    if(installEntryHook(image+kharvox::game::rva(0x280580),signature,reinterpret_cast<const void*>(&localizedTextBindingHook),
         originalLocalizedTextLookup,"localized KHARVOX action labels"))
         log("[TUTORIAL-BINDING] localized lookup replacement active");
 }
@@ -721,7 +722,7 @@ bool installEliteGuardActivationHook() {
     auto image = reinterpret_cast<unsigned char*>(GetModuleHandleW(nullptr));
     if (!image) return false;
 
-    auto target = image + 0x925210;
+    auto target = image + kharvox::game::rva(0x925210);
     constexpr std::array<unsigned char, 16> signature{
         0x40,0x55,0x56,0x57,0x48,0x8D,0x6C,0x24,
         0xB9,0x48,0x81,0xEC,0x00,0x01,0x00,0x00
@@ -738,7 +739,7 @@ bool installEliteGuardActivationHook() {
 bool installPlayerUpgradePickupNotificationHook() {
     auto image = reinterpret_cast<unsigned char*>(GetModuleHandleW(nullptr));
     if (!image) return false;
-    auto target = image + 0xC24920;
+    auto target = image + kharvox::game::rva(0xC24920);
     constexpr std::array<unsigned char, 20> signature{
         0x40,0x55,0x56,0x57,0x41,0x54,0x41,0x55,0x41,0x56,
         0x41,0x57,0x48,0x8D,0xAC,0x24,0xA0,0xBB,0xFF,0xFF
@@ -765,12 +766,12 @@ bool installPlayerUpgradeManagerFrameHook() {
     auto image = reinterpret_cast<unsigned char*>(GetModuleHandleW(nullptr));
     if (!image) return false;
 
-    auto target = image + 0xC92DE0;
+    auto target = image + kharvox::game::rva(0xC92DE0);
     constexpr std::array<unsigned char, 14> signature{
         0x40,0x53,0x48,0x83,0xEC,0x20,0x48,
         0x8B,0xD9,0xE8,0x12,0xEF,0x2F,0x00
     };
-    if (std::memcmp(target, signature.data(), signature.size())) {
+    if (kharvox::game::compare(target, signature.data(), signature.size())) {
         log("idMenuManager_PlayerUpgrade frame signature mismatch; Praetor pickup Quad disabled");
         return false;
     }
@@ -791,7 +792,7 @@ bool installPlayerUpgradeManagerFrameHook() {
         return false;
     }
     std::memcpy(trampoline, target, copiedPrefixSize);
-    appendAbsoluteCall(trampoline + copiedPrefixSize, image + 0xF91D00);
+    appendAbsoluteCall(trampoline + copiedPrefixSize, image + kharvox::game::rva(0xF91D00));
     appendAbsoluteJump(
         trampoline + copiedPrefixSize + absoluteCallSize,
         target + signature.size());
@@ -838,8 +839,8 @@ bool installFieldDroneLifecycleHooks() {
     auto image = reinterpret_cast<unsigned char*>(GetModuleHandleW(nullptr));
     if (!image) return false;
 
-    auto bindTarget = image + 0x939940;
-    auto releaseTarget = image + 0x93A4B0;
+    auto bindTarget = image + kharvox::game::rva(0x939940);
+    auto releaseTarget = image + kharvox::game::rva(0x93A4B0);
     constexpr std::array<unsigned char, 16> bindSignature{
         0x48,0x89,0x5C,0x24,0x08,0x57,0x48,0x83,
         0xEC,0x30,0x48,0x8B,0xF9,0x48,0x8B,0xCA
@@ -848,8 +849,8 @@ bool installFieldDroneLifecycleHooks() {
         0x48,0x89,0x5C,0x24,0x08,0x57,0x48,0x83,
         0xEC,0x20,0x48,0x8B,0xF9,0x48,0x8B,0xCA
     };
-    if (std::memcmp(bindTarget, bindSignature.data(), bindSignature.size())
-        || std::memcmp(releaseTarget, releaseSignature.data(), releaseSignature.size())) {
+    if (kharvox::game::compare(bindTarget, bindSignature.data(), bindSignature.size())
+        || kharvox::game::compare(releaseTarget, releaseSignature.data(), releaseSignature.size())) {
         log("idInteractable_WeaponModBot lifecycle signature mismatch; Field Drone Quad disabled");
         return false;
     }
@@ -958,7 +959,7 @@ bool runeChallengeActionReady(void* screen) {
     const auto bytes = static_cast<const unsigned char*>(screen);
     if (*reinterpret_cast<void* const*>(bytes + 8) && bytes[0x249]) return false;
     const auto image = reinterpret_cast<const unsigned char*>(GetModuleHandleW(nullptr));
-    const auto manager = *reinterpret_cast<const unsigned char* const*>(image + 0x5B0F6D0);
+    const auto manager = *reinterpret_cast<const unsigned char* const*>(image + kharvox::game::rva(0x5B0F6D0));
     return manager && readableRange(manager + 0x300AD0, sizeof(int))
         && *reinterpret_cast<const int*>(manager + 0x300AD0) != 2;
 }
@@ -976,7 +977,7 @@ bool __fastcall runeChallengeHandleActionHook(void* screen, void* action) {
             if (image && scriptValue) {
                 using ScriptValueToIntegerFn = int(__fastcall*)(void*);
                 const auto toInteger = reinterpret_cast<ScriptValueToIntegerFn>(
-                    image + 0x17438B0);
+                    image + kharvox::game::rva(0x17438B0));
                 commandIndex = toInteger(scriptValue);
             }
         }
@@ -1050,7 +1051,7 @@ bool __fastcall runePopupHandleActionHook(void* popup, void* action) {
         if (image && scriptValue) {
             using ScriptValueToIntegerFn = int(__fastcall*)(void*);
             const auto toInteger = reinterpret_cast<ScriptValueToIntegerFn>(
-                image + 0x17438B0);
+                image + kharvox::game::rva(0x17438B0));
             selectionIndex = toInteger(scriptValue);
         }
     }
@@ -1143,7 +1144,7 @@ void* __fastcall vegaTrainingDeactivateHook(
 bool installVegaTrainingUseEntryHook(
     unsigned char* image, unsigned char* target,
     const std::array<unsigned char, 15>& signature) {
-    if (std::memcmp(target, signature.data(), signature.size())) {
+    if (kharvox::game::compare(target, signature.data(), signature.size())) {
         log("idInteractable_VegaTraining::Use signature mismatch; Rune Trial load retention disabled");
         return false;
     }
@@ -1166,12 +1167,12 @@ bool installVegaTrainingUseEntryHook(
     }
 
     size_t cursor{};
-    std::memcpy(trampoline + cursor, signature.data(), copiedPrefixSize);
+    std::memcpy(trampoline + cursor, target, copiedPrefixSize);
     cursor += copiedPrefixSize;
     trampoline[cursor++] = 0x49; // mov r11, absolute __chkstk
     trampoline[cursor++] = 0xBB;
     const auto checkStackAddress = reinterpret_cast<unsigned long long>(
-        image + 0x1E31170);
+        image + kharvox::game::rva(0x1E31170));
     std::memcpy(
         trampoline + cursor, &checkStackAddress, sizeof(checkStackAddress));
     cursor += sizeof(checkStackAddress);
@@ -1208,12 +1209,12 @@ bool installVegaTrainingLifecycleHooks() {
     auto image = reinterpret_cast<unsigned char*>(GetModuleHandleW(nullptr));
     if (!image) return false;
 
-    auto activateTarget = image + 0x939200;
-    auto useTarget = image + 0x937090;
-    auto deactivateTarget = image + 0x937540;
-    auto showRuneMenuTarget = image + 0x937680;
-    auto releaseTarget = image + 0x937250;
-    auto runePopupActionTarget = image + 0xC7E810;
+    auto activateTarget = image + kharvox::game::rva(0x939200);
+    auto useTarget = image + kharvox::game::rva(0x937090);
+    auto deactivateTarget = image + kharvox::game::rva(0x937540);
+    auto showRuneMenuTarget = image + kharvox::game::rva(0x937680);
+    auto releaseTarget = image + kharvox::game::rva(0x937250);
+    auto runePopupActionTarget = image + kharvox::game::rva(0xC7E810);
     constexpr std::array<unsigned char, 14> activateSignature{
         0x40,0x53,0x55,0x56,0x57,0x41,0x56,
         0x48,0x81,0xEC,0x50,0x01,0x00,0x00
@@ -1239,23 +1240,23 @@ bool installVegaTrainingLifecycleHooks() {
         0x48,0xC7,0x44,0x24,0x30,0xFE,0xFF,0xFF,0xFF
     };
     auto vtableActivation = *reinterpret_cast<void**>(
-        image + 0x21508F8 + 194 * sizeof(void*));
+        image + kharvox::game::rva(0x21508F8) + 194 * sizeof(void*));
     if (vtableActivation != activateTarget
-        || std::memcmp(
+        || kharvox::game::compare(
             activateTarget, activateSignature.data(), activateSignature.size())
-        || std::memcmp(
+        || kharvox::game::compare(
             showRuneMenuTarget, showRuneMenuSignature.data(),
             showRuneMenuSignature.size())
-        || std::memcmp(
+        || kharvox::game::compare(
             useTarget, useSignature.data(), useSignature.size())
-        || std::memcmp(
+        || kharvox::game::compare(
             deactivateTarget, deactivateSignature.data(),
             deactivateSignature.size())
-        || std::memcmp(
+        || kharvox::game::compare(
             releaseTarget, releaseSignature.data(), releaseSignature.size())
-        || *reinterpret_cast<void**>(image + 0x224D3E8 + 8 * sizeof(void*))
+        || *reinterpret_cast<void**>(image + kharvox::game::rva(0x224D3E8) + 8 * sizeof(void*))
             != runePopupActionTarget
-        || std::memcmp(
+        || kharvox::game::compare(
             runePopupActionTarget, runePopupActionSignature.data(),
             runePopupActionSignature.size())) {
         log("idInteractable_VegaTraining lifecycle signature/vtable mismatch; Rune Quad disabled");
@@ -1319,7 +1320,7 @@ bool installSuitUpgradeActivateEntryHook(
     trampoline[cursor++] = 0x75; // jne nonNullPlayer
     trampoline[cursor++] = 0x01;
     trampoline[cursor++] = 0xC3; // null player: original target is a bare ret
-    std::memcpy(trampoline + cursor, signature.data() + 9, 5);
+    std::memcpy(trampoline + cursor, target + 9, 5);
     cursor += 5; // mov [rsp+10h],rsi
     appendAbsoluteJump(trampoline + cursor, target + signature.size());
     originalSuitUpgradeActivate =
@@ -1368,8 +1369,8 @@ bool installSuitUpgradeLifecycleHooks() {
     auto image = reinterpret_cast<unsigned char*>(GetModuleHandleW(nullptr));
     if (!image) return false;
 
-    auto activateTarget = image + 0x7E7DB0;
-    auto releaseTarget = image + 0x7E8530;
+    auto activateTarget = image + kharvox::game::rva(0x7E7DB0);
+    auto releaseTarget = image + kharvox::game::rva(0x7E8530);
     constexpr std::array<unsigned char, 14> activateSignature{
         0x48,0x85,0xD2,0x0F,0x84,0xBD,0x00,
         0x00,0x00,0x48,0x89,0x74,0x24,0x10
@@ -1378,9 +1379,9 @@ bool installSuitUpgradeLifecycleHooks() {
         0x48,0x89,0x5C,0x24,0x10,0x48,0x89,0x74,0x24,
         0x20,0x57,0x48,0x81,0xEC,0x80,0x00,0x00,0x00
     };
-    if (std::memcmp(
+    if (kharvox::game::compare(
             activateTarget, activateSignature.data(), activateSignature.size())
-        || std::memcmp(
+        || kharvox::game::compare(
             releaseTarget, releaseSignature.data(), releaseSignature.size())) {
         log("idDesignSystems_UpgradeStation lifecycle signature mismatch; Suit Upgrade Quad disabled");
         return false;
@@ -1433,8 +1434,8 @@ bool installPauseMenuLifecycleHooks() {
     auto image = reinterpret_cast<unsigned char*>(GetModuleHandleW(nullptr));
     if (!image) return false;
 
-    auto showTarget = image + 0x106A8D0;
-    auto hideTarget = image + 0x1068DD0;
+    auto showTarget = image + kharvox::game::rva(0x106A8D0);
+    auto hideTarget = image + kharvox::game::rva(0x1068DD0);
     constexpr std::array<unsigned char, 20> showSignature{
         0x40, 0x55, 0x56, 0x57, 0x41, 0x54, 0x41, 0x55, 0x41, 0x56,
         0x41, 0x57, 0x48, 0x8D, 0xAC, 0x24, 0x70, 0xFF, 0xFF, 0xFF
@@ -1443,8 +1444,8 @@ bool installPauseMenuLifecycleHooks() {
         0x48, 0x8B, 0xC4, 0x57, 0x48, 0x81, 0xEC, 0x00, 0x01, 0x00,
         0x00, 0x48, 0xC7, 0x44, 0x24, 0x20, 0xFE, 0xFF, 0xFF, 0xFF
     };
-    if (std::memcmp(showTarget, showSignature.data(), showSignature.size())
-        || std::memcmp(hideTarget, hideSignature.data(), hideSignature.size())) {
+    if (kharvox::game::compare(showTarget, showSignature.data(), showSignature.size())
+        || kharvox::game::compare(hideTarget, hideSignature.data(), hideSignature.size())) {
         log("idMenuScreen_Shell_Pause lifecycle signature mismatch; Pause QUAD disabled");
         return false;
     }
@@ -1519,11 +1520,11 @@ bool installCampaignDeathMenuLifecycleHooks() {
     // 0x224A9F0. Slot 21 is its ShowScreen override; slot 22 is the inherited
     // GUI HideScreen implementation. Patching only this class' two vtable
     // entries avoids intercepting every unrelated screen sharing HideScreen.
-    constexpr uintptr_t vtableRva = 0x224A9F0;
+    const uintptr_t vtableRva = kharvox::game::rva(0x224A9F0);
     constexpr size_t showSlot = 21;
     constexpr size_t hideSlot = 22;
-    constexpr uintptr_t showFunctionRva = 0xC12430;
-    constexpr uintptr_t hideFunctionRva = 0xFB2C10;
+    const uintptr_t showFunctionRva = kharvox::game::rva(0xC12430);
+    const uintptr_t hideFunctionRva = kharvox::game::rva(0xFB2C10);
     if (!installMenuVtableHook(
             image, vtableRva, hideSlot, hideFunctionRva,
             reinterpret_cast<const void*>(&campaignDeathHideHook),
@@ -1703,18 +1704,18 @@ bool installEndOfLevelMenuLifecycleHooks() {
     if (!image) return false;
     bool installedAll = true;
     installedAll = installScreenLifecyclePair(
-        image, 0x224B730, 0xC174E0, 0xC155F0,
+        image, kharvox::game::rva(0x224B730), kharvox::game::rva(0xC174E0), kharvox::game::rva(0xC155F0),
         reinterpret_cast<const void*>(&endOfLevelShowHook),
         reinterpret_cast<const void*>(&endOfLevelHideHook),
         originalEndOfLevelShow, originalEndOfLevelHide, "Gui_EndOfLevel") && installedAll;
     installedAll = installScreenLifecyclePair(
-        image, 0x2234300, 0xBA73C0, 0xFB2C10,
+        image, kharvox::game::rva(0x2234300), kharvox::game::rva(0xBA73C0), kharvox::game::rva(0xFB2C10),
         reinterpret_cast<const void*>(&dossierEndOfLevelShowHook),
         reinterpret_cast<const void*>(&dossierEndOfLevelHideHook),
         originalDossierEndOfLevelShow, originalDossierEndOfLevelHide,
         "Dossier_EndOfLevel") && installedAll;
     installedAll = installScreenLifecyclePair(
-        image, 0x2235890, 0xBAE500, 0xFB2C10,
+        image, kharvox::game::rva(0x2235890), kharvox::game::rva(0xBAE500), kharvox::game::rva(0xFB2C10),
         reinterpret_cast<const void*>(&endOfLevelDossierShowHook),
         reinterpret_cast<const void*>(&endOfLevelDossierHideHook),
         originalEndOfLevelDossierShow, originalEndOfLevelDossierHide,
@@ -1733,35 +1734,35 @@ bool installPlayerUpgradeMenuLifecycleHooks() {
         reinterpret_cast<const void*>(&prefix##HideHook), \
         originalPrefix##Show, originalPrefix##Hide, label) && installedAll
     KHARVOX_INSTALL_UPGRADE_SCREEN(
-        0x224D0A0, 0xC1E960, 0xFB2C10,
+        kharvox::game::rva(0x224D0A0), kharvox::game::rva(0xC1E960), kharvox::game::rva(0xFB2C10),
         playerUpgrade, originalPlayerUpgrade, "Gui_PlayerUpgrade");
     KHARVOX_INSTALL_UPGRADE_SCREEN(
-        0x224A888, 0xC113B0, 0x1009F60,
+        kharvox::game::rva(0x224A888), kharvox::game::rva(0xC113B0), kharvox::game::rva(0x1009F60),
         argentSelection, originalArgentSelection, "Gui_ArgentSelection");
     KHARVOX_INSTALL_UPGRADE_SCREEN(
-        0x2247008, 0xBF7040, 0xBF5A50,
+        kharvox::game::rva(0x2247008), kharvox::game::rva(0xBF7040), kharvox::game::rva(0xBF5A50),
         dossierSuit, originalDossierSuit, "Dossier_Suit");
     KHARVOX_INSTALL_UPGRADE_SCREEN(
-        0x2237F00, 0xBB97E0, 0xFB2C10,
+        kharvox::game::rva(0x2237F00), kharvox::game::rva(0xBB97E0), kharvox::game::rva(0xFB2C10),
         dossierSuitDiag, originalDossierSuitDiag, "Dossier_SuitDiag");
     KHARVOX_INSTALL_UPGRADE_SCREEN(
-        0x22585A0, 0xC58D10, 0xFB2C10,
+        kharvox::game::rva(0x22585A0), kharvox::game::rva(0xC58D10), kharvox::game::rva(0xFB2C10),
         upgradeStationSelection, originalUpgradeStationSelection,
         "UpgradeStation_Selection");
     KHARVOX_INSTALL_UPGRADE_SCREEN(
-        0x22583C0, 0xC58BE0, 0xFB2C10,
+        kharvox::game::rva(0x22583C0), kharvox::game::rva(0xC58BE0), kharvox::game::rva(0xFB2C10),
         upgradeStationLeft, originalUpgradeStationLeft, "UpgradeStation_Left");
     KHARVOX_INSTALL_UPGRADE_SCREEN(
-        0x22584B0, 0xC58C10, 0xFB2C10,
+        kharvox::game::rva(0x22584B0), kharvox::game::rva(0xC58C10), kharvox::game::rva(0xFB2C10),
         upgradeStationRight, originalUpgradeStationRight, "UpgradeStation_Right");
     KHARVOX_INSTALL_UPGRADE_SCREEN(
-        0x2263430, 0xC93A30, 0xFB2C10,
+        kharvox::game::rva(0x2263430), kharvox::game::rva(0xC93A30), kharvox::game::rva(0xFB2C10),
         playerUpgradeIdle, originalPlayerUpgradeIdle, "PlayerUpgrade_Idle");
     KHARVOX_INSTALL_UPGRADE_SCREEN(
-        0x2263610, 0xC93840, 0xFB2C10,
+        kharvox::game::rva(0x2263610), kharvox::game::rva(0xC93840), kharvox::game::rva(0xFB2C10),
         playerUpgradeInUse, originalPlayerUpgradeInUse, "PlayerUpgrade_InUse");
     KHARVOX_INSTALL_UPGRADE_SCREEN(
-        0x2263520, 0xC93A30, 0xFB2C10,
+        kharvox::game::rva(0x2263520), kharvox::game::rva(0xC93A30), kharvox::game::rva(0xFB2C10),
         playerUpgradeUsed, originalPlayerUpgradeUsed, "PlayerUpgrade_Used");
 #undef KHARVOX_INSTALL_UPGRADE_SCREEN
     return installedAll;
@@ -1794,7 +1795,7 @@ bool installRuneSelectMenuLifecycleHooks() {
     // idMenuScreen_Gui_RuneSelect class. Hooking its Show/Hide slots prevents
     // the nearby Rune Stone hint or ordinary gameplay from opening the Quad.
     return installScreenLifecyclePair(
-        image, 0x223F470, 0xC01C20, 0xBFFF80,
+        image, kharvox::game::rva(0x223F470), kharvox::game::rva(0xC01C20), kharvox::game::rva(0xBFFF80),
         reinterpret_cast<const void*>(&runeSelectShowHook),
         reinterpret_cast<const void*>(&runeSelectHideHook),
         originalRuneSelectShow, originalRuneSelectHide, "Gui_RuneSelect");
@@ -1829,10 +1830,10 @@ bool installRuneChallengeMenuLifecycleHooks() {
     constexpr unsigned char screenGate[]{0x80,0xB9,0x49,0x02,0,0,0};
     constexpr unsigned char managerLoad[]{0x48,0x8B,0x05,0xB9,0xA4,0xEF,0x04};
     constexpr unsigned char managerGate[]{0x83,0x7E,0x08,0x02};
-    if (std::memcmp(image + 0xC154C4, startCommitSignature, sizeof(startCommitSignature))
-        || std::memcmp(image + 0xC15200, screenGate, sizeof(screenGate))
-        || std::memcmp(image + 0xC15210, managerLoad, sizeof(managerLoad))
-        || std::memcmp(image + 0xC15226, managerGate, sizeof(managerGate))) {
+    if (kharvox::game::compare(image + kharvox::game::rva(0xC154C4), startCommitSignature, sizeof(startCommitSignature))
+        || kharvox::game::compare(image + kharvox::game::rva(0xC15200), screenGate, sizeof(screenGate))
+        || kharvox::game::compare(image + kharvox::game::rva(0xC15210), managerLoad, sizeof(managerLoad))
+        || kharvox::game::compare(image + kharvox::game::rva(0xC15226), managerGate, sizeof(managerGate))) {
         log("[RUNE-START] native Start signature mismatch; challenge hooks disabled");
         return false;
     }
@@ -1845,12 +1846,12 @@ bool installRuneChallengeMenuLifecycleHooks() {
     // inherited HideScreen after Start/Exit/Retry, so the handled command is
     // required to release both Cine Window and menu-control ownership.
     if (!installMenuVtableHook(
-            image, 0x224B820, 8, 0xC151D0,
+            image, kharvox::game::rva(0x224B820), 8, kharvox::game::rva(0xC151D0),
             reinterpret_cast<const void*>(&runeChallengeHandleActionHook),
             originalRuneChallengeHandleAction,
             "Gui_EndOfChallenge HandleAction_Impl")) return false;
     if (!installScreenLifecyclePair(
-        image, 0x224B820, 0xC17380, 0xFB2C10,
+        image, kharvox::game::rva(0x224B820), kharvox::game::rva(0xC17380), kharvox::game::rva(0xFB2C10),
         reinterpret_cast<const void*>(&runeChallengeShowHook),
         reinterpret_cast<const void*>(&runeChallengeHideHook),
         originalRuneChallengeShow, originalRuneChallengeHide,
@@ -1911,17 +1912,17 @@ void* __fastcall progAllocate(void* gui,int vertices,void* indices,int indexCoun
     }
     return result;
 }
-void progResetGeometry(){if(progMeter.gui)progNative<void(__fastcall*)(void*)>(0x158eae0)(progMeter.gui);}
+void progResetGeometry(){if(progMeter.gui)progNative<void(__fastcall*)(void*)>(kharvox::game::rva(0x158eae0))(progMeter.gui);}
 void progUpdate(bool hide){
     if(!progMeter.world)return;
-    progNative<void(__fastcall*)(void*)>(0x15d8020)(progMeter.world);
+    progNative<void(__fastcall*)(void*)>(kharvox::game::rva(0x15d8020))(progMeter.world);
     static_cast<unsigned char*>(progMeter.world)[0x30]=hide?1:0;
 }
 void progRetire(){
     // Follow idMenuManager's native deferred-release protocol for both objects.
     for(void* object:{progMeter.world,progMeter.gui})if(object&&readableRange(object,0x32)){
         *reinterpret_cast<unsigned short*>(static_cast<unsigned char*>(object)+0x30)=0x101;
-        progNative<void(__fastcall*)(void*)>(0x15d8020)(object);
+        progNative<void(__fastcall*)(void*)>(kharvox::game::rva(0x15d8020))(object);
     }
     progMeter={};
 }
@@ -1942,20 +1943,20 @@ bool progCreate(){
     if(progMeter.gui&&progMeter.world)return true;
     const auto image=reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
     // Same model declaration and factory as WeaponInfo's native world HUD.
-    auto declaration=progNative<void*(__fastcall*)(int)>(0xf900d0)(3);
-    auto factory=*reinterpret_cast<void**>(image+0x5b0f6d0);
+    auto declaration=progNative<void*(__fastcall*)(int)>(kharvox::game::rva(0xf900d0))(3);
+    auto factory=*reinterpret_cast<void**>(image+kharvox::game::rva(0x5b0f6d0));
     if(!declaration||!factory||!readableRange(declaration,16))return false;
     auto table=*reinterpret_cast<uintptr_t**>(factory);
     progMeter.world=reinterpret_cast<void*(__fastcall*)(void*,const char*,int)>(table[0xa0/8])(
         factory,*reinterpret_cast<const char**>(static_cast<unsigned char*>(declaration)+8),0);
     if(!progMeter.world)return false;
     alignas(16) std::array<unsigned char,0x48> owner{};
-    progNative<void(__fastcall*)(void*,const char*)>(0xf8f590)(owner.data(),"KHARVOX ProgMeter");
+    progNative<void(__fastcall*)(void*,const char*)>(kharvox::game::rva(0xf8f590))(owner.data(),"KHARVOX ProgMeter");
     progMeter.gui=*reinterpret_cast<void**>(owner.data()+0x30);
     if(!progMeter.gui){progRetire();return false;}
     auto world=static_cast<unsigned char*>(progMeter.world);
     *reinterpret_cast<int*>(world+0x184)=9;world[0x153]|=1;
-    progNative<void(__fastcall*)(void*,void*)>(0x15daf30)(progMeter.world,progMeter.gui);
+    progNative<void(__fastcall*)(void*,void*)>(kharvox::game::rva(0x15daf30))(progMeter.world,progMeter.gui);
     log("[PROGMETER] independent native GUI created");return true;
 }
 bool progIsTarget(void* swf,void* sprite){
@@ -2012,8 +2013,8 @@ bool renderProgMeter(void* swf,void* view,void* sprite,void* state,int time,bool
     ex*=512.f/progMeter.pixelWidth;ey*=512.f/progMeter.pixelWidth;
     for(int j=0;j<3;++j)origin[j]=center[j]-axis[j]*ex*(progMeter.midX/512.f)-axis[3+j]*ey*(progMeter.midY/300.f);
     originalHudCanvasSize(progMeter.gui,512,300,ex,ey);
-    auto setOrigin=progNative<void(__fastcall*)(void*,const float*)>(0x3b7500);
-    auto setAxis=progNative<void(__fastcall*)(void*,const float*)>(0x3b5400);
+    auto setOrigin=progNative<void(__fastcall*)(void*,const float*)>(kharvox::game::rva(0x3b7500));
+    auto setAxis=progNative<void(__fastcall*)(void*,const float*)>(kharvox::game::rva(0x3b5400));
     setOrigin(progMeter.gui,origin);setAxis(progMeter.gui,axis);
     setOrigin(progMeter.world,origin);setAxis(progMeter.world,axis);
     progMeter.drawn=true;
@@ -2024,22 +2025,22 @@ bool installProgMeterHooks(){
     auto image=reinterpret_cast<unsigned char*>(GetModuleHandleW(nullptr));
     constexpr std::array<unsigned char,15> allocation{0x48,0x89,0x5c,0x24,0x10,0x48,0x89,0x74,0x24,0x18,0x48,0x89,0x7c,0x24,0x20};
     struct Signature {uintptr_t rva;std::array<unsigned char,8> bytes;};
-    constexpr Signature native[]{{0xf900d0,{0x48,0x83,0xec,0x28,0x83,0xf9,0x4,0x75}},
-        {0xf8f590,{0x40,0x57,0x48,0x83,0xec,0x30,0x48,0xc7}},
-        {0x15daf30,{0x48,0x89,0x5c,0x24,0x10,0x57,0x48,0x83}},
-        {0x15d8020,{0x40,0x53,0x48,0x83,0xec,0x20,0x48,0x8b}},
-        {0x158eae0,{0xc7,0x81,0xa8,0xe,0,0,0,0}}};
+    const Signature native[]{{kharvox::game::rva(0xf900d0),{0x48,0x83,0xec,0x28,0x83,0xf9,0x4,0x75}},
+        {kharvox::game::rva(0xf8f590),{0x40,0x57,0x48,0x83,0xec,0x30,0x48,0xc7}},
+        {kharvox::game::rva(0x15daf30),{0x48,0x89,0x5c,0x24,0x10,0x57,0x48,0x83}},
+        {kharvox::game::rva(0x15d8020),{0x40,0x53,0x48,0x83,0xec,0x20,0x48,0x8b}},
+        {kharvox::game::rva(0x158eae0),{0xc7,0x81,0xa8,0xe,0,0,0,0}}};
     for(const auto& signature:native)if(!readableRange(image+signature.rva,signature.bytes.size())
-        ||std::memcmp(image+signature.rva,signature.bytes.data(),signature.bytes.size()))return false;
-    auto slot=reinterpret_cast<uintptr_t*>(image+0x2240888+0x48);
-    if(!readableRange(slot,8)||*slot!=reinterpret_cast<uintptr_t>(image+0xf91d00)
-        ||std::memcmp(image+0x158e6b0,allocation.data(),allocation.size()))return false;
-    if(!installEntryHook(image+0x158e6b0,allocation,reinterpret_cast<const void*>(&progAllocate),originalProgAlloc,"ProgMeter geometry capture"))return false;
+        ||kharvox::game::compare(image+signature.rva,signature.bytes.data(),signature.bytes.size()))return false;
+    auto slot=reinterpret_cast<uintptr_t*>(image+kharvox::game::rva(0x2240888)+0x48);
+    if(!readableRange(slot,8)||*slot!=reinterpret_cast<uintptr_t>(image+kharvox::game::rva(0xf91d00))
+        ||kharvox::game::compare(image+kharvox::game::rva(0x158e6b0),allocation.data(),allocation.size()))return false;
+    if(!installEntryHook(image+kharvox::game::rva(0x158e6b0),allocation,reinterpret_cast<const void*>(&progAllocate),originalProgAlloc,"ProgMeter geometry capture"))return false;
     constexpr std::array<unsigned char,16> queueSignature{
         0x48,0x89,0x74,0x24,0x18,0x48,0x89,0x7c,0x24,0x20,0x41,0x56,0x48,0x83,0xec,0x50};
-    if(!readableRange(image+0x161b660,queueSignature.size())
-        ||std::memcmp(image+0x161b660,queueSignature.data(),queueSignature.size()))return false;
-    if(!installEntryHook(image+0x161b660,queueSignature,reinterpret_cast<const void*>(&progQueue),originalProgQueue,"ProgMeter owned SWF queue"))return false;
+    if(!readableRange(image+kharvox::game::rva(0x161b660),queueSignature.size())
+        ||kharvox::game::compare(image+kharvox::game::rva(0x161b660),queueSignature.data(),queueSignature.size()))return false;
+    if(!installEntryHook(image+kharvox::game::rva(0x161b660),queueSignature,reinterpret_cast<const void*>(&progQueue),originalProgQueue,"ProgMeter owned SWF queue"))return false;
     DWORD old{};if(!VirtualProtect(slot,8,PAGE_READWRITE,&old))return false;
     originalProgFrame=reinterpret_cast<ProgFrameFn>(*slot);*slot=reinterpret_cast<uintptr_t>(&progFrame);
     DWORD unused{};VirtualProtect(slot,8,old,&unused);progHooksReady=true;
@@ -2062,7 +2063,7 @@ bool isTutorialTextManager(void* owner) {
     const auto screen = screens[index];
     return screen && readableRange(screen, sizeof(void*))
         && *reinterpret_cast<void* const*>(screen)
-            == reinterpret_cast<unsigned char*>(GetModuleHandleW(nullptr)) + 0x2257D20;
+            == reinterpret_cast<unsigned char*>(GetModuleHandleW(nullptr)) + kharvox::game::rva(0x2257D20);
 }
 
 // SWF jobs can execute after manager Frame returns. Carry exact SWF identity
@@ -2167,7 +2168,7 @@ void __fastcall tutorialSpriteRenderHook(
     if(sprite&&!voiceCommTransformActive&&sprite==voiceCommSprite.load(std::memory_order_acquire)
         &&voiceCommLevel.load(std::memory_order_relaxed)==KharvoxCameraLevelTransitionGeneration()
         &&voiceOwner&&readableRange(voiceOwner,16)
-        &&*reinterpret_cast<uintptr_t*>(voiceOwner)==reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr))+0x225CA20
+        &&*reinterpret_cast<uintptr_t*>(voiceOwner)==reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr))+kharvox::game::rva(0x225CA20)
         &&*reinterpret_cast<void**>(static_cast<unsigned char*>(voiceOwner)+8)==sprite
         &&swf&&swf==runeCanvasSwf&&state&&readableRange(state,24)&&readableRange(swf,0x1C4)){
         auto matrix=static_cast<float*>(state);
@@ -2268,12 +2269,12 @@ bool installTutorialRenderHook() {
     auto image = reinterpret_cast<unsigned char*>(GetModuleHandleW(nullptr));
     constexpr std::array<unsigned char, 15> signature{
         0x48,0x8B,0xC4,0x4C,0x89,0x48,0x20,0x4C,0x89,0x40,0x18,0x48,0x89,0x50,0x10};
-    if (!image || !readableRange(image + 0x1621000, signature.size())
-        || std::memcmp(image + 0x1621000, signature.data(), signature.size())) {
+    if (!image || !readableRange(image + kharvox::game::rva(0x1621000), signature.size())
+        || kharvox::game::compare(image + kharvox::game::rva(0x1621000), signature.data(), signature.size())) {
         log("[TUTORIAL-RENDER] signature mismatch; native placement retained");
         return false;
     }
-    const bool ready=installEntryHook(image + 0x1621000, signature,
+    const bool ready=installEntryHook(image + kharvox::game::rva(0x1621000), signature,
         reinterpret_cast<const void*>(&tutorialSpriteRenderHook),
         originalTutorialSpriteRender, "Tutorial owned SWF root translation");
     if(ready&&!installProgMeterHooks())log("[PROGMETER] hooks unavailable; native Ammo grouping retained");
@@ -2361,7 +2362,7 @@ void observeHudMovie(void* manager,const char* source){
     const auto bytes=static_cast<unsigned char*>(manager);
     auto image=reinterpret_cast<unsigned char*>(GetModuleHandleW(nullptr));
     if(!bytes || !nativeHudMoviePlaying || !readableRange(bytes,sizeof(void*))
-        || *reinterpret_cast<void**>(bytes)!=image+0x2241010 || !readableRange(bytes,0x9B8))return;
+        || *reinterpret_cast<void**>(bytes)!=image+kharvox::game::rva(0x2241010) || !readableRange(bytes,0x9B8))return;
     auto swf=*reinterpret_cast<unsigned char**>(bytes+0x20);
     auto material=*reinterpret_cast<unsigned char**>(bytes+0x9B0);
     auto movie=material && readableRange(material,0x1A0)
@@ -2390,11 +2391,11 @@ void __fastcall hudMovieFrameHook(void* manager,int frameTime){
 bool installHudMovieHook(){
     auto image=reinterpret_cast<unsigned char*>(GetModuleHandleW(nullptr));
     constexpr unsigned char playingSignature[]{0x48,0x89,0x5C,0x24,0x10,0x57,0x48,0x83,0xEC,0x20,0x48,0x8B,0x99,0xB0,0x09,0,0};
-    if(!image || std::memcmp(image+0xBDED30,playingSignature,sizeof(playingSignature))){
+    if(!image || kharvox::game::compare(image+kharvox::game::rva(0xBDED30),playingSignature,sizeof(playingSignature))){
         log("[HUD-MOVIE] native playback signature mismatch; hook disabled");return false;
     }
-    nativeHudMoviePlaying=reinterpret_cast<HudMoviePlaying>(image+0xBDED30);
-    return installMenuVtableHook(image,0x2241010,9,0xBE0E40,
+    nativeHudMoviePlaying=reinterpret_cast<HudMoviePlaying>(image+kharvox::game::rva(0xBDED30));
+    return installMenuVtableHook(image,kharvox::game::rva(0x2241010),9,kharvox::game::rva(0xBE0E40),
         reinterpret_cast<const void*>(&hudMovieFrameHook),originalHudMovieFrame,
         "Hud_Cinematic movie frame");
 }
@@ -2405,23 +2406,23 @@ bool installTutorialLifecycleHooks() {
     bool installedAll = true;
 #define KHARVOX_INSTALL_TUTORIAL_SCREEN(vtable, showRva, prefix, originalPrefix, label) \
     installedAll = installScreenLifecyclePair( \
-        image, vtable, showRva, 0xFB2C10, \
+        image, vtable, showRva, kharvox::game::rva(0xFB2C10), \
         reinterpret_cast<const void*>(&prefix##ShowHook), \
         reinterpret_cast<const void*>(&prefix##HideHook), \
         originalPrefix##Show, originalPrefix##Hide, label) && installedAll
     KHARVOX_INSTALL_TUTORIAL_SCREEN(
-        0x2257B40, 0xC57640,
+        kharvox::game::rva(0x2257B40), kharvox::game::rva(0xC57640),
         tutorialSimple, originalTutorialSimple, "Tutorial_Simple");
     KHARVOX_INSTALL_TUTORIAL_SCREEN(
-        0x2257C30, 0xC576B0,
+        kharvox::game::rva(0x2257C30), kharvox::game::rva(0xC576B0),
         tutorialVideo, originalTutorialVideo, "Tutorial_Video");
     KHARVOX_INSTALL_TUTORIAL_SCREEN(
-        0x2257D20, 0xC57670,
+        kharvox::game::rva(0x2257D20), kharvox::game::rva(0xC57670),
         tutorialText, originalTutorialText, "Tutorial_Text");
 #undef KHARVOX_INSTALL_TUTORIAL_SCREEN
 
     const bool managerInstalled = installMenuVtableHook(
-        image, 0x2243F78, 9, 0xBE6C80,
+        image, kharvox::game::rva(0x2243F78), 9, kharvox::game::rva(0xBE6C80),
         reinterpret_cast<const void*>(&tutorialManagerFrameHook),
         originalTutorialManagerFrame, "Tutorial manager active frame");
     if (managerInstalled)
@@ -3423,7 +3424,7 @@ bool KharvoxHudPrepareOriginTransform(void* intermediateEntity, float* nativeOri
         for (USHORT index = 0; index < frameCount; ++index) {
             const auto address = reinterpret_cast<uintptr_t>(frames[index]);
             if (address >= image && address - image < 0x8000000) {
-                const auto rva = address - image;
+                const auto rva = kharvox::game::canonicalRva(address - image);
                 if (rva >= 0xF91E00 && rva <= 0xF92450) continue;
                 callerRva = rva;
                 break;
@@ -3450,8 +3451,8 @@ bool KharvoxHudPrepareOriginTransform(void* intermediateEntity, float* nativeOri
         diagnosticScaleMilli = profile.scaleMilli;
         const auto ownerVtable=*reinterpret_cast<const uintptr_t*>(current);
         weaponWheel=offhandCanvasHookReady&&ownerVtable>=image
-            &&kharvox::ownedWeaponWheel(ownerVtable-image);
-        ownedHandSurface=kharvox::ownedOffhandHudSurface(ownerVtable>=image?ownerVtable-image:0,
+            &&kharvox::ownedWeaponWheel(kharvox::game::canonicalRva(ownerVtable-image));
+        ownedHandSurface=kharvox::ownedOffhandHudSurface(ownerVtable>=image?kharvox::game::canonicalRva(ownerVtable-image):0,
             profile.callerRva,profile.width,profile.height,profile.scaleMilli);
         bool managedOffhand=false;
         if(offhandCanvasHookReady&&ownedHandSurface>=0){
@@ -3727,16 +3728,16 @@ bool KharvoxHudInstallHook() {
     installRuneChallengeMenuLifecycleHooks();
     if (installTutorialRenderHook()) {
         auto image=reinterpret_cast<unsigned char*>(GetModuleHandleW(nullptr));
-        installMenuVtableHook(image,0x225CA20,3,0xC75A00,
+        installMenuVtableHook(image,kharvox::game::rva(0x225CA20),3,kharvox::game::rva(0xC75A00),
             reinterpret_cast<const void*>(&voiceCommUpdateHook),originalVoiceCommUpdate,
             "Hud_VoiceCommunication / bound Flash element");
-        installMenuVtableHook(image,0x224E830,7,0xC722F0,
+        installMenuVtableHook(image,kharvox::game::rva(0x224E830),7,kharvox::game::rva(0xC722F0),
             reinterpret_cast<const void*>(&objectiveUpdateHook),originalObjectiveUpdate,
             "Hud_Objective Update / bound Flash element");
-        installMenuVtableHook(image,0x225C828,7,0xC6EAC0,
+        installMenuVtableHook(image,kharvox::game::rva(0x225C828),7,kharvox::game::rva(0xC6EAC0),
             reinterpret_cast<const void*>(&bossVitalsUpdateHook),originalBossVitalsUpdate,
             "Hud_BossDemonVitals Update / boss health bar");
-        installMenuVtableHook(image,0x224B820,7,0xC17880,
+        installMenuVtableHook(image,kharvox::game::rva(0x224B820),7,kharvox::game::rva(0xC17880),
             reinterpret_cast<const void*>(&runeCounterUpdateHook),originalRuneCounterUpdate,
             "Gui_EndOfChallenge Update / gameplay counter elements");
     }

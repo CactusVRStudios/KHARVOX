@@ -32,6 +32,9 @@ internal static class SelfTest
         try
         {
             Directory.CreateDirectory(testRoot);
+            Require(DoomBuildProfile.Identify(DoomBuildProfile.SteamSha256) == DoomDistribution.Steam, "Steam executable identity");
+            Require(DoomBuildProfile.Identify(DoomBuildProfile.GogSha256.ToUpperInvariant()) == DoomDistribution.Gog, "GOG executable identity");
+            Require(DoomBuildProfile.Identify(new string('0', 64)) == null, "unknown executable rejected");
             VerifyModConflictPreflight(testRoot);
             VerifyProcessStatusPreservesExitCode();
             bool sfsBlocked=false;
@@ -157,6 +160,11 @@ internal static class SelfTest
                 using var runtimeForm = new MainForm(Path.Combine(testRoot, "runtime-scale-settings.json"));
                 var scaleControl = (NumericUpDown)typeof(MainForm).GetField("renderScale", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(runtimeForm)!;
                 var tooltip = (ToolTip)typeof(MainForm).GetField("statusToolTip", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(runtimeForm)!;
+                var kofiLink = runtimeForm.Controls.Find("kofiSupportLink", true).Single();
+                Require(kofiLink is PictureBox { Image: not null, Enabled: true } &&
+                    kofiLink.Cursor == Cursors.Hand &&
+                    MainForm.KoFiTipUrl == "https://ko-fi.com/cactusvrstudios/tip",
+                    "Ko-fi artwork and destination available in launcher");
                 Require(!scaleControl.Enabled, "SteamVR disables render scale at startup");
                 Require(tooltip.GetToolTip(scaleControl.Parent) == "Renderscale only works from within SteamVR", "disabled scale tooltip available on enabled host");
                 scaleControl.Value = 80m;
@@ -269,6 +277,21 @@ internal static class SelfTest
             Require(!steamFailure.Passed
                 && steamFailure.FailureReason == "steam-elevated",
                 "proven elevated Steam process is rejected");
+            var gogPreflight = LaunchPreflight.Evaluate(
+                ProbeBoolean.False, noRunAsAdmin, ProbeBoolean.True, usesSteam: false);
+            Require(gogPreflight.Passed && !gogPreflight.HasProvenElevationEvidence,
+                "GOG ignores unrelated elevated Steam processes");
+            var gogLauncherElevated = LaunchPreflight.Evaluate(
+                ProbeBoolean.True, noRunAsAdmin, ProbeBoolean.True, usesSteam: false);
+            Require(!gogLauncherElevated.Passed && !gogLauncherElevated.FailureMessage!.Contains("Steam"),
+                "GOG retains launcher elevation check without Steam instructions");
+            var gogGameElevated = LaunchPreflight.Evaluate(
+                ProbeBoolean.False, hkcuRunAsAdmin, ProbeBoolean.True, usesSteam: false);
+            Require(!gogGameElevated.Passed && gogGameElevated.FailureReason == "doom-runasadmin-compatibility",
+                "GOG retains DOOM elevation check");
+            Require(!VulkanLoaderStartupDiagnosis.AddToFailureMessage(
+                "Startup failed.", "No layer", false, usesSteam: false).Contains("Steam"),
+                "GOG loader failure diagnosis does not instruct users to change Steam rights");
             Require(normalPreflight.StructuredLogEntry().Contains("launcherElevated=false")
                 && normalPreflight.StructuredLogEntry().Contains("steamElevation=false")
                 && normalPreflight.StructuredLogEntry().Contains("preflightResult=passed"),
@@ -592,10 +615,10 @@ internal static class SelfTest
 
             using var logo = Assembly.GetExecutingAssembly().GetManifestResourceStream("Kharvox.Branding.Logo");
             Require(logo is not null && logo.Length > 0, "embedded KHARVOX logo");
-            using var bloodArtwork = Assembly.GetExecutingAssembly()
-                .GetManifestResourceStream("Kharvox.Branding.BloodSplatter");
-            Require(bloodArtwork is not null && bloodArtwork.Length > 0,
-                "embedded launcher blood artwork");
+            using var kofiArtwork = Assembly.GetExecutingAssembly()
+                .GetManifestResourceStream("Kharvox.Branding.KofiSupport");
+            Require(kofiArtwork is not null && kofiArtwork.Length > 0,
+                "embedded Ko-fi artwork");
             using var manualBook = Assembly.GetExecutingAssembly()
                 .GetManifestResourceStream("Kharvox.Branding.ManualBook");
             Require(manualBook is not null && manualBook.Length > 0,

@@ -1,9 +1,11 @@
+using System.Diagnostics;
 using System.Reflection;
 
 namespace KharvoxLauncher;
 
 public sealed class MainForm : Form
 {
+    internal const string KoFiTipUrl = "https://ko-fi.com/cactusvrstudios/tip";
     private const decimal AerDefaultRenderScale = 100m;
     private const decimal FixedTurnDeadzone = .35m;
     private const int DefaultSmoothTurnSpeed = 230;
@@ -108,7 +110,7 @@ public sealed class MainForm : Form
         Text = "KHARVOX Launcher";
         var applicationIcon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath);
         if (applicationIcon is not null) Icon = applicationIcon;
-        ClientSize = new Size(548, 904);
+        ClientSize = new Size(548, 820);
         MinimumSize = new Size(280, 240);
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Color.FromArgb(0, 0, 0);
@@ -119,13 +121,13 @@ public sealed class MainForm : Form
         var root = new TableLayoutPanel
         {
             Location = Point.Empty,
-            Size = new Size(548, 904),
-            MinimumSize = new Size(548, 904),
-            Padding = new Padding(18, 14, 18, 10),
+            Size = new Size(548, 820),
+            MinimumSize = new Size(548, 820),
+            Padding = new Padding(18, 6, 18, 6),
             RowCount = 7,
             ColumnCount = 1
         };
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 130));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 110));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 46));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 330));
@@ -395,26 +397,41 @@ public sealed class MainForm : Form
         action.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 100));
         action.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         action.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 100));
-        var bloodArtwork = new OwnedImagePictureBox
+        var kofiArtwork = new OwnedImagePictureBox
         {
+            Name = "kofiSupportLink",
             Dock = DockStyle.Fill,
             SizeMode = PictureBoxSizeMode.Zoom,
             BackColor = Color.Transparent,
-            Margin = new Padding(0, 0, 10, 0),
-            TabStop = false,
-            Enabled = false
+            Margin = new Padding(0, 3, 10, 3),
+            Cursor = Cursors.Hand,
+            AccessibleRole = AccessibleRole.Link,
+            AccessibleName = "Support KHARVOX on Ko-fi"
         };
         using (var artworkStream = Assembly.GetExecutingAssembly()
-                   .GetManifestResourceStream("Kharvox.Branding.BloodSplatter"))
+                   .GetManifestResourceStream("Kharvox.Branding.KofiSupport"))
         {
             if (artworkStream is not null)
             {
                 using var embeddedArtwork = Image.FromStream(artworkStream);
-                bloodArtwork.Image = new Bitmap(embeddedArtwork);
+                kofiArtwork.Image = new Bitmap(embeddedArtwork);
             }
         }
-        action.Controls.Add(bloodArtwork, 0, 0);
-        action.SetRowSpan(bloodArtwork, 2);
+        statusToolTip.SetToolTip(kofiArtwork, "Support KHARVOX on Ko-fi (opens in your browser)");
+        kofiArtwork.MouseClick += (_, e) =>
+        {
+            if (e.Button != MouseButtons.Left) return;
+            try
+            {
+                Process.Start(new ProcessStartInfo(KoFiTipUrl) { UseShellExecute = true })?.Dispose();
+            }
+            catch
+            {
+                MessageBox.Show(this, "The Ko-fi page could not be opened.\n\n" + KoFiTipUrl,
+                    "KHARVOX Launcher", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+        };
+        action.Controls.Add(kofiArtwork, 0, 0);
         launchButton.Text = "LAUNCH GAME";
         launchButton.Dock = DockStyle.Fill;
         launchButton.FlatStyle = FlatStyle.Flat;

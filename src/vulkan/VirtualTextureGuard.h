@@ -1,4 +1,5 @@
 #pragma once
+#include "../common/DoomBuild.h"
 #include "VirtualTextureAppend.h"
 #include "VirtualTextureAppendSignature.h"
 #include <windows.h>
@@ -61,11 +62,11 @@ inline std::vector<uint8_t> vtAppendThunk(uintptr_t helper, uintptr_t continuati
     return code;
 }
 inline bool installVirtualTextureGuard(uint8_t* base, uint32_t imageSize) {
-    if (imageSize < 0x17e35d7 + sizeof(vtResidencySignature)) return false;
-    auto target = base + 0x17e3567;
-    if (memcmp(target, vtAppendSignature, sizeof(vtAppendSignature))) return false;
-    if (memcmp(base+0x17e35d7, vtResidencySignature, sizeof(vtResidencySignature))) return false;
-    auto bytes = vtAppendThunk(reinterpret_cast<uintptr_t>(&guardedVtAppend), reinterpret_cast<uintptr_t>(base+0x17e35d7));
+    if (imageSize < kharvox::game::rva(0x17e35d7) + sizeof(vtResidencySignature)) return false;
+    auto target = base + kharvox::game::rva(0x17e3567);
+    if (kharvox::game::compare(target, vtAppendSignature, sizeof(vtAppendSignature))) return false;
+    if (kharvox::game::compare(base+kharvox::game::rva(0x17e35d7), vtResidencySignature, sizeof(vtResidencySignature))) return false;
+    auto bytes = vtAppendThunk(reinterpret_cast<uintptr_t>(&guardedVtAppend), reinterpret_cast<uintptr_t>(base+kharvox::game::rva(0x17e35d7)));
     auto thunk = VirtualAlloc(nullptr, bytes.size(), MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
     if (!thunk) return false;
     memcpy(thunk, bytes.data(), bytes.size());

@@ -2,7 +2,7 @@
 // The launcher requests values before loading; never infer their actual values
 // from the arguments, because presets can overwrite CVars later.
 static std::string shadowAuditValue(uintptr_t rva,const char* expected){
- const auto object=nativeCvarModule+rva;uintptr_t name{},text{};
+ const auto object=nativeCvarModule+kharvox::game::rva(rva);uintptr_t name{},text{};
  char actual[64]{},value[64]{};const auto length=std::strlen(expected)+1;
  if(!nativeCvarModule||length>sizeof(actual)||
     !safe_read_bytes(object+0x50,&name,sizeof(name))||

@@ -143,7 +143,7 @@ internal sealed class KharvoxLaunchOptions
 
 internal static class KharvoxRunner
 {
-    internal const string BuildId = "2026.09.29-launcher-v1.11-release";
+    internal const string BuildId = "2026.10.19-launcher-v1.4-final";
     private const string LayerName = "VK_LAYER_KHARVOX_OPENXR";
     private const string RegistryPath = @"SOFTWARE\Khronos\Vulkan\ImplicitLayers";
     private static readonly CultureInfo Invariant = CultureInfo.InvariantCulture;
@@ -269,12 +269,16 @@ internal static class KharvoxRunner
             "Select the DOOM (2016) installation folder containing DOOMx64vk.exe.", gameExe);
 
         ModConflictPreflight.EnsureClean(options.GameDirectory!);
+        var distribution = DoomBuildProfile.Inspect(gameExe);
+        statusUpdate?.Invoke(distribution == DoomDistribution.Gog
+            ? "GOG Vulkan build identified (experimental support)."
+            : "Steam Vulkan build verified.");
         if (!File.Exists(dllPath)) throw new FileNotFoundException("KharvoxLayer.dll must be next to the launcher.", dllPath);
 
         // This must stay ahead of the launch gate (a temporary file), manifest
         // updates, controller config writes, bridge startup and Process.Start.
         // Elevated Vulkan processes do not consume the per-user HKCU layer.
-        var preflight = LaunchPreflight.Inspect(gameExe);
+        var preflight = LaunchPreflight.Inspect(gameExe, distribution == DoomDistribution.Steam);
         if (!preflight.Passed)
         {
             if (options.ExtendedLogging)
@@ -298,8 +302,8 @@ internal static class KharvoxRunner
         using var launchGate = AcquireLaunchGate();
         using var launchState = BeginLaunch();
         EnsureNoRunningDoom();
-        if (FileVersionInfo.GetVersionInfo(dllPath).ProductVersion != "1.1.1")
-            throw new InvalidOperationException("The 1.11 launcher requires its matching 1.11 KharvoxLayer.dll. Extract the complete release into its own folder.");
+        if (FileVersionInfo.GetVersionInfo(dllPath).ProductVersion != "1.4.0")
+            throw new InvalidOperationException("The 1.4 launcher requires its matching 1.4 KharvoxLayer.dll. Extract the complete release into its own folder.");
         using var gameIntro = await VrGameIntroSession.StartAsync(runtimeDir, statusUpdate, disableVrIntro: options.DisableVrIntro).ConfigureAwait(false);
         WriteManifest(manifestPath, dllPath);
         EnsureNativeControllerBindings(options.BackWeapon);
@@ -412,7 +416,7 @@ internal static class KharvoxRunner
             key.Flush();
 
             var steamPath = FindSteam();
-            var steamInstall = IsSteamInstall(options.GameDirectory ?? string.Empty);
+            var steamInstall = distribution == DoomDistribution.Steam;
             if (steamInstall && steamPath is null)
                 throw new InvalidOperationException("Steam was not found. Start Steam once and try again.");
             var steamVrAsyncReprojection = "inactive";
@@ -541,7 +545,7 @@ internal static class KharvoxRunner
             var nativeValidationLog = NativeValidation.Configure(psi, nativeStereoEnabled, runtimeDir);
             try { File.Delete(logPath); } catch { }
             File.AppendAllText(logPath,
-                "[KHARVOX][LAUNCHER] build=" + BuildId + " runtimeDir=" + runtimeDir +
+                "[KHARVOX][LAUNCHER] build=" + BuildId + " gameDistribution=" + distribution + " runtimeDir=" + runtimeDir +
                 " requestedRenderer=" + options.RendererMode +
                 " nativeAttempt=" + nativeStereoEnabled +
                 " twoHandMode=" + (options.TwoHandCalibration ? "calibration" : "gameplay-test") +
@@ -751,7 +755,7 @@ internal static class KharvoxRunner
                         (preflight.HasProvenElevationEvidence ? "true" : "false"));
                     failureMessage = VulkanLoaderStartupDiagnosis.AddToFailureMessage(
                         failureMessage, loaderLog,
-                        preflight.HasProvenElevationEvidence);
+                        preflight.HasProvenElevationEvidence, distribution == DoomDistribution.Steam);
                 }
                 catch { /* Loader-log diagnosis must not hide the startup failure. */ }
             }

@@ -1,3 +1,4 @@
+#include "../common/DoomBuild.h"
 #include "LaserWorldPose.h"
 #include "LaserSourcePolicy.h"
 #include "../common/AerRenderOrder.h"
@@ -216,9 +217,9 @@ bool installMuzzleFireAxisOverride(unsigned char* image) {
     // crosshair. The weapon-decl flag useMuzzleAsFireAxis bypasses that path.
     // Preserve the native implementation and only force its existing branch
     // while a valid VR weapon pose is active.
-    auto branch = image + 0xD5EFF3;
+    auto branch = image + kharvox::game::rva(0xD5EFF3);
     constexpr unsigned char signature[]{0x0F,0x85,0x6A,0x06,0x00,0x00};
-    if (std::memcmp(branch, signature, sizeof(signature))) {
+    if (kharvox::game::compare(branch, signature, sizeof(signature))) {
         log("RVA 0xD5EFF3 useMuzzleAsFireAxis branch signature mismatch; VR shot direction disabled");
         return false;
     }
@@ -240,7 +241,7 @@ bool installFrontPushbackSuppression(unsigned char* image) {
         return false;
     }
 
-    auto target = image + 0x6305B4;
+    auto target = image + kharvox::game::rva(0x6305B4);
     constexpr unsigned char signature[]{
         0x41,0x80,0xBD,0x75,0x01,0x00,0x00,0x00,
         0x0F,0x84,0xF2,0x00,0x00,0x00
@@ -251,7 +252,7 @@ bool installFrontPushbackSuppression(unsigned char* image) {
         // jmp 0x6306B4; nop
         0xE9,0xF3,0x00,0x00,0x00,0x90
     };
-    if (std::memcmp(target, signature, sizeof(signature))) {
+    if (kharvox::game::compare(target, signature, sizeof(signature))) {
         log("hands collision-pushback signature mismatch at RVA 0x6305B4; suppression disabled");
         return false;
     }
@@ -281,17 +282,17 @@ bool armHandsHitReactionSuppression(unsigned char* image) {
     // can otherwise resume a reaction and then freeze its additive pose on the
     // next gameplay entry. Damage, player knockback and enemy behavior remain
     // on their native paths.
-    auto triggerGate = image + 0xD88998;
-    auto updateGate = image + 0xD892E4;
+    auto triggerGate = image + kharvox::game::rva(0xD88998);
+    auto updateGate = image + kharvox::game::rva(0xD892E4);
     constexpr unsigned char triggerSignature[]{0x83,0x3D,0x11,0x6E,0xE2,0x04,0x00};
     constexpr unsigned char updateSignature[]{0x83,0x3D,0xC5,0x64,0xE2,0x04,0x00};
-    if (std::memcmp(triggerGate, triggerSignature, sizeof(triggerSignature)) ||
-        std::memcmp(updateGate, updateSignature, sizeof(updateSignature))) {
+    if (kharvox::game::compare(triggerGate, triggerSignature, sizeof(triggerSignature)) ||
+        kharvox::game::compare(updateGate, updateSignature, sizeof(updateSignature))) {
         log("hands hit-reaction gate signature mismatch at RVA 0xD88998; suppression disabled");
         return false;
     }
 
-    auto value = reinterpret_cast<volatile LONG*>(image + 0x5BAF7B0);
+    auto value = reinterpret_cast<volatile LONG*>(image + kharvox::game::rva(0x5BAF7B0));
     const LONG current = InterlockedCompareExchange(value, 0, 0);
     if (current != 0 && current != 1) {
         log("hands_hitReactionsEnable has an unexpected initial value; suppression disabled");
@@ -347,14 +348,14 @@ bool armWeaponKickSuppression(unsigned char* image) {
     // view path checks the same native CVar before applying its independent
     // first-person kick transform, so isolate that remaining VR-incompatible
     // motion without touching damage or physical knockback.
-    auto gate = image + 0xE489B7;
+    auto gate = image + kharvox::game::rva(0xE489B7);
     constexpr unsigned char signature[]{0x83,0x3D,0xC2,0x62,0xD1,0x04,0x00};
-    if (std::memcmp(gate, signature, sizeof(signature))) {
+    if (kharvox::game::compare(gate, signature, sizeof(signature))) {
         log("g_weaponKick gate signature mismatch at RVA 0xE489B7; suppression disabled");
         return false;
     }
 
-    auto value = reinterpret_cast<volatile LONG*>(image + 0x5B5EC80);
+    auto value = reinterpret_cast<volatile LONG*>(image + kharvox::game::rva(0x5B5EC80));
     const LONG current = InterlockedCompareExchange(value, 0, 0);
     if (current != 0 && current != 1) {
         log("g_weaponKick has an unexpected initial value; suppression disabled");
@@ -841,9 +842,9 @@ const char* weaponAmmoStateName(KharvoxWeaponAmmoState state) {
 }
 
 bool installWeaponAmmoSnapshot(unsigned char* image) {
-    auto countTarget = image + 0x2E0CD0;
-    auto itemTarget = image + 0xEEDC50;
-    auto totalTarget = image + 0xF24BD0;
+    auto countTarget = image + kharvox::game::rva(0x2E0CD0);
+    auto itemTarget = image + kharvox::game::rva(0xEEDC50);
+    auto totalTarget = image + kharvox::game::rva(0xF24BD0);
     constexpr unsigned char countSignature[]{0x8B,0x41,0x08,0xC3};
     constexpr unsigned char itemSignature[]{
         0x48,0x83,0xEC,0x28,0x85,0xD2,0x78,0x4F,
@@ -854,9 +855,9 @@ bool installWeaponAmmoSnapshot(unsigned char* image) {
         0x48,0x8B,0x01,0x48,0x8B,0xDA,0x8B,0x91,0xD4,0x08,0x00,0x00,
         0xFF,0x90,0xF0,0x03,0x00,0x00
     };
-    if (std::memcmp(countTarget, countSignature, sizeof(countSignature))
-        || std::memcmp(itemTarget, itemSignature, sizeof(itemSignature))
-        || std::memcmp(totalTarget, totalSignature, sizeof(totalSignature))) {
+    if (kharvox::game::compare(countTarget, countSignature, sizeof(countSignature))
+        || kharvox::game::compare(itemTarget, itemSignature, sizeof(itemSignature))
+        || kharvox::game::compare(totalTarget, totalSignature, sizeof(totalSignature))) {
         log("native inventory/ammo signature mismatch; Shoulder Weapon keeps timeout-only fallback");
         return false;
     }
@@ -1167,7 +1168,7 @@ extern "C" void* __fastcall activeWeaponDataHook(void* owner, int fireMode) {
     void* result = resolveActiveWeaponDataNative(owner, fireMode);
     const auto image = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
     const auto returnAddress = reinterpret_cast<uintptr_t>(_ReturnAddress());
-    if (image && returnAddress >= image && returnAddress - image == 0xD7D6C2) {
+    if (image && returnAddress >= image && kharvox::game::canonicalRva(returnAddress - image) == 0xD7D6C2) {
         if (activeWeaponData.load(std::memory_order_acquire) != reinterpret_cast<uintptr_t>(result))
             prepareReachableVrSniperDecls(owner, result);
         observeActiveWeaponData(owner, result);
@@ -1176,12 +1177,12 @@ extern "C" void* __fastcall activeWeaponDataHook(void* owner, int fireMode) {
 }
 
 bool installActiveWeaponIdentityHook(unsigned char* image) {
-    auto target = image + 0xF137B0;
+    auto target = image + kharvox::game::rva(0xF137B0);
     constexpr unsigned char signature[] = {
         0x44,0x8B,0xCA,0x83,0xFA,0xFF,0x75,0x07,
         0x44,0x8B,0x89,0xD4,0x08,0x00,0x00
     };
-    if (std::memcmp(target, signature, sizeof(signature))) {
+    if (kharvox::game::compare(target, signature, sizeof(signature))) {
         log("RVA 0xF137B0 active weapon-data signature mismatch; two-hand identity stays UNKNOWN/einhändig");
         return false;
     }
@@ -1800,15 +1801,15 @@ bool validateCollectibleClassifier(unsigned char* image) {
     constexpr uint64_t selectField = 0x400000878ULL;
     constexpr uint64_t flagsField = 0x700010374ULL;
     constexpr unsigned char getter[]{0x0f,0xb6,0x41,0x05,0xc1,0xe8,0x07,0xc3};
-    const bool supported = !std::memcmp(image + 0x31e3048, &webField, 8)
-        && !std::memcmp(image + 0x3206230, &selectField, 8)
-        && !std::memcmp(image + 0x31e4638, &flagsField, 8)
-        && !std::memcmp(image + 0x1508030, getter, sizeof(getter))
-        && !std::strcmp(reinterpret_cast<const char*>(image + 0x27aa228),
+    const bool supported = !kharvox::game::compare(image + kharvox::game::rva(0x31e3048), &webField, 8)
+        && !kharvox::game::compare(image + kharvox::game::rva(0x3206230), &selectField, 8)
+        && !kharvox::game::compare(image + kharvox::game::rva(0x31e4638), &flagsField, 8)
+        && !kharvox::game::compare(image + kharvox::game::rva(0x1508030), getter, sizeof(getter))
+        && !std::strcmp(reinterpret_cast<const char*>(image + kharvox::game::rva(0x27aa228)),
             "HANDS_CUSTOM_ANIM_COLLECTABLE_FIRST")
-        && *reinterpret_cast<const uint64_t*>(image + 0x3519988) == 6
-        && *reinterpret_cast<const uint64_t*>(image + 0x3519998) == 7
-        && *reinterpret_cast<const uint64_t*>(image + 0x35199a8) == 8;
+        && *reinterpret_cast<const uint64_t*>(image + kharvox::game::rva(0x3519988)) == 6
+        && *reinterpret_cast<const uint64_t*>(image + kharvox::game::rva(0x3519998)) == 7
+        && *reinterpret_cast<const uint64_t*>(image + kharvox::game::rva(0x35199a8)) == 8;
     collectibleClassifierSupported.store(supported, std::memory_order_release);
     log(supported ? "[COLLECTIBLE-QUAD] native animation classifier validated (first/standard/fist bump)"
         : "[COLLECTIBLE-QUAD] native metadata mismatch; classifier disabled");
@@ -1873,12 +1874,12 @@ extern "C" short* __fastcall resolveHandsResourceHook(
 }
 
 bool installHandsResourceResolverNullGuard(unsigned char* image) {
-    auto target = image + 0x16E18D0;
+    auto target = image + kharvox::game::rva(0x16E18D0);
     constexpr unsigned char signature[] = {
         0x48,0x89,0x6C,0x24,0x10,0x48,0x89,0x74,0x24,0x18,
         0x57,0x41,0x56,0x41,0x57,0x48,0x83,0xEC,0x20
     };
-    if (std::memcmp(target, signature, sizeof(signature))) {
+    if (kharvox::game::compare(target, signature, sizeof(signature))) {
         log("RVA 0x16E18D0 idHands resource signature mismatch; restart null guard disabled");
         return false;
     }
@@ -1890,7 +1891,7 @@ bool installHandsResourceResolverNullGuard(unsigned char* image) {
         return false;
     }
     auto cursor = trampoline;
-    std::memcpy(cursor, signature, sizeof(signature));
+    std::memcpy(cursor, target, sizeof(signature));
     cursor += sizeof(signature);
     emit8(cursor, 0xFF); emit8(cursor, 0x25);
     emit8(cursor, 0); emit8(cursor, 0); emit8(cursor, 0); emit8(cursor, 0);
@@ -1915,12 +1916,12 @@ bool installHandsResourceResolverNullGuard(unsigned char* image) {
 }
 
 bool installUpdateHandsTransformHook(unsigned char* image) {
-    auto target = image + 0xD7D5D0;
+    auto target = image + kharvox::game::rva(0xD7D5D0);
     constexpr unsigned char signature[] = {
         0x48,0x8B,0xC4,0x48,0x89,0x58,0x18,0x55,0x56,0x57,
         0x48,0x8D,0xA8,0x98,0xFD,0xFF,0xFF
     };
-    if (std::memcmp(target, signature, sizeof(signature))) {
+    if (kharvox::game::compare(target, signature, sizeof(signature))) {
         log("RVA 0xD7D5D0 idHands update signature mismatch; joint scanner disabled");
         return false;
     }
@@ -1928,22 +1929,22 @@ bool installUpdateHandsTransformHook(unsigned char* image) {
         VirtualAlloc(nullptr, 64, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
     if (!trampoline) return false;
     auto cursor = trampoline;
-    std::memcpy(cursor, signature, sizeof(signature));
+    std::memcpy(cursor, target, sizeof(signature));
     cursor += sizeof(signature);
     emit8(cursor, 0xFF); emit8(cursor, 0x25);
     emit8(cursor, 0); emit8(cursor, 0); emit8(cursor, 0); emit8(cursor, 0);
     emit64(cursor, reinterpret_cast<unsigned long long>(target + sizeof(signature)));
     originalUpdateHandsTransform = reinterpret_cast<UpdateHandsTransformFn>(trampoline);
-    getHandsModel = reinterpret_cast<GetHandsModelFn>(image + 0xD60D10);
-    getJointTransform = reinterpret_cast<GetJointTransformFn>(image + 0x15EE6C0);
+    getHandsModel = reinterpret_cast<GetHandsModelFn>(image + kharvox::game::rva(0xD60D10));
+    getJointTransform = reinterpret_cast<GetJointTransformFn>(image + kharvox::game::rva(0x15EE6C0));
     // Signature checked against the game's named-locator entry, not a guessed vtable slot.
     constexpr unsigned char namedJointSignature[]{0x48,0x89,0x5C,0x24,0x10,0x48,0x89,0x74,0x24,0x18,0x57,0x48,0x83,0xEC,0x60};
-    if(!std::memcmp(image+0x15EFB60,namedJointSignature,sizeof(namedJointSignature)))
-        getNamedJointTransform=reinterpret_cast<GetNamedJointTransformFn>(image+0x15EFB60);
+    if(!kharvox::game::compare(image+kharvox::game::rva(0x15EFB60),namedJointSignature,sizeof(namedJointSignature)))
+        getNamedJointTransform=reinterpret_cast<GetNamedJointTransformFn>(image+kharvox::game::rva(0x15EFB60));
     else log("[LASER] named muzzle locator signature mismatch; affected lasers withheld");
     // 0x15EFEC0 clears the surface visibility bit (BTR). 0x15F0C40 is
     // the inverse ShowMesh operation (BTS), despite their adjacent layout.
-    hideRenderModelMesh = reinterpret_cast<HideRenderModelMeshFn>(image + 0x15EFEC0);
+    hideRenderModelMesh = reinterpret_cast<HideRenderModelMeshFn>(image + kharvox::game::rva(0x15EFEC0));
 
     DWORD oldProtect{};
     if (!VirtualProtect(target, sizeof(signature), PAGE_EXECUTE_READWRITE, &oldProtect)) return false;
@@ -1963,7 +1964,7 @@ extern "C" void __fastcall weaponRenderUpdateHook(
     int renderView, int frame, int time, int flags, float modelScale, float depthHack) {
     const auto image = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
     const auto returnAddress = reinterpret_cast<uintptr_t>(_ReturnAddress());
-    const bool weaponPresentation = image && returnAddress - image == 0xD8B0D3
+    const bool weaponPresentation = image && kharvox::game::canonicalRva(returnAddress - image) == 0xD8B0D3
         && renderObject && KharvoxCameraGameplayActive();
     const float* submittedOrigin = origin;
     const float* submittedAxis = axis;
@@ -2017,12 +2018,12 @@ extern "C" void __fastcall weaponRenderUpdateHook(
 }
 
 bool installWeaponRenderUpdateProbe(unsigned char* image) {
-    auto target = image + 0xF275A0;
+    auto target = image + kharvox::game::rva(0xF275A0);
     constexpr unsigned char signature[] = {
         0x48,0x8B,0xC4,0x48,0x89,0x58,0x08,0x48,0x89,0x68,0x10,
         0x48,0x89,0x70,0x18
     };
-    if (std::memcmp(target, signature, sizeof(signature))) {
+    if (kharvox::game::compare(target, signature, sizeof(signature))) {
         log("RVA 0xF275A0 weapon-render signature mismatch; child-model probe disabled");
         return false;
     }
@@ -2034,7 +2035,7 @@ bool installWeaponRenderUpdateProbe(unsigned char* image) {
         return false;
     }
     auto cursor = trampoline;
-    std::memcpy(cursor, signature, sizeof(signature));
+    std::memcpy(cursor, target, sizeof(signature));
     cursor += sizeof(signature);
     emit8(cursor, 0xFF); emit8(cursor, 0x25);
     emit8(cursor, 0); emit8(cursor, 0); emit8(cursor, 0); emit8(cursor, 0);
@@ -2070,12 +2071,12 @@ extern "C" float __fastcall handsFovScaleHook(void* hands) {
 }
 
 bool installHandsFovScaleHook(unsigned char* image) {
-    auto target = image + 0xD60760;
+    auto target = image + kharvox::game::rva(0xD60760);
     constexpr unsigned char signature[] = {
         0x40, 0x53, 0x48, 0x83, 0xEC, 0x60, 0x48, 0x8B, 0xD9,
         0x48, 0x8B, 0x89, 0xB0, 0x02, 0x00, 0x00
     };
-    if (std::memcmp(target, signature, sizeof(signature))) {
+    if (kharvox::game::compare(target, signature, sizeof(signature))) {
         log("RVA 0xD60760 hands-FOV signature mismatch; projection neutralizer disabled");
         return false;
     }
@@ -2087,7 +2088,7 @@ bool installHandsFovScaleHook(unsigned char* image) {
         return false;
     }
     auto cursor = trampoline;
-    std::memcpy(cursor, signature, sizeof(signature));
+    std::memcpy(cursor, target, sizeof(signature));
     cursor += sizeof(signature);
     emit8(cursor, 0xFF); emit8(cursor, 0x25);
     emit8(cursor, 0); emit8(cursor, 0); emit8(cursor, 0); emit8(cursor, 0);
@@ -2442,9 +2443,9 @@ extern "C" void __fastcall setRenderEntityAxisHook(void* rawEntity, const float*
     const auto returnSlot = static_cast<unsigned char*>(_AddressOfReturnAddress());
     const auto image = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
     const auto returnAddress = *reinterpret_cast<const uintptr_t*>(returnSlot);
-    const bool weaponCaller = returnAddress - image == 0xD7E518;
-    const bool weaponPropCaller = returnAddress - image == 0xD8AE66;
-    const bool hudFinalCaller = returnAddress - image == 0xF9227F;
+    const bool weaponCaller = kharvox::game::canonicalRva(returnAddress - image) == 0xD7E518;
+    const bool weaponPropCaller = kharvox::game::canonicalRva(returnAddress - image) == 0xD8AE66;
+    const bool hudFinalCaller = kharvox::game::canonicalRva(returnAddress - image) == 0xF9227F;
     if (weaponCaller || weaponPropCaller)
         updateCustomHandsWeaponDepth(entity, weaponPropCaller);
     const float* axisToCopy = nativeAxis;
@@ -2530,12 +2531,12 @@ bool KharvoxWeaponInstallHook() {
     installWeaponRenderUpdateProbe(image);
     installHandsFovScaleHook(image);
     installMuzzleFireAxisOverride(image);
-    auto target = image + 0x3B5400;
+    auto target = image + kharvox::game::rva(0x3B5400);
     constexpr unsigned char signature[] = {
         0x0F,0xB6,0x41,0x71,0x84,0x41,0x70,0x75,0x50,
         0x8B,0x02,0x89,0x81,0xD4,0x00,0x00,0x00
     };
-    if (std::memcmp(target, signature, sizeof(signature))) {
+    if (kharvox::game::compare(target, signature, sizeof(signature))) {
         log("RVA 0x3B5400 axis-copy signature mismatch; final transform hook disabled");
         if (weaponKickOverrideArmed) setWeaponKickSuppressed(false);
         if (hitReactionOverrideArmed) setHandsHitReactionsSuppressed(false);

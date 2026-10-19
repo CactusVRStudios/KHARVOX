@@ -23,9 +23,9 @@ int readCaptureAa() {
     uintptr_t name{}; SIZE_T count{}; char text[15]{}; int value{};
     auto read=[&](uintptr_t address,void* target,size_t bytes){return ReadProcessMemory(
         GetCurrentProcess(),reinterpret_cast<const void*>(address),target,bytes,&count)&&count==bytes;};
-    if(!read(base+0x66dd200+0x50,&name,sizeof(name))
+    if(!read(base+kharvox::game::rva(0x66dd200)+0x50,&name,sizeof(name))
         ||!read(name,text,sizeof(text))||std::memcmp(text,"r_antialiasing",14)
-        ||!read(base+0x66dd200+0x30,&value,sizeof(value)))return -1;
+        ||!read(base+kharvox::game::rva(0x66dd200)+0x30,&value,sizeof(value)))return -1;
     return value;
 }
 void releaseEyeSource(EyeSourceCapture& c) {

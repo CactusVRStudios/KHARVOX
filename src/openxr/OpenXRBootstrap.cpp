@@ -1,3 +1,4 @@
+#include "../common/DoomBuild.h"
 #include "../common/RuntimeLog.h"
 #include "../common/VulkanSfs.h"
 #include "../sfs/NativeSfs.h"
@@ -409,27 +410,27 @@ void log(const std::string& x, bool operational){
 
 double performanceMilliseconds(LARGE_INTEGER begin,LARGE_INTEGER end){static const double ticksPerMillisecond=[](){LARGE_INTEGER frequency{};QueryPerformanceFrequency(&frequency);return double(frequency.QuadPart)/1000.0;}();return ticksPerMillisecond>0.0?double(end.QuadPart-begin.QuadPart)/ticksPerMillisecond:0.0;}
 namespace doomAdaptiveTick {
-constexpr uintptr_t adaptiveTickNameRva=0x2835570;
-constexpr uintptr_t adaptiveTickCurrentRva=0x5DA7670;
-constexpr uintptr_t minHzNameRva=0x2835598;
-constexpr uintptr_t minHzCurrentRva=0x5DA7710;
-constexpr uintptr_t maxHzNameRva=0x28355C0;
-constexpr uintptr_t maxHzCurrentRva=0x5DA77B0;
-constexpr uintptr_t immediateModeNameRva=0x2835618;
-constexpr uintptr_t immediateModeCurrentRva=0x5DA7850;
-constexpr uintptr_t syncNoAdaptiveTickNameRva=0x21AC280;
-constexpr uintptr_t syncNoAdaptiveTickCurrentRva=0x5B56F70;
-constexpr uintptr_t fixedTicNameRva=0x282AE00;
-constexpr uintptr_t fixedTicCurrentRva=0x5D4F320;
+const uintptr_t adaptiveTickNameRva=kharvox::game::rva(0x2835570);
+const uintptr_t adaptiveTickCurrentRva=kharvox::game::rva(0x5DA7670);
+const uintptr_t minHzNameRva=kharvox::game::rva(0x2835598);
+const uintptr_t minHzCurrentRva=kharvox::game::rva(0x5DA7710);
+const uintptr_t maxHzNameRva=kharvox::game::rva(0x28355C0);
+const uintptr_t maxHzCurrentRva=kharvox::game::rva(0x5DA77B0);
+const uintptr_t immediateModeNameRva=kharvox::game::rva(0x2835618);
+const uintptr_t immediateModeCurrentRva=kharvox::game::rva(0x5DA7850);
+const uintptr_t syncNoAdaptiveTickNameRva=kharvox::game::rva(0x21AC280);
+const uintptr_t syncNoAdaptiveTickCurrentRva=kharvox::game::rva(0x5B56F70);
+const uintptr_t fixedTicNameRva=kharvox::game::rva(0x282AE00);
+const uintptr_t fixedTicCurrentRva=kharvox::game::rva(0x5D4F320);
 // idCommonLocal's adaptive timing object. The participant branch clears byte
 // +0x24 before the XR observer can arm its bypass on the following Present.
 // That stale zero keeps the later game-frame path on its fixed fallback even
 // when every public CVar has already been corrected.
-constexpr uintptr_t adaptiveRuntimeStatePointerRva=0x35EB8C0;
+const uintptr_t adaptiveRuntimeStatePointerRva=kharvox::game::rva(0x35EB8C0);
 constexpr uintptr_t adaptiveRuntimeEnabledOffset=0x24;
-constexpr uintptr_t participantBranchRva=0x3BED77;
-constexpr uintptr_t participantBlockedRva=0x3BEE33;
-constexpr uintptr_t participantContinueRva=0x3BED86;
+const uintptr_t participantBranchRva=kharvox::game::rva(0x3BED77);
+const uintptr_t participantBlockedRva=kharvox::game::rva(0x3BEE33);
+const uintptr_t participantContinueRva=kharvox::game::rva(0x3BED86);
 }
 bool reenableDoomAdaptiveRuntimeState(unsigned char* image){
     if(!image)return false;
@@ -464,7 +465,7 @@ bool installImmersiveAdaptiveParticipantBypass(unsigned char* image){
     constexpr unsigned char signature[]{
         0x85,0xC9,0x0F,0x8F,0xB4,0x00,0x00,0x00,
         0x80,0xBF,0x90,0xD4,0x49,0x00,0x00};
-    if(std::memcmp(target,signature,sizeof(signature))!=0){
+    if(kharvox::game::compare(target,signature,sizeof(signature))!=0){
         log("[CINEMATIC-HZ] adaptive-participant branch signature mismatch; bypass disabled safely");
         return false;
     }
@@ -1410,7 +1411,7 @@ float nativeManualTurnX(XrTime displayTime,bool active){
     const float nativeMagnitude=nativeDoomRightStickDeadzone+desiredMagnitude*(1.f-nativeDoomRightStickDeadzone);
     return std::copysign(nativeMagnitude,stickDirection);
 }
-float* doomFloat(uintptr_t rva){auto base=reinterpret_cast<uint8_t*>(GetModuleHandleW(nullptr));return base?reinterpret_cast<float*>(base+rva):nullptr;}
+float* doomFloat(uintptr_t rva){auto base=reinterpret_cast<uint8_t*>(GetModuleHandleW(nullptr));const auto mapped=kharvox::game::rva(rva);return base&&mapped?reinterpret_cast<float*>(base+mapped):nullptr;}
 constexpr uintptr_t joyYawSpeedCurrentRva=0x5FAA3A4;
 constexpr uintptr_t joyDeadZoneCurrentRva=0x5FAA124;
 constexpr uintptr_t joyDampenLookCurrentRva=0x5FAA580;

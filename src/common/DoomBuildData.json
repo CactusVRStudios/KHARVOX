@@ -1,0 +1,1098 @@
+{
+  "0x280580": {
+    "gog": "0x280440",
+    "proof": "normalized-function"
+  },
+  "0x295780": {
+    "gog": "0x295640",
+    "proof": "normalized-function"
+  },
+  "0x2db9c0": {
+    "gog": "0x2db4c0",
+    "proof": "normalized-function"
+  },
+  "0x2e0cd0": {
+    "gog": "0xeec650",
+    "proof": "instruction-reference"
+  },
+  "0x301a10": {
+    "gog": "0x301580",
+    "proof": "normalized-function"
+  },
+  "0x35a69d": {
+    "gog": "0x359cbd",
+    "proof": "normalized-function"
+  },
+  "0x3b5400": {
+    "gog": "0x3b43e0",
+    "proof": "instruction-reference"
+  },
+  "0x3b7500": {
+    "gog": "0x3b64e0",
+    "proof": "instruction-reference"
+  },
+  "0x3bed77": {
+    "gog": "0x3bdf87",
+    "proof": "normalized-function"
+  },
+  "0x3bed86": {
+    "gog": "0x3bdf96",
+    "proof": "normalized-function"
+  },
+  "0x3bee33": {
+    "gog": "0x3be043",
+    "proof": "normalized-function"
+  },
+  "0x405320": {
+    "gog": "0x404180",
+    "proof": "normalized-function"
+  },
+  "0x532fd0": {
+    "gog": "0x531e70",
+    "proof": "normalized-function"
+  },
+  "0x6305b4": {
+    "gog": "0x62f9c4",
+    "proof": "normalized-function"
+  },
+  "0x6b6f75": {
+    "gog": "0x6b5ed5",
+    "proof": "normalized-function"
+  },
+  "0x7e7db0": {
+    "gog": "0x7e6bf0",
+    "proof": "normalized-function"
+  },
+  "0x7e8530": {
+    "gog": "0x7e7370",
+    "proof": "normalized-function"
+  },
+  "0x907fa0": {
+    "gog": "0x9066a0",
+    "proof": "normalized-function"
+  },
+  "0x925210": {
+    "gog": "0x923940",
+    "proof": "normalized-function"
+  },
+  "0x937090": {
+    "gog": "0x9358b0",
+    "proof": "normalized-function"
+  },
+  "0x937250": {
+    "gog": "0x935a70",
+    "proof": "normalized-function"
+  },
+  "0x937540": {
+    "gog": "0x935d60",
+    "proof": "normalized-function"
+  },
+  "0x937680": {
+    "gog": "0x935ea0",
+    "proof": "normalized-function"
+  },
+  "0x939200": {
+    "gog": "0x937a20",
+    "proof": "normalized-function"
+  },
+  "0x939940": {
+    "gog": "0x938160",
+    "proof": "normalized-function"
+  },
+  "0x93a4b0": {
+    "gog": "0x938cc0",
+    "proof": "normalized-function"
+  },
+  "0x9b2908": {
+    "gog": "0x9b1178",
+    "proof": "normalized-function"
+  },
+  "0xa30cff": {
+    "gog": "0xa2f73f",
+    "proof": "normalized-function"
+  },
+  "0xba73c0": {
+    "gog": "0xba59f0",
+    "proof": "normalized-function"
+  },
+  "0xbaa703": {
+    "gog": "0xba8cf3",
+    "proof": "normalized-function"
+  },
+  "0xbae500": {
+    "gog": "0xbacaf0",
+    "proof": "normalized-function"
+  },
+  "0xbb97e0": {
+    "gog": "0xbb7e10",
+    "proof": "normalized-function"
+  },
+  "0xbcea7d": {
+    "gog": "0xbcd23d",
+    "proof": "normalized-function"
+  },
+  "0xbdcf54": {
+    "gog": "0xbdb624",
+    "proof": "normalized-function"
+  },
+  "0xbded30": {
+    "gog": "0xbdd340",
+    "proof": "instruction-reference"
+  },
+  "0xbe0e40": {
+    "gog": "0xbdf460",
+    "proof": "normalized-function"
+  },
+  "0xbe6c80": {
+    "gog": "0xbe5300",
+    "proof": "normalized-function"
+  },
+  "0xbf5a50": {
+    "gog": "0xbf4220",
+    "proof": "RTTI-leaf-body"
+  },
+  "0xbf7040": {
+    "gog": "0xbf5810",
+    "proof": "normalized-function"
+  },
+  "0xbfff80": {
+    "gog": "0xbfe710",
+    "proof": "normalized-function"
+  },
+  "0xc01c20": {
+    "gog": "0xc003b0",
+    "proof": "normalized-function"
+  },
+  "0xc113b0": {
+    "gog": "0xc0fd20",
+    "proof": "normalized-function"
+  },
+  "0xc12430": {
+    "gog": "0xc10da0",
+    "proof": "normalized-function"
+  },
+  "0xc151d0": {
+    "gog": "0xc13c20",
+    "proof": "normalized-function"
+  },
+  "0xc15200": {
+    "gog": "0xc13c50",
+    "proof": "normalized-function"
+  },
+  "0xc15210": {
+    "gog": "0xc13c60",
+    "proof": "normalized-function"
+  },
+  "0xc15226": {
+    "gog": "0xc13c76",
+    "proof": "normalized-function"
+  },
+  "0xc154c4": {
+    "gog": "0xc13f14",
+    "proof": "normalized-function"
+  },
+  "0xc155f0": {
+    "gog": "0xc14040",
+    "proof": "normalized-function"
+  },
+  "0xc17380": {
+    "gog": "0xc15fb0",
+    "proof": "normalized-function"
+  },
+  "0xc174e0": {
+    "gog": "0xc16110",
+    "proof": "normalized-function"
+  },
+  "0xc17880": {
+    "gog": "0xc164b0",
+    "proof": "normalized-function"
+  },
+  "0xc1e960": {
+    "gog": "0xc1d5a0",
+    "proof": "normalized-function"
+  },
+  "0xc24920": {
+    "gog": "0xc23520",
+    "proof": "normalized-function"
+  },
+  "0xc317be": {
+    "gog": "0xc3040e",
+    "proof": "normalized-function"
+  },
+  "0xc57640": {
+    "gog": "0xc56220",
+    "proof": "normalized-function"
+  },
+  "0xc57670": {
+    "gog": "0xc56250",
+    "proof": "normalized-function"
+  },
+  "0xc576b0": {
+    "gog": "0xc56290",
+    "proof": "normalized-function"
+  },
+  "0xc58be0": {
+    "gog": "0xc57780",
+    "proof": "normalized-function"
+  },
+  "0xc58c10": {
+    "gog": "0xc577b0",
+    "proof": "normalized-function"
+  },
+  "0xc58d10": {
+    "gog": "0xc578b0",
+    "proof": "normalized-function"
+  },
+  "0xc6eac0": {
+    "gog": "0xc6d730",
+    "proof": "normalized-function"
+  },
+  "0xc722f0": {
+    "gog": "0xc70f60",
+    "proof": "normalized-function"
+  },
+  "0xc75a00": {
+    "gog": "0xc746a0",
+    "proof": "normalized-function"
+  },
+  "0xc7e810": {
+    "gog": "0xc7d4b0",
+    "proof": "normalized-function"
+  },
+  "0xc83fee": {
+    "gog": "0xc82cce",
+    "proof": "normalized-function"
+  },
+  "0xc92de0": {
+    "gog": "0xc91880",
+    "proof": "normalized-function"
+  },
+  "0xc93840": {
+    "gog": "0xc92310",
+    "proof": "normalized-function"
+  },
+  "0xc93a30": {
+    "gog": "0xc92500",
+    "proof": "normalized-function"
+  },
+  "0xd48938": {
+    "gog": "0xd475b8",
+    "proof": "normalized-function"
+  },
+  "0xd5eff3": {
+    "gog": "0xd5dc83",
+    "proof": "normalized-function"
+  },
+  "0xd60760": {
+    "gog": "0xd5f3f0",
+    "proof": "normalized-function"
+  },
+  "0xd60d10": {
+    "gog": "0xd5f9a0",
+    "proof": "instruction-reference"
+  },
+  "0xd7d5d0": {
+    "gog": "0xd7c260",
+    "proof": "normalized-function"
+  },
+  "0xd7d6c2": {
+    "gog": "0xd7c352",
+    "proof": "normalized-function"
+  },
+  "0xd7e518": {
+    "gog": "0xd7d1a8",
+    "proof": "normalized-function"
+  },
+  "0xd88998": {
+    "gog": "0xd87648",
+    "proof": "normalized-function"
+  },
+  "0xd892e4": {
+    "gog": "0xd87f94",
+    "proof": "normalized-function"
+  },
+  "0xd8ae66": {
+    "gog": "0xd89b16",
+    "proof": "normalized-function"
+  },
+  "0xd8b0d3": {
+    "gog": "0xd89d83",
+    "proof": "normalized-function"
+  },
+  "0xda1870": {
+    "gog": "0xda0510",
+    "proof": "normalized-function"
+  },
+  "0xda24a3": {
+    "gog": "0xda1143",
+    "proof": "normalized-function"
+  },
+  "0xda7980": {
+    "gog": "0xda6610",
+    "proof": "normalized-function"
+  },
+  "0xdc80d0": {
+    "gog": "0xdc6ae0",
+    "proof": "normalized-function"
+  },
+  "0xe3f8d3": {
+    "gog": "0xe3e213",
+    "proof": "normalized-function"
+  },
+  "0xe3f8fc": {
+    "gog": "0xe3e23c",
+    "proof": "normalized-function"
+  },
+  "0xe3f96a": {
+    "gog": "0xe3e2aa",
+    "proof": "normalized-function"
+  },
+  "0xe489b7": {
+    "gog": "0xe472f7",
+    "proof": "normalized-function"
+  },
+  "0xe6c30c": {
+    "gog": "0xe6ac5c",
+    "proof": "normalized-function"
+  },
+  "0xeedc50": {
+    "gog": "0xeec660",
+    "proof": "normalized-function"
+  },
+  "0xf137b0": {
+    "gog": "0xf12190",
+    "proof": "instruction-reference"
+  },
+  "0xf24bd0": {
+    "gog": "0xf235b0",
+    "proof": "normalized-function"
+  },
+  "0xf275a0": {
+    "gog": "0xf25f80",
+    "proof": "normalized-function"
+  },
+  "0xf8f590": {
+    "gog": "0xf8e050",
+    "proof": "normalized-function"
+  },
+  "0xf900d0": {
+    "gog": "0xf8eb90",
+    "proof": "normalized-function"
+  },
+  "0xf91d00": {
+    "gog": "0xf907c0",
+    "proof": "normalized-function"
+  },
+  "0xf91e00": {
+    "gog": "0xf908c0",
+    "proof": "normalized-function"
+  },
+  "0xf91f58": {
+    "gog": "0xf90a18",
+    "proof": "normalized-function"
+  },
+  "0xf9227f": {
+    "gog": "0xf90d3f",
+    "proof": "normalized-function"
+  },
+  "0xf922a7": {
+    "gog": "0xf90d67",
+    "proof": "normalized-function"
+  },
+  "0xf92450": {
+    "gog": "0xf90f10",
+    "proof": "normalized-function"
+  },
+  "0xfb2c10": {
+    "gog": "0xfb14e0",
+    "proof": "normalized-function"
+  },
+  "0xffffff": {
+    "gog": "0xffe54f",
+    "proof": "normalized-function"
+  },
+  "0x1000193": {
+    "gog": "0xffe6e3",
+    "proof": "normalized-function"
+  },
+  "0x1009f60": {
+    "gog": "0x100d6b0",
+    "proof": "RTTI-leaf-body"
+  },
+  "0x1068dd0": {
+    "gog": "0x10670a0",
+    "proof": "normalized-function"
+  },
+  "0x106a8d0": {
+    "gog": "0x1068ba0",
+    "proof": "normalized-function"
+  },
+  "0x117af50": {
+    "gog": "0x11766b0",
+    "proof": "normalized-function"
+  },
+  "0x1188c70": {
+    "gog": "0x11846f0",
+    "proof": "normalized-function"
+  },
+  "0x1508030": {
+    "gog": "0x15052e0",
+    "proof": "unique-leaf-body"
+  },
+  "0x158e6b0": {
+    "gog": "0x158b550",
+    "proof": "normalized-function"
+  },
+  "0x158eae0": {
+    "gog": "0x158b980",
+    "proof": "instruction-reference"
+  },
+  "0x1590d60": {
+    "gog": "0x158db70",
+    "proof": "instruction-reference"
+  },
+  "0x15d8020": {
+    "gog": "0x15d4b80",
+    "proof": "normalized-function"
+  },
+  "0x15daf30": {
+    "gog": "0x15d7aa0",
+    "proof": "normalized-function"
+  },
+  "0x15ee6c0": {
+    "gog": "0x15eb2d0",
+    "proof": "normalized-function"
+  },
+  "0x15efb60": {
+    "gog": "0x15ec770",
+    "proof": "normalized-function"
+  },
+  "0x15efec0": {
+    "gog": "0x15ecad0",
+    "proof": "instruction-reference"
+  },
+  "0x161b660": {
+    "gog": "0x16185c0",
+    "proof": "normalized-function"
+  },
+  "0x1621000": {
+    "gog": "0x161df60",
+    "proof": "normalized-function"
+  },
+  "0x16e18d0": {
+    "gog": "0x16deb80",
+    "proof": "normalized-function"
+  },
+  "0x17438b0": {
+    "gog": "0x1741370",
+    "proof": "instruction-reference"
+  },
+  "0x17b32e0": {
+    "gog": "0x17b0170",
+    "proof": "normalized-function"
+  },
+  "0x17b35c0": {
+    "gog": "0x17b0450",
+    "proof": "normalized-function"
+  },
+  "0x17b3d70": {
+    "gog": "0x17b0c00",
+    "proof": "normalized-function"
+  },
+  "0x17b7900": {
+    "gog": "0x17b4790",
+    "proof": "normalized-function"
+  },
+  "0x17b9330": {
+    "gog": "0x17b61c0",
+    "proof": "normalized-function"
+  },
+  "0x17e3567": {
+    "gog": "0x17e0677",
+    "proof": "normalized-function"
+  },
+  "0x17e35d7": {
+    "gog": "0x17e06e7",
+    "proof": "normalized-function"
+  },
+  "0x1830b80": {
+    "gog": "0x182db10",
+    "proof": "normalized-function"
+  },
+  "0x186e000": {
+    "gog": "0x186adc0",
+    "proof": "normalized-function"
+  },
+  "0x1871250": {
+    "gog": "0x186e230",
+    "proof": "instruction-reference"
+  },
+  "0x1871480": {
+    "gog": "0x186e240",
+    "proof": "instruction-reference"
+  },
+  "0x187e330": {
+    "gog": "0x187b220",
+    "proof": "normalized-function"
+  },
+  "0x1a308cb": {
+    "gog": "0x1a2dcbb",
+    "proof": "normalized-function"
+  },
+  "0x1a30980": {
+    "gog": "0x1a2dd70",
+    "proof": "normalized-function"
+  },
+  "0x1a30a9e": {
+    "gog": "0x1a2de8e",
+    "proof": "normalized-function"
+  },
+  "0x1a32da0": {
+    "gog": "0x1a30190",
+    "proof": "normalized-function"
+  },
+  "0x1a33090": {
+    "gog": "0x1a30480",
+    "proof": "normalized-function"
+  },
+  "0x1a340b0": {
+    "gog": "0x1a314a0",
+    "proof": "normalized-function"
+  },
+  "0x1a34880": {
+    "gog": "0x1a31c70",
+    "proof": "normalized-function"
+  },
+  "0x1a34d60": {
+    "gog": "0x1a32150",
+    "proof": "normalized-function"
+  },
+  "0x1a35670": {
+    "gog": "0x1a32a60",
+    "proof": "normalized-function"
+  },
+  "0x1a35f20": {
+    "gog": "0x1a33310",
+    "proof": "normalized-function"
+  },
+  "0x1a36440": {
+    "gog": "0x1a33830",
+    "proof": "normalized-function"
+  },
+  "0x1a36c10": {
+    "gog": "0x1a34000",
+    "proof": "normalized-function"
+  },
+  "0x1a37910": {
+    "gog": "0x1a34d00",
+    "proof": "normalized-function"
+  },
+  "0x1a37cc0": {
+    "gog": "0x1a350b0",
+    "proof": "normalized-function"
+  },
+  "0x1a3b6c0": {
+    "gog": "0x1a38ab0",
+    "proof": "normalized-function"
+  },
+  "0x1a3be50": {
+    "gog": "0x1a39240",
+    "proof": "normalized-function"
+  },
+  "0x1a3cb60": {
+    "gog": "0x1a39f50",
+    "proof": "normalized-function"
+  },
+  "0x1ade630": {
+    "gog": "0x1adc450",
+    "proof": "normalized-function"
+  },
+  "0x1ccd5a0": {
+    "gog": "0x1ccb3a0",
+    "proof": "normalized-function"
+  },
+  "0x1e31170": {
+    "gog": "0x1e2f120",
+    "proof": "normalized-function"
+  },
+  "0x201e3d8": {
+    "gog": "0x201c4d8",
+    "proof": "instruction-reference"
+  },
+  "0x21508f8": {
+    "gog": "0x214ec28",
+    "proof": "instruction-reference"
+  },
+  "0x21ab128": {
+    "gog": "0x21a9468",
+    "proof": "instruction-reference"
+  },
+  "0x21ac280": {
+    "gog": "0x21aa5c0",
+    "proof": "instruction-reference"
+  },
+  "0x2234300": {
+    "gog": "0x2232660",
+    "proof": "instruction-reference"
+  },
+  "0x2235890": {
+    "gog": "0x2233bf0",
+    "proof": "instruction-reference"
+  },
+  "0x2237f00": {
+    "gog": "0x2236260",
+    "proof": "instruction-reference"
+  },
+  "0x223f470": {
+    "gog": "0x223d7d0",
+    "proof": "instruction-reference"
+  },
+  "0x2240888": {
+    "gog": "0x223ebe8",
+    "proof": "instruction-reference"
+  },
+  "0x2240978": {
+    "gog": "0x223ecd8",
+    "proof": "instruction-reference"
+  },
+  "0x2241010": {
+    "gog": "0x223f370",
+    "proof": "instruction-reference"
+  },
+  "0x2243f78": {
+    "gog": "0x22422d8",
+    "proof": "instruction-reference"
+  },
+  "0x2245608": {
+    "gog": "0x2243968",
+    "proof": "instruction-reference"
+  },
+  "0x22456f8": {
+    "gog": "0x2243a58",
+    "proof": "instruction-reference"
+  },
+  "0x2247008": {
+    "gog": "0x2245368",
+    "proof": "instruction-reference"
+  },
+  "0x224a888": {
+    "gog": "0x2248be8",
+    "proof": "instruction-reference"
+  },
+  "0x224a9f0": {
+    "gog": "0x2248d50",
+    "proof": "instruction-reference"
+  },
+  "0x224b730": {
+    "gog": "0x2249a90",
+    "proof": "instruction-reference"
+  },
+  "0x224b820": {
+    "gog": "0x2249b80",
+    "proof": "instruction-reference"
+  },
+  "0x224d0a0": {
+    "gog": "0x224b400",
+    "proof": "instruction-reference"
+  },
+  "0x224d3e8": {
+    "gog": "0x224b748",
+    "proof": "instruction-reference"
+  },
+  "0x224e830": {
+    "gog": "0x224cb90",
+    "proof": "instruction-reference"
+  },
+  "0x2257b40": {
+    "gog": "0x2255ea0",
+    "proof": "instruction-reference"
+  },
+  "0x2257c30": {
+    "gog": "0x2255f90",
+    "proof": "instruction-reference"
+  },
+  "0x2257d20": {
+    "gog": "0x2256080",
+    "proof": "instruction-reference"
+  },
+  "0x22583c0": {
+    "gog": "0x2256720",
+    "proof": "instruction-reference"
+  },
+  "0x22584b0": {
+    "gog": "0x2256810",
+    "proof": "instruction-reference"
+  },
+  "0x22585a0": {
+    "gog": "0x2256900",
+    "proof": "instruction-reference"
+  },
+  "0x225c828": {
+    "gog": "0x225ab88",
+    "proof": "instruction-reference"
+  },
+  "0x225ca20": {
+    "gog": "0x225ad80",
+    "proof": "instruction-reference"
+  },
+  "0x2263430": {
+    "gog": "0x2261790",
+    "proof": "instruction-reference"
+  },
+  "0x2263520": {
+    "gog": "0x2261880",
+    "proof": "instruction-reference"
+  },
+  "0x2263610": {
+    "gog": "0x2261970",
+    "proof": "instruction-reference"
+  },
+  "0x22b7668": {
+    "gog": "0x22b5a68",
+    "proof": "instruction-reference"
+  },
+  "0x22b76e8": {
+    "gog": "0x22b5ae8",
+    "proof": "instruction-reference"
+  },
+  "0x27aa228": {
+    "gog": "0x27a84c8",
+    "proof": "unique-enum-label"
+  },
+  "0x282ae00": {
+    "gog": "0x28290b0",
+    "proof": "instruction-reference"
+  },
+  "0x2835570": {
+    "gog": "0x2833820",
+    "proof": "instruction-reference"
+  },
+  "0x2835598": {
+    "gog": "0x2833848",
+    "proof": "instruction-reference"
+  },
+  "0x28355c0": {
+    "gog": "0x2833870",
+    "proof": "instruction-reference"
+  },
+  "0x2835618": {
+    "gog": "0x28338c8",
+    "proof": "instruction-reference"
+  },
+  "0x284ffc8": {
+    "gog": "0x284e448",
+    "proof": "instruction-reference"
+  },
+  "0x2850068": {
+    "gog": "0x284e4e8",
+    "proof": "layout-pointer-and-record"
+  },
+  "0x2850090": {
+    "gog": "0x284e510",
+    "proof": "verified-layout-record"
+  },
+  "0x28500e0": {
+    "gog": "0x284e560",
+    "proof": "layout-pointer-and-record"
+  },
+  "0x2850230": {
+    "gog": "0x284e6b0",
+    "proof": "unique-layout-label"
+  },
+  "0x300f600": {
+    "gog": "0x300d8d0",
+    "proof": "reflection-type-name-offset-size"
+  },
+  "0x3035ad8": {
+    "gog": "0x3033da8",
+    "proof": "reflection-type-name-offset-size"
+  },
+  "0x3035f10": {
+    "gog": "0x30341e0",
+    "proof": "reflection-type-name-offset-size"
+  },
+  "0x307b400": {
+    "gog": "0x30796d0",
+    "proof": "reflection-type-name-offset-size"
+  },
+  "0x30aa120": {
+    "gog": "0x30a83f0",
+    "proof": "reflection-type-name-offset-size"
+  },
+  "0x30aa1f8": {
+    "gog": "0x30a84c8",
+    "proof": "reflection-type-name-offset-size"
+  },
+  "0x30aacd8": {
+    "gog": "0x30a8fa8",
+    "proof": "reflection-type-name-offset-size"
+  },
+  "0x31e3048": {
+    "gog": "0x31e1488",
+    "proof": "reflection-type-name-offset-size"
+  },
+  "0x31e4638": {
+    "gog": "0x31e2a78",
+    "proof": "reflection-type-name-offset-size"
+  },
+  "0x3206230": {
+    "gog": "0x3204670",
+    "proof": "reflection-type-name-offset-size"
+  },
+  "0x3519988": {
+    "gog": "0x3517988",
+    "proof": "enum-name-and-value"
+  },
+  "0x3519998": {
+    "gog": "0x3517998",
+    "proof": "enum-name-and-value"
+  },
+  "0x35199a8": {
+    "gog": "0x35179a8",
+    "proof": "enum-name-and-value"
+  },
+  "0x35eb8c0": {
+    "gog": "0x35e98c0",
+    "proof": "instruction-reference"
+  },
+  "0x360f610": {
+    "gog": "0x360d600",
+    "proof": "instruction-reference"
+  },
+  "0x360f630": {
+    "gog": "0x360d620",
+    "proof": "instruction-reference"
+  },
+  "0x36111e8": {
+    "gog": "0x360f1d8",
+    "proof": "instruction-reference"
+  },
+  "0x384b438": {
+    "gog": "0x3849428",
+    "proof": "referenced-object-field"
+  },
+  "0x571d2b0": {
+    "gog": "0x571b230",
+    "proof": "instruction-reference"
+  },
+  "0x571d2f0": {
+    "gog": "0x571b270",
+    "proof": "instruction-reference"
+  },
+  "0x5b0f6d0": {
+    "gog": "0x5b0d5d0",
+    "proof": "instruction-reference"
+  },
+  "0x5b56f70": {
+    "gog": "0x5b54e70",
+    "proof": "instruction-reference"
+  },
+  "0x5b5ec80": {
+    "gog": "0x5b5cb80",
+    "proof": "instruction-reference"
+  },
+  "0x5b64540": {
+    "gog": "0x5b62440",
+    "proof": "instruction-reference"
+  },
+  "0x5ba9c44": {
+    "gog": "0x5ba7b44",
+    "proof": "instruction-reference"
+  },
+  "0x5baa3c0": {
+    "gog": "0x5ba82c0",
+    "proof": "referenced-object-field"
+  },
+  "0x5baa460": {
+    "gog": "0x5ba8360",
+    "proof": "instruction-reference"
+  },
+  "0x5baa5a0": {
+    "gog": "0x5ba84a0",
+    "proof": "instruction-reference"
+  },
+  "0x5baa640": {
+    "gog": "0x5ba8540",
+    "proof": "referenced-object-field"
+  },
+  "0x5baa6e4": {
+    "gog": "0x5ba85e4",
+    "proof": "instruction-reference"
+  },
+  "0x5baa784": {
+    "gog": "0x5ba8684",
+    "proof": "instruction-reference"
+  },
+  "0x5baa824": {
+    "gog": "0x5ba8724",
+    "proof": "instruction-reference"
+  },
+  "0x5baa8c4": {
+    "gog": "0x5ba87c4",
+    "proof": "instruction-reference"
+  },
+  "0x5baa964": {
+    "gog": "0x5ba8864",
+    "proof": "instruction-reference"
+  },
+  "0x5baaa04": {
+    "gog": "0x5ba8904",
+    "proof": "instruction-reference"
+  },
+  "0x5baaaa4": {
+    "gog": "0x5ba89a4",
+    "proof": "referenced-object-field"
+  },
+  "0x5bae5f0": {
+    "gog": "0x5bac4f0",
+    "proof": "instruction-reference"
+  },
+  "0x5baf7b0": {
+    "gog": "0x5bad6b0",
+    "proof": "instruction-reference"
+  },
+  "0x5bafaf0": {
+    "gog": "0x5bad9f0",
+    "proof": "referenced-object-field"
+  },
+  "0x5bcffd0": {
+    "gog": "0x5bcded0",
+    "proof": "instruction-reference"
+  },
+  "0x5bd0110": {
+    "gog": "0x5bce010",
+    "proof": "referenced-object-field"
+  },
+  "0x5d4f320": {
+    "gog": "0x5d4d220",
+    "proof": "instruction-reference"
+  },
+  "0x5da7670": {
+    "gog": "0x5da5570",
+    "proof": "instruction-reference"
+  },
+  "0x5da7710": {
+    "gog": "0x5da5610",
+    "proof": "instruction-reference"
+  },
+  "0x5da77b0": {
+    "gog": "0x5da56b0",
+    "proof": "instruction-reference"
+  },
+  "0x5da7850": {
+    "gog": "0x5da5750",
+    "proof": "instruction-reference"
+  },
+  "0x5faa124": {
+    "gog": "0x5fa8024",
+    "proof": "instruction-reference"
+  },
+  "0x5faa3a4": {
+    "gog": "0x5fa82a4",
+    "proof": "referenced-object-field"
+  },
+  "0x5faa4e0": {
+    "gog": "0x5fa83e0",
+    "proof": "instruction-reference"
+  },
+  "0x5faa580": {
+    "gog": "0x5fa8480",
+    "proof": "referenced-object-field"
+  },
+  "0x5faa800": {
+    "gog": "0x5fa8700",
+    "proof": "referenced-object-field"
+  },
+  "0x5faaa84": {
+    "gog": "0x5fa8984",
+    "proof": "referenced-object-field"
+  },
+  "0x5fb88a4": {
+    "gog": "0x5fb67a4",
+    "proof": "instruction-reference"
+  },
+  "0x5fb8944": {
+    "gog": "0x5fb6844",
+    "proof": "instruction-reference"
+  },
+  "0x5fb8a80": {
+    "gog": "0x5fb6980",
+    "proof": "instruction-reference"
+  },
+  "0x5fb8b20": {
+    "gog": "0x5fb6a20",
+    "proof": "instruction-reference"
+  },
+  "0x66d9380": {
+    "gog": "0x66d7280",
+    "proof": "instruction-reference"
+  },
+  "0x66db180": {
+    "gog": "0x66d9080",
+    "proof": "instruction-reference"
+  },
+  "0x66dd200": {
+    "gog": "0x66db100",
+    "proof": "instruction-reference"
+  },
+  "0x6727970": {
+    "gog": "0x6725870",
+    "proof": "instruction-reference"
+  },
+  "0x6727e70": {
+    "gog": "0x6725d70",
+    "proof": "instruction-reference"
+  },
+  "0x67288e0": {
+    "gog": "0x67267e0",
+    "proof": "instruction-reference"
+  },
+  "0x6728ca0": {
+    "gog": "0x6726ba0",
+    "proof": "instruction-reference"
+  },
+  "0x6728df0": {
+    "gog": "0x6726cf0",
+    "proof": "instruction-reference"
+  },
+  "0x672b5c0": {
+    "gog": "0x67294c0",
+    "proof": "instruction-reference"
+  },
+  "0x672bae0": {
+    "gog": "0x67299e0",
+    "proof": "instruction-reference"
+  },
+  "0x672bc30": {
+    "gog": "0x6729b30",
+    "proof": "instruction-reference"
+  },
+  "0x6c0b620": {
+    "gog": "0x6c09520",
+    "proof": "instruction-reference"
+  },
+  "0x6c0b830": {
+    "gog": "0x6c09730",
+    "proof": "instruction-reference"
+  },
+  "0x6eac480": {
+    "gog": "0x6eaa380",
+    "proof": "instruction-reference"
+  },
+  "0x6eacb90": {
+    "gog": "0x6eaaa90",
+    "proof": "instruction-reference"
+  },
+  "0x6fd58a0": {
+    "gog": "0x6fd37a0",
+    "proof": "instruction-reference"
+  },
+  "0x7061830": {
+    "gog": "0x705f730",
+    "proof": "instruction-reference"
+  },
+  "0x726c384": {
+    "gog": "0x726a284",
+    "proof": "referenced-object-field"
+  }
+}

@@ -4,6 +4,7 @@
 #include "../weapon/AerDrawModel.h"
 #include "../weapon/AerWeaponAttachments.h"
 #include "NativeStereo.h"
+#include "../common/DoomBuild.h"
 #include "../sfs/NativeSfs.h"
 #include "../hands/HandSceneDepthTracker.h"
 #include "NativeHandSceneTarget.h"
@@ -146,7 +147,7 @@ static std::mutex submissionMutex;
 static std::set<VkCommandBuffer> recordedCommands,submittedCommands;
 static std::set<VkImageView> realStorageViews;
 static std::set<VkImage> storageSeeded;
-bool requested(){static const bool value=kharvox::runtimeFileExists(L"enable_native_stereo_backend");return value;}
+bool requested(){static const bool value=kharvox::runtimeFileExists(L"enable_native_stereo_backend")&&kharvox::game::build()!=kharvox::game::Build::Gog20250225;return value;}
 bool leftEyeOnlyDiagnostic(){return false;}
 bool stereoPreparationEnabled(){static const bool value=eyeWorkPlan(leftEyeOnlyDiagnostic(),kharvox::runtimeFileExists(L"native_test_left_eye_stereo_prep")).prepareStereo;return value;}
 bool mirrorPreparationEnabled(){static const bool value=eyeWorkPlan(leftEyeOnlyDiagnostic(),kharvox::runtimeFileExists(L"native_test_left_eye_stereo_prep"),kharvox::runtimeFileExists(L"native_test_left_eye_inputs_only")).prepareMirrors;return value;}
@@ -173,14 +174,16 @@ static bool installEngine(bool visualOnly=false){
  auto base=reinterpret_cast<unsigned char*>(GetModuleHandleW(L"DOOMx64vk.exe"));if(!base)return false;
  auto dos=reinterpret_cast<IMAGE_DOS_HEADER*>(base);if(dos->e_magic!=IMAGE_DOS_SIGNATURE)return false;
  auto nt=reinterpret_cast<IMAGE_NT_HEADERS64*>(base+dos->e_lfanew);
- if(nt->Signature!=IMAGE_NT_SIGNATURE||nt->FileHeader.TimeDateStamp!=1711036533||nt->OptionalHeader.SizeOfImage!=336990208)return false;
+ if(nt->Signature!=IMAGE_NT_SIGNATURE||kharvox::game::build()==kharvox::game::Build::Unknown)return false;
+ if(!visualOnly&&kharvox::game::build()!=kharvox::game::Build::Steam20240321)return false;
  // The Native-only light visibility correction uses the engine's real CVar
  // setter. Validate its entire body and unwind identity before installing
  // any hook or changing any CVar. A mismatch retains the untouched AER path.
- DWORD64 cvarImage{};auto cvarEntry=RtlLookupFunctionEntry(reinterpret_cast<DWORD64>(base+0x295780),&cvarImage,nullptr);
- if(!cvarEntry||cvarImage+cvarEntry->BeginAddress!=reinterpret_cast<DWORD64>(base+0x295780)||cvarEntry->EndAddress-cvarEntry->BeginAddress!=0x1bc||((base[cvarEntry->UnwindData]>>3)&UNW_FLAG_CHAININFO))return false;
- uint64_t cvarHash=14695981039346656037ull;for(size_t i=0;i<0x1bc;++i)cvarHash=(cvarHash^base[0x295780+i])*1099511628211ull;
- if(cvarHash!=0x25c4a7c50cfd75bcull)return false;
+ const auto setterRva=kharvox::game::rva(0x295780);
+ DWORD64 cvarImage{};auto cvarEntry=RtlLookupFunctionEntry(reinterpret_cast<DWORD64>(base+setterRva),&cvarImage,nullptr);
+ if(!cvarEntry||cvarImage+cvarEntry->BeginAddress!=reinterpret_cast<DWORD64>(base+setterRva)||cvarEntry->EndAddress-cvarEntry->BeginAddress!=0x1bc||((base[cvarEntry->UnwindData]>>3)&UNW_FLAG_CHAININFO))return false;
+ uint64_t cvarHash=14695981039346656037ull;for(size_t i=0;i<0x1bc;++i)cvarHash=(cvarHash^base[setterRva+i])*1099511628211ull;
+ if(cvarHash!=kharvox::game::expectedHash(0x295780,0x1bc,0x25c4a7c50cfd75bcull))return false;
  struct Target {uintptr_t rva;uint64_t hash;void* hook;void** original;};
  std::vector<Target> targets;
   if(visualOnly){
@@ -200,7 +203,8 @@ static bool installEngine(bool visualOnly=false){
   freshShadowModule=reinterpret_cast<uintptr_t>(base);
   targets.push_back({0x295780,0xf2a2ed770e7ab47full,reinterpret_cast<void*>(&hookFreshShadowSet),reinterpret_cast<void**>(&realFreshShadowSet)});
  }
- for(const auto& t:targets){
+ for(auto& t:targets){
+  t.hash=kharvox::game::expectedHash(t.rva,24,t.hash);t.rva=kharvox::game::rva(t.rva);
   DWORD64 imageBase{};auto entry=RtlLookupFunctionEntry(reinterpret_cast<DWORD64>(base+t.rva),&imageBase,nullptr);
   if(!entry||imageBase+entry->BeginAddress!=reinterpret_cast<DWORD64>(base+t.rva))return false;
   if((base[entry->UnwindData]>>3)&UNW_FLAG_CHAININFO)return false;
@@ -215,7 +219,7 @@ static bool installEngine(bool visualOnly=false){
  nativeCvarModule=reinterpret_cast<uintptr_t>(base);
  if(visualOnly&&realAerBuildViewMatrices)
   kharvoxnative::log::info("[AER-WORLD-SOURCE] r262 validated read-only producer observer ACTIVE; no camera writes or inline override");
- nativeCvarSet=realFreshShadowSet?realFreshShadowSet:reinterpret_cast<decltype(nativeCvarSet)>(base+0x295780);
+ nativeCvarSet=realFreshShadowSet?realFreshShadowSet:reinterpret_cast<decltype(nativeCvarSet)>(base+setterRva);
  final_stage_hook_installed=false; // Completion is replayed at the Vulkan pass boundary.
  return true;
 }
@@ -230,7 +234,7 @@ void setDevice(VkInstance instance,VkPhysicalDevice physical,VkDevice device,PFN
    const auto controls=rendererStartupControls(false,false,false,false,false,debugDisableAa(),kharvox::sfs::vrEnabled());
    const bool ok=initializeStartupControls(true,controls,[](const StartupControl& c,std::string& value){
     value=shadowAuditValue(c.rva,c.name);return value!="unavailable";
-   },[](const StartupControl& c){return nativeCvarSet(reinterpret_cast<void*>(nativeCvarModule+c.rva),c.value,false);
+   },[](const StartupControl& c){return nativeCvarSet(reinterpret_cast<void*>(nativeCvarModule+kharvox::game::rva(c.rva)),c.value,false);
    },[](const StartupControl& c,const std::string& before,const std::string& after){
     kharvoxnative::log::info(std::format("[RENDER-CVAR] renderer=AER startup name={} enforced={} before={} actual={} verified={} beforeGameQueue=true",c.name,c.value,before,after,after==c.value));
    });

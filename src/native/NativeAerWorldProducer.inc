@@ -4,13 +4,13 @@ using AerModelMatrixFn=void(__fastcall*)(void*,const void*,void*,float,float,flo
 static AerModelMatrixFn realAerModelMatrix{};
 static kharvox::AerWeaponAttachments aerWeaponAttachments;
 static bool validateAerModelMatrix(unsigned char* base){
- DWORD64 image{};const auto address=reinterpret_cast<DWORD64>(base+0x1ade630);
+ DWORD64 image{};const auto address=reinterpret_cast<DWORD64>(base+kharvox::game::rva(0x1ade630));
  const auto entry=RtlLookupFunctionEntry(address,&image,nullptr);
  if(!entry||image+entry->BeginAddress!=address||entry->EndAddress-entry->BeginAddress!=0x1d3
     ||((base[entry->UnwindData]>>3)&UNW_FLAG_CHAININFO))return false;
  uint64_t hash=14695981039346656037ull;
- for(size_t i=0;i<0x707;++i)hash=(hash^base[0x1ade630+i])*1099511628211ull;
- return hash==0x878fd78f095fbc60ull;
+ for(size_t i=0;i<0x707;++i)hash=(hash^base[kharvox::game::rva(0x1ade630)+i])*1099511628211ull;
+ return hash==kharvox::game::expectedHash(0x1ade630,0x707,0x878fd78f095fbc60ull);
 }
 static void __fastcall hookAerModelMatrix(void* output,const void* rawModel,void* rawView,
     float x,float y,float z,bool jitter){
@@ -124,13 +124,13 @@ static void __fastcall hookAerModelMatrix(void* output,const void* rawModel,void
 }
 static AerBuildViewMatricesFn realAerBuildViewMatrices{};
 static bool validateAerWorldProducer(unsigned char* base){
- DWORD64 image{};const auto address=reinterpret_cast<DWORD64>(base+0x1830b80);
+ DWORD64 image{};const auto address=reinterpret_cast<DWORD64>(base+kharvox::game::rva(0x1830b80));
  const auto entry=RtlLookupFunctionEntry(address,&image,nullptr);
  if(!entry||image+entry->BeginAddress!=address||entry->EndAddress-entry->BeginAddress!=0x101
     ||((base[entry->UnwindData]>>3)&UNW_FLAG_CHAININFO))return false;
  uint64_t hash=14695981039346656037ull;
- for(size_t i=0;i<0x101;++i)hash=(hash^base[0x1830b80+i])*1099511628211ull;
- return hash==0x4b471325a3428ebfull;
+ for(size_t i=0;i<0x101;++i)hash=(hash^base[kharvox::game::rva(0x1830b80)+i])*1099511628211ull;
+ return hash==kharvox::game::expectedHash(0x1830b80,0x101,0x4b471325a3428ebfull);
 }
 static void traceAerWorldProducer(unsigned kind,uintptr_t view,const float* data,size_t count,
     int status,const kharvox::AerWorldView& source,const kharvox::AerWorldView& target){

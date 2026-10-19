@@ -739,6 +739,11 @@ VKAPI_ATTR VkResult VKAPI_CALL vkNegotiateLoaderLayerInterfaceVersion(VkNegotiat
     if(v->loaderLayerInterfaceVersion>2)v->loaderLayerInterfaceVersion=2;
     v->pfnGetInstanceProcAddr=vkGetInstanceProcAddr; v->pfnGetDeviceProcAddr=vkGetDeviceProcAddr; v->pfnGetPhysicalDeviceProcAddr=nullptr;
     if(!isDoomProcess())return VK_SUCCESS;
+    if(kharvox::game::build()==kharvox::game::Build::Unknown){
+        logLine("[GAME-BUILD] unsupported or modified executable; no engine hooks installed",true);
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    logLine(std::string("[GAME-BUILD] validated ")+kharvox::game::name(),true);
     // Engine detours and XInput imports outlive Vulkan instance destruction.
     // Retain their code until process exit, before installing any engine hook.
     HMODULE pinnedModule{};

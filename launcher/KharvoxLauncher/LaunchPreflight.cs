@@ -125,23 +125,25 @@ internal static class LaunchPreflight
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CloseHandle(IntPtr handle);
 
-    public static LaunchPreflightResult Inspect(string gameExe)
+    public static LaunchPreflightResult Inspect(string gameExe, bool usesSteam = true)
     {
         var launcherElevation = GetCurrentProcessElevation();
         var doomRunAsAdmin = ProbeDoomRunAsAdmin(gameExe, ReadRegistryValue);
-        var steamElevation = ProbeRunningSteamElevation();
-        return Evaluate(launcherElevation, doomRunAsAdmin, steamElevation);
+        var steamElevation = usesSteam ? ProbeRunningSteamElevation() : ProbeBoolean.False;
+        return Evaluate(launcherElevation, doomRunAsAdmin, steamElevation, usesSteam);
     }
 
     internal static LaunchPreflightResult Evaluate(ProbeBoolean launcherElevation,
-        DoomRunAsAdminProbe doomRunAsAdmin, ProbeBoolean steamElevation)
+        DoomRunAsAdminProbe doomRunAsAdmin, ProbeBoolean steamElevation, bool usesSteam = true)
     {
+        if (!usesSteam) steamElevation = ProbeBoolean.False;
+        var applications = usesSteam ? "KHARVOX, Steam, and DOOM" : "KHARVOX and DOOM";
         if (launcherElevation == ProbeBoolean.True)
             return new LaunchPreflightResult(launcherElevation, doomRunAsAdmin,
                 steamElevation, false, "launcher-elevated",
                 "KHARVOX is running as administrator. The Windows Vulkan loader ignores " +
                 "the user-specific KHARVOX layer registration (HKCU) for elevated processes. " +
-                "Close KHARVOX and start KHARVOX, Steam, and DOOM normally, without " +
+                "Close KHARVOX and start " + applications + " normally, without " +
                 "'Run as administrator'.");
 
         if (launcherElevation == ProbeBoolean.Unknown)
@@ -149,7 +151,7 @@ internal static class LaunchPreflight
                 steamElevation, false, "launcher-elevation-unknown",
                 "KHARVOX could not determine whether the launcher is running as administrator. " +
                 "For a reliable Vulkan-layer launch, start KHARVOX normally and make sure " +
-                "'Run as administrator' is disabled for KHARVOX, Steam, and DOOM.");
+                "'Run as administrator' is disabled for " + applications + ".");
 
         if (doomRunAsAdmin.State == ProbeBoolean.True)
             return new LaunchPreflightResult(launcherElevation, doomRunAsAdmin,
@@ -332,14 +334,15 @@ internal static class VulkanLoaderStartupDiagnosis
         || loaderLog.IndexOf("KharvoxLayer.dll", StringComparison.OrdinalIgnoreCase) >= 0;
 
     internal static string AddToFailureMessage(string baseMessage,
-        string capturedLoaderLog, bool elevationProven)
+        string capturedLoaderLog, bool elevationProven, bool usesSteam = true)
     {
         if (ShowsKharvoxLayer(capturedLoaderLog)) return baseMessage;
 
         var cause = elevationProven
             ? " The launch preflight confirmed elevated process rights as the cause."
-            : " Elevated process rights are one possible cause; make sure KHARVOX, Steam, " +
-              "and DOOM are not started with 'Run as administrator'.";
+            : " Elevated process rights are one possible cause; make sure " +
+              (usesSteam ? "KHARVOX, Steam, and DOOM" : "KHARVOX and DOOM") +
+              " are not started with 'Run as administrator'.";
         return baseMessage
             + " The captured Vulkan-loader log shows that the KHARVOX layer was not loaded."
             + cause;

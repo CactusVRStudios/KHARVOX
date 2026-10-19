@@ -1,4 +1,5 @@
 #pragma once
+#include "../common/DoomBuild.h"
 #include "EngineMemoryCapacity.h"
 #include "../common/RuntimeLog.h"
 #include <windows.h>
@@ -60,7 +61,7 @@ inline void* __fastcall guardedEngineMemoryAllocate(void* output,uint32_t bytes,
 
 inline bool installEngineMemoryGuard(uint8_t* base,uint32_t imageSize,bool nativeSfsVr=false) {
     if(engineMemoryAllocateOriginal)return true;
-    if(imageSize<0x571d2f0)return false;
+    if(imageSize<kharvox::game::rva(0x571d2f0))return false;
     // Full wrapper signature verifies argument forwarding, allocator address
     // and called allocator RVA for the supported DOOM 20240321 executable.
     constexpr uint8_t signature[]={
@@ -70,19 +71,19 @@ inline bool installEngineMemoryGuard(uint8_t* base,uint32_t imageSize,bool nativ
         0x89,0x44,0x24,0x28,0x44,0x89,0x4c,0x24,0x20,0x45,0x8b,0xc8,0x44,0x8b,0xc2,
         0x48,0x8b,0xd1,0x48,0x8d,0x0d,0xc2,0xa4,0xce,0x03,0xe8,0x2d,0xda,0xff,0xff,
         0x48,0x8b,0xc3,0x48,0x83,0xc4,0x50,0x5b,0xc3};
-    void* target=base+0x1a32da0;
-    if(std::memcmp(target,signature,sizeof(signature)))return false;
+    void* target=base+kharvox::game::rva(0x1a32da0);
+    if(kharvox::game::compare(target,signature,sizeof(signature)))return false;
     if(nativeSfsVr){
         // Validate bit-0 extraction and its branch into the native standalone
         // vkAllocateMemory path, plus the non-pooled ownership record.
         constexpr uint8_t flagsCode[]={0x44,0x8b,0x8d,0x50,0x01,0,0,0x45,0x0f,0xb6,0xc1,0x41,0x80,0xe0,0x01};
         constexpr uint8_t branchCode[]={0x45,0x84,0xc0,0x0f,0x84,0xb1,0x01,0,0};
         constexpr uint8_t ownershipCode[]={0x41,0xff,0x47,0x04,0x4d,0x01,0x67,0x08,0x48,0x89,0x7d,0x88,0xc6,0x45,0xa0,0,0x33,0xff,0x89,0x7d,0xb0,0x48,0x89,0x7d,0x90,0x4c,0x89,0x65,0xa8};
-        if(std::memcmp(base+0x1a308cb,flagsCode,sizeof(flagsCode))||std::memcmp(base+0x1a30980,branchCode,sizeof(branchCode))||std::memcmp(base+0x1a30a9e,ownershipCode,sizeof(ownershipCode)))return false;
+        if(kharvox::game::compare(base+kharvox::game::rva(0x1a308cb),flagsCode,sizeof(flagsCode))||kharvox::game::compare(base+kharvox::game::rva(0x1a30980),branchCode,sizeof(branchCode))||kharvox::game::compare(base+kharvox::game::rva(0x1a30a9e),ownershipCode,sizeof(ownershipCode)))return false;
     }
     if(MH_CreateHook(target,reinterpret_cast<void*>(&guardedEngineMemoryAllocate),
         reinterpret_cast<void**>(&engineMemoryAllocateOriginal))!=MH_OK)return false;
-    engineMemoryAllocator=base+0x571d2b0;
+    engineMemoryAllocator=base+kharvox::game::rva(0x571d2b0);
     engineMemorySfsDedicated=nativeSfsVr;
     if(MH_EnableHook(target)==MH_OK)return true;
     MH_RemoveHook(target); engineMemoryAllocateOriginal=nullptr; engineMemoryAllocator=nullptr;

@@ -1,4 +1,5 @@
 #pragma once
+#include "../common/DoomBuild.h"
 #include <windows.h>
 #include <MinHook.h>
 #include <cstdint>
@@ -23,11 +24,11 @@ inline bool installIndependentEngineSize(uint32_t width,uint32_t height,bool nat
     auto dos=reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
     if(!base||dos->e_magic!=IMAGE_DOS_SIGNATURE)return false;
     auto nt=reinterpret_cast<const IMAGE_NT_HEADERS64*>(base+dos->e_lfanew);
-    if(nt->Signature!=IMAGE_NT_SIGNATURE||nt->OptionalHeader.SizeOfImage<0x384b438)return false;
+    if(nt->Signature!=IMAGE_NT_SIGNATURE||nt->OptionalHeader.SizeOfImage<kharvox::game::rva(0x384b438))return false;
     constexpr uint8_t widthCode[]={0x8b,0x05,0xaa,0x9f,0xfd,0x01,0xc3,0xcc};
     constexpr uint8_t heightCode[]={0x8b,0x05,0xde,0xa1,0xfd,0x01,0xc3,0xcc};
-    void* widthTarget=base+0x1871480;void* heightTarget=base+0x1871250;
-    if(std::memcmp(widthTarget,widthCode,sizeof(widthCode))||std::memcmp(heightTarget,heightCode,sizeof(heightCode)))return false;
+    void* widthTarget=base+kharvox::game::rva(0x1871480);void* heightTarget=base+kharvox::game::rva(0x1871250);
+    if(kharvox::game::compare(widthTarget,widthCode,sizeof(widthCode))||kharvox::game::compare(heightTarget,heightCode,sizeof(heightCode)))return false;
     auto initialized=MH_Initialize();if(initialized!=MH_OK&&initialized!=MH_ERROR_ALREADY_INITIALIZED)return false;
     if(!installEngineMemoryGuard(base,nt->OptionalHeader.SizeOfImage,nativeSfsVr))return false;
     if(!installVirtualTextureGuard(base,nt->OptionalHeader.SizeOfImage))return false;

@@ -7,6 +7,13 @@ internal static class Program
     {
         if (args.Length > 0 && args[0] == "--vr-intro") return VrIntroHost.Run(args.Skip(1).ToArray());
 
+        if (args.Length == 2 && args[0] == "--verify-game")
+        {
+            var report = Path.Combine(Path.GetTempPath(), "KHARVOX-game-build-check.log");
+            try { File.WriteAllText(report, DoomBuildProfile.Inspect(args[1]).ToString()); return 0; }
+            catch (Exception e) { File.WriteAllText(report, e.ToString()); return 1; }
+        }
+
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
 

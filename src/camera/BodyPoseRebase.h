@@ -14,4 +14,17 @@ inline float rebaseHeadToBody(float referenceYaw,float currentYaw,
     forward=c*f+s*l;left=-s*f+c*l;
     return delta;
 }
+// Owed stick turn at render time: published remaining yaw + rate x age of
+// the publication. The render pass can read a publication late (or the pair
+// snapshot's), so without the age term a stale read is a zero step, then a
+// double. No body term: rebaseHeadToBody already cancels the carrier's body
+// motion. Age clamped to 100 ms.
+inline float extrapolateArtificialTurn(float artificialYaw,
+    float rateDegreesPerSecond=0.f,float elapsedSeconds=0.f){
+    if(!std::isfinite(artificialYaw)||artificialYaw==0.f)return artificialYaw;
+    float extrapolated=0.f;
+    if(std::isfinite(rateDegreesPerSecond)&&std::isfinite(elapsedSeconds)&&elapsedSeconds>0.f)
+        extrapolated=rateDegreesPerSecond*(elapsedSeconds<0.1f?elapsedSeconds:0.1f);
+    return std::remainder(artificialYaw+extrapolated,360.0f);
+}
 }

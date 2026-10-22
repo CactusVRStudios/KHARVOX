@@ -253,7 +253,7 @@ struct State {
     TurnMode turnMode{TurnMode::Smooth}; float turnDeadzone{.35f}; float smoothTurnDegreesPerSecond{230.f}; float snapTurnDegrees{60.f}; bool snapTurnArmed{true};
     kharvox::MovementDirectionMode movementDirectionMode{kharvox::MovementDirectionMode::Head}; bool offHandMovementDirectionStateKnown{},offHandMovementDirectionActive{};
     bool snapTurnActivationPending{}; float snapTurnPendingDegrees{}; std::uint64_t snapTurnGeneration{},snapTurnStereoCompensations{}; bool snapTurnStereoTransitionActive{};
-    bool artificialTurnActive{}; float artificialTurnRemainingDegrees{}; float artificialTurnPublishedDegrees{}; float artificialTurnAccumulatedDegrees{}; float artificialTurnTotalDegrees{}; XrTime previousTurnDisplayTime{};
+    bool artificialTurnActive{}; float artificialTurnRemainingDegrees{}; float artificialTurnRateDegreesPerSecond{}; long long artificialTurnInputQpc{}; long long artificialTurnTargetQpc{}; float artificialTurnPublishedDegrees{}; float artificialTurnAccumulatedDegrees{}; float artificialTurnTotalDegrees{}; XrTime previousTurnDisplayTime{};
     float acceptedPhysicalYaw{}; float previousBodyYaw{}; bool previousBodyYawValid{};
     float bodyFollowTurnX{}; bool previousManualTurnActive{}; float bodyYawPerPositiveStick{-1.f}; bool bodyYawStickSignConfirmed{};
     kharvox::PostCinematicYawGuard postCinematicYawGuard{};
@@ -950,7 +950,7 @@ float bodyYawDegrees(const float axis[9]){constexpr float radiansToDegrees=57.29
 float physicalResidualHeadYaw(){return wrapDegrees(s.head.yaw-s.acceptedPhysicalYaw);}
 float artificialTurnVisualYaw(){return s.artificialTurnActive?s.artificialTurnRemainingDegrees:0.f;}
 float renderResidualHeadYaw(){return wrapDegrees(physicalResidualHeadYaw()+artificialTurnVisualYaw());}
-void publishArtificialTurnYaw(){s.artificialTurnPublishedDegrees=artificialTurnVisualYaw();KharvoxCameraSetArtificialTurnYaw(s.artificialTurnPublishedDegrees);}
+void publishArtificialTurnYaw(){s.artificialTurnPublishedDegrees=artificialTurnVisualYaw();KharvoxCameraSetArtificialTurnYaw(s.artificialTurnPublishedDegrees,s.artificialTurnActive?s.artificialTurnRateDegreesPerSecond:0.f,s.artificialTurnActive?s.artificialTurnTargetQpc:0);}
 void updateAcceptedPhysicalYaw(bool gameplay,bool bodyPoseValid,const float bodyAxis[9],XrTime displayTime){
     if(!bodyPoseValid){s.previousBodyYawValid=false;s.bodyFollowTurnX=0.f;s.previousManualTurnActive=false;return;}
     const float currentBodyYaw=bodyYawDegrees(bodyAxis);
@@ -1385,15 +1385,37 @@ float nativeManualTurnX(XrTime displayTime,bool active){
     float frameSeconds=0.f;
     if(s.previousTurnDisplayTime>0&&displayTime>s.previousTurnDisplayTime)frameSeconds=std::clamp(float(displayTime-s.previousTurnDisplayTime)*1e-9f,0.f,.05f);
     s.previousTurnDisplayTime=displayTime;
+    // SFS: advance the target on QPC, the clock the render pass extrapolates
+    // on; displayTime steps don't match render timing under external pacing.
+    // AER keeps the displayTime step and does not extrapolate.
+    const bool sfsTurn=kharvox::sfs::vrEnabled();
+    LARGE_INTEGER turnNow{};QueryPerformanceCounter(&turnNow);
+    static const double turnTicksPerSecond=[](){LARGE_INTEGER f{};QueryPerformanceFrequency(&f);return double(f.QuadPart);}();
+    float wallSeconds=0.f;
+    if(s.artificialTurnInputQpc>0&&turnNow.QuadPart>s.artificialTurnInputQpc)wallSeconds=std::clamp(float(double(turnNow.QuadPart-s.artificialTurnInputQpc)/turnTicksPerSecond),0.f,.05f);
+    s.artificialTurnInputQpc=turnNow.QuadPart;
+    const float turnSeconds=sfsTurn?wallSeconds:frameSeconds;
     if(s.turnMode==TurnMode::Off){s.snapTurnArmed=true;s.snapTurnActivationPending=false;s.artificialTurnActive=false;s.artificialTurnRemainingDegrees=0.f;publishArtificialTurnYaw();return 0.f;}
     if(s.turnMode==TurnMode::Smooth){
-        if(x!=0.f&&frameSeconds>0.f){
+        if(x!=0.f&&turnSeconds>0.f){
             const float openXrMagnitude=(std::abs(x)-s.turnDeadzone)/(1.f-s.turnDeadzone);
-            const float artificialDelta=s.bodyYawPerPositiveStick*std::copysign(openXrMagnitude*s.smoothTurnDegreesPerSecond*frameSeconds,x);
+            const float artificialDelta=s.bodyYawPerPositiveStick*std::copysign(openXrMagnitude*s.smoothTurnDegreesPerSecond*turnSeconds,x);
+            s.artificialTurnTargetQpc=turnNow.QuadPart;
+            s.artificialTurnRateDegreesPerSecond=s.bodyYawPerPositiveStick*std::copysign(openXrMagnitude*s.smoothTurnDegreesPerSecond,x);
             s.artificialTurnRemainingDegrees=wrapDegrees(s.artificialTurnRemainingDegrees+artificialDelta);
             s.artificialTurnTotalDegrees=wrapDegrees(
                 s.artificialTurnTotalDegrees+artificialDelta);
             s.artificialTurnActive=true;
+        }else if(x==0.f){
+            // Release: the render pass already extrapolated up to now, so stop
+            // the target here, not at the last input.
+            if(sfsTurn&&s.artificialTurnActive&&s.artificialTurnRateDegreesPerSecond!=0.f&&wallSeconds>0.f){
+                const float heldDelta=s.artificialTurnRateDegreesPerSecond*wallSeconds;
+                s.artificialTurnRemainingDegrees=wrapDegrees(s.artificialTurnRemainingDegrees+heldDelta);
+                s.artificialTurnTotalDegrees=wrapDegrees(s.artificialTurnTotalDegrees+heldDelta);
+            }
+            s.artificialTurnRateDegreesPerSecond=0.f;
+            s.artificialTurnTargetQpc=turnNow.QuadPart;
         }
     }else{
         if(std::abs(s.rightStick.x)<s.turnDeadzone*.6f)s.snapTurnArmed=true;
@@ -1403,6 +1425,8 @@ float nativeManualTurnX(XrTime displayTime,bool active){
             log("[TURN] snap queued artificialDelta="+std::to_string(s.snapTurnPendingDegrees));
         }
     }
+    // SFS: publish here too, so the render pass sees the new rate this frame.
+    if(sfsTurn)publishArtificialTurnYaw();
     if(!s.artificialTurnActive||frameSeconds<=0.f)return 0.f;
     if(s.artificialTurnPublishedDegrees*s.artificialTurnRemainingDegrees<=0.f)return 0.f;
     const float publishedCatchupDegrees=std::copysign(std::min(std::abs(s.artificialTurnPublishedDegrees),std::abs(s.artificialTurnRemainingDegrees)),s.artificialTurnRemainingDegrees);

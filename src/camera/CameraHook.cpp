@@ -55,6 +55,11 @@ std::atomic<float> headReferenceBodyYaw{};
 std::atomic<bool> headReferenceBodyValid{};
 std::atomic<float> headYaw{};
 std::atomic<float> artificialTurnYaw{};
+std::atomic<float> artificialTurnRate{};
+std::atomic<long long> artificialTurnPublishedQpc{};
+// Set when the rate drops to 0, so a snapshot taken before the release never
+// extrapolates past it.
+std::atomic<long long> artificialTurnStopQpc{};
 std::atomic<float> headPitch{};
 std::atomic<float> headRoll{};
 std::atomic<float> headForward{};
@@ -111,6 +116,8 @@ std::atomic<bool> aerRenderPairEnabled{};
 // negotiated cadence (90/120/144 Hz or otherwise) and performs late reprojection.
 std::array<std::atomic<float>, 7> aerHeadPairPose{};
 float aerHeadPairReferenceYaw{};
+float aerHeadPairRate{};
+long long aerHeadPairQpc{};
 bool aerHeadPairReferenceValid{};
 std::atomic<bool> aerHeadPairTracked{};
 std::atomic<bool> aerHeadPairSnapshotValid{};
@@ -163,6 +170,9 @@ struct RenderHeadPose {
     float referenceBodyYaw{};
     bool referenceBodyValid{};
     unsigned long long poseId{};
+    // Rate and stamp of the owed turn; the pair snapshot carries them too.
+    float artificialRate{};
+    long long artificialQpc{};
 };
 
 RenderHeadPose renderHeadPose() {
@@ -170,7 +180,7 @@ RenderHeadPose renderHeadPose() {
     const bool paired = aerRenderPairEnabled.load(std::memory_order_acquire)
         && aerHeadPairSnapshotValid.load(std::memory_order_acquire);
     if (paired) {
-        return {
+        RenderHeadPose pose{
             aerHeadPairPose[0].load(std::memory_order_relaxed),
             aerHeadPairPose[1].load(std::memory_order_relaxed),
             aerHeadPairPose[2].load(std::memory_order_relaxed),
@@ -181,8 +191,11 @@ RenderHeadPose renderHeadPose() {
             aerHeadPairTracked.load(std::memory_order_relaxed),
             aerHeadPairReferenceYaw, aerHeadPairReferenceValid, aerHeadPairPoseId
         };
+        pose.artificialRate=aerHeadPairRate;
+        pose.artificialQpc=aerHeadPairQpc;
+        return pose;
     }
-    return {
+    RenderHeadPose pose{
         headYaw.load(std::memory_order_relaxed),
         artificialTurnYaw.load(std::memory_order_relaxed),
         headPitch.load(std::memory_order_relaxed),
@@ -193,6 +206,9 @@ RenderHeadPose renderHeadPose() {
         headValid.load(std::memory_order_acquire),
         headReferenceBodyYaw.load(),headReferenceBodyValid.load(),headPoseId
     };
+    pose.artificialRate=artificialTurnRate.load(std::memory_order_relaxed);
+    pose.artificialQpc=artificialTurnPublishedQpc.load(std::memory_order_relaxed);
+    return pose;
 }
 
 void log(const std::string& text) {
@@ -700,12 +716,30 @@ bool readLivePlayerPhysicsOrigin(float origin[3], uintptr_t* ownerOut = nullptr)
     return true;
 }
 
+// Age of the owed-turn publication, capped at the release time. SFS only:
+// AER shares one snapshot across a pair rendered on two frames, so per-pass
+// extrapolation would give the two eyes different turns.
+float artificialTurnElapsedSeconds(long long publishedQpc) {
+    if (publishedQpc <= 0 || !kharvox::sfs::vrEnabled()) return 0.0f;
+    static const double frequency = [] {
+        LARGE_INTEGER f{}; QueryPerformanceFrequency(&f); return double(f.QuadPart);
+    }();
+    LARGE_INTEGER now{}; QueryPerformanceCounter(&now);
+    long long end = now.QuadPart;
+    const long long stop = artificialTurnStopQpc.load(std::memory_order_relaxed);
+    if (stop > 0 && stop < end) end = stop;
+    const double elapsed = double(end - publishedQpc) / frequency;
+    return elapsed > 0.0 ? float(elapsed) : 0.0f;
+}
+
 RenderHeadPose renderHeadPoseForBody(const float axis[9]) {
     auto head=renderHeadPose();
     if(head.valid&&head.referenceBodyValid&&KharvoxCameraGameplayActive()
         &&!KharvoxCameraCutsceneActive()&&!animatedSequenceActive.load()){
         const float bodyYaw=std::atan2(axis[1],axis[0])*57.2957795131f;
         kharvox::rebaseHeadToBody(head.referenceBodyYaw,bodyYaw,head.yaw,head.forward,head.lateral);
+        head.artificialYaw=kharvox::extrapolateArtificialTurn(head.artificialYaw,
+            head.artificialRate,artificialTurnElapsedSeconds(head.artificialQpc));
     }
     return head;
 }
@@ -1819,6 +1853,9 @@ extern "C" void __fastcall patchCamera(void* rawContext, void* rawReturnAddress)
         &&renderHead.valid&&renderHead.referenceBodyValid){
         bodyRebaseDelta=kharvox::rebaseHeadToBody(renderHead.referenceBodyYaw,currentBodyYaw,
             renderHead.yaw,renderHead.forward,renderHead.lateral);
+        renderHead.artificialYaw=kharvox::extrapolateArtificialTurn(
+            renderHead.artificialYaw,renderHead.artificialRate,
+            artificialTurnElapsedSeconds(renderHead.artificialQpc));
     }
     if(kharvox::pose_trace::active.load(std::memory_order_relaxed)){
         kharvox::pose_trace::Event e{};e.kind=kharvox::pose_trace::HeadApplied;
@@ -2028,8 +2065,19 @@ void KharvoxCameraSetHeadPose(
     headValid.store(valid, std::memory_order_release);
 }
 
-void KharvoxCameraSetArtificialTurnYaw(float yawDegrees) {
+void KharvoxCameraSetArtificialTurnYaw(float yawDegrees, float rateDegreesPerSecond, long long stampQpc) {
     std::lock_guard<std::mutex> guard(headPoseMutex);
+    LARGE_INTEGER now{}; QueryPerformanceCounter(&now);
+    const long long stamp = stampQpc > 0 ? stampQpc : now.QuadPart;
+    const float rate = std::isfinite(rateDegreesPerSecond) ? rateDegreesPerSecond : 0.0f;
+    const float previousRate = artificialTurnRate.exchange(rate, std::memory_order_relaxed);
+    if (rate == 0.0f && previousRate != 0.0f)
+        artificialTurnStopQpc.store(stamp, std::memory_order_relaxed);
+    else if (rate != 0.0f)
+        artificialTurnStopQpc.store(0, std::memory_order_relaxed);
+    // The stamp is when the target last advanced, so a republish of the same
+    // target from the head update extrapolates from the same origin.
+    artificialTurnPublishedQpc.store(stamp, std::memory_order_relaxed);
     const float previous = artificialTurnYaw.exchange(yawDegrees, std::memory_order_acq_rel);
     const bool activated = std::abs(previous) < 0.001f && std::abs(yawDegrees) >= 0.001f;
     const bool cleared = std::abs(previous) >= 0.001f && std::abs(yawDegrees) < 0.001f;
@@ -2659,6 +2707,8 @@ void KharvoxCameraSetAerRenderPair(int renderEye, bool enabled) {
         aerHeadPairPose[5].store(headLateral.load(std::memory_order_relaxed), std::memory_order_relaxed);
         aerHeadPairPose[6].store(headUp.load(std::memory_order_relaxed), std::memory_order_relaxed);
         aerHeadPairReferenceYaw=headReferenceBodyYaw.load();
+        aerHeadPairRate=artificialTurnRate.load(std::memory_order_relaxed);
+        aerHeadPairQpc=artificialTurnPublishedQpc.load(std::memory_order_relaxed);
         aerHeadPairPoseId=headPoseId;
         // The render worker can consume this ID as soon as headPoseMutex is
         // released. Register its controller sample BEFORE publishing the pair,

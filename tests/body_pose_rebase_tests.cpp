@@ -14,5 +14,24 @@ int main(){
     near(std::sin(a)*3+std::cos(a)*-2,std::sin(b)*f+std::cos(b)*l);
  }
  float yaw=15,f=3,l=4;near(kharvox::rebaseHeadToBody(0,std::numeric_limits<float>::quiet_NaN(),yaw,f,l),0);near(yaw,15);near(f,3);near(l,4);
+ // Owed turn = published + rate x age; age clamped at 100 ms; bad rate or
+ // age adds nothing; zero stays zero.
+ near(kharvox::extrapolateArtificialTurn(5.1f),5.1f);
+ near(kharvox::extrapolateArtificialTurn(-9.771f,-230.f,0.0222f),-9.771f-230.f*0.0222f);
+ near(kharvox::extrapolateArtificialTurn(-9.771f,-230.f,1.f),-9.771f-23.f);
+ near(kharvox::extrapolateArtificialTurn(5.1f,230.f,-0.01f),5.1f);
+ near(kharvox::extrapolateArtificialTurn(5.1f,std::numeric_limits<float>::quiet_NaN(),0.02f),5.1f);
+ near(kharvox::extrapolateArtificialTurn(0.f,-230.f,0.02f),0.f);
+ near(kharvox::extrapolateArtificialTurn(179.f,230.f,0.02f),-176.4f);
+ {
+  // body + rebased head + owed lands on reference + head + owed + rate x age,
+  // whatever the body did since the publication.
+  const float rate=-230.f,refBody=-142.844f,headRaw=0.5f,owed=-14.259f;
+  for(float elapsed:{0.001f,0.0222f,0.0445f})for(float bodyStep:{-3.6f,-5.3f,-10.6f,+4.0f}){
+   float head=headRaw,f=0.f,l=0.f;const float body=refBody+bodyStep;
+   kharvox::rebaseHeadToBody(refBody,body,head,f,l);
+   near(body+head+kharvox::extrapolateArtificialTurn(owed,rate,elapsed),refBody+headRaw+owed+rate*elapsed);
+  }
+ }
  std::cout<<"body pose rebase failures="<<failures<<'\n';return failures?1:0;
 }

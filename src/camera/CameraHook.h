@@ -16,7 +16,9 @@ void KharvoxCameraSetHeadPose(
     float yawDegrees, float pitchDegrees, float rollDegrees,
     float forwardUnits, float lateralUnits, float upUnits,
     bool valid, float referenceBodyYaw = 0.0f, bool referenceBodyValid = false);
-void KharvoxCameraSetArtificialTurnYaw(float yawDegrees);
+// rateDegreesPerSecond: stick rate of the owed turn (0 once released).
+// stampQpc: when the owed target last advanced.
+void KharvoxCameraSetArtificialTurnYaw(float yawDegrees, float rateDegreesPerSecond = 0.0f, long long stampQpc = 0);
 unsigned long long KharvoxCameraDiagnosticPoseId();
 // Copies only recognized, observed gameplay cameras; caller owns engine writes.
 kharvox::AerWorldViewResult KharvoxCameraAlignAerWorldView(const float pose[12],const float fov[2],

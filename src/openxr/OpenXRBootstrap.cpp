@@ -255,7 +255,7 @@ struct State {
     bool snapTurnActivationPending{}; float snapTurnPendingDegrees{}; std::uint64_t snapTurnGeneration{},snapTurnStereoCompensations{}; bool snapTurnStereoTransitionActive{};
     bool artificialTurnActive{}; float artificialTurnRemainingDegrees{}; float artificialTurnRateDegreesPerSecond{}; long long artificialTurnInputQpc{}; long long artificialTurnTargetQpc{}; float artificialTurnPublishedDegrees{}; float artificialTurnAccumulatedDegrees{}; float artificialTurnTotalDegrees{}; XrTime previousTurnDisplayTime{};
     float acceptedPhysicalYaw{}; float previousBodyYaw{}; bool previousBodyYawValid{};
-    float bodyFollowTurnX{}; bool previousManualTurnActive{}; float bodyYawPerPositiveStick{-1.f}; bool bodyYawStickSignConfirmed{};
+    float bodyFollowTurnX{}; float priorBodyFollowTurnX{}; bool previousManualTurnActive{}; float bodyYawPerPositiveStick{-1.f}; bool bodyYawStickSignConfirmed{};
     kharvox::PostCinematicYawGuard postCinematicYawGuard{};
     bool gameplayRecenterPending{true};
     bool weapon6Dof{},weaponCalibrated{},weaponGameplayActivated{},weaponPoseSubmitted{},weaponTrackingHeld{};WeaponPose weaponBaseline{};
@@ -952,7 +952,7 @@ float artificialTurnVisualYaw(){return s.artificialTurnActive?s.artificialTurnRe
 float renderResidualHeadYaw(){return wrapDegrees(physicalResidualHeadYaw()+artificialTurnVisualYaw());}
 void publishArtificialTurnYaw(){s.artificialTurnPublishedDegrees=artificialTurnVisualYaw();KharvoxCameraSetArtificialTurnYaw(s.artificialTurnPublishedDegrees,s.artificialTurnActive?s.artificialTurnRateDegreesPerSecond:0.f,s.artificialTurnActive?s.artificialTurnTargetQpc:0);}
 void updateAcceptedPhysicalYaw(bool gameplay,bool bodyPoseValid,const float bodyAxis[9],XrTime displayTime){
-    if(!bodyPoseValid){s.previousBodyYawValid=false;s.bodyFollowTurnX=0.f;s.previousManualTurnActive=false;return;}
+    if(!bodyPoseValid){s.previousBodyYawValid=false;s.bodyFollowTurnX=0.f;s.priorBodyFollowTurnX=0.f;s.previousManualTurnActive=false;return;}
     const float currentBodyYaw=bodyYawDegrees(bodyAxis);
     if(s.previousBodyYawValid){
         const float delta=wrapDegrees(currentBodyYaw-s.previousBodyYaw);
@@ -973,9 +973,14 @@ void updateAcceptedPhysicalYaw(bool gameplay,bool bodyPoseValid,const float body
                 s.artificialTurnActive=false;
                 s.artificialTurnRemainingDegrees=0.f;
             }
-        }else if(gameplay&&!s.previousManualTurnActive&&std::abs(s.bodyFollowTurnX)>.001f){
+        }else if(gameplay&&!s.previousManualTurnActive
+            &&(std::abs(s.bodyFollowTurnX)>.001f
+                ||(kharvox::sfs::vrEnabled()&&std::abs(s.priorBodyFollowTurnX)>.001f))){
+            // SFS: the native turn lands a frame after its command, so also
+            // accept the step from the previous command; otherwise the last
+            // step of a follow burst isn't cancelled and the view rotates by it.
             s.acceptedPhysicalYaw=wrapDegrees(s.acceptedPhysicalYaw+delta);
-            if(std::abs(delta)>.01f&&!s.bodyYawStickSignConfirmed){
+            if(std::abs(delta)>.01f&&!s.bodyYawStickSignConfirmed&&std::abs(s.bodyFollowTurnX)>.001f){
                 const float measuredSign=delta*s.bodyFollowTurnX>=0.f?1.f:-1.f;
                 s.bodyYawPerPositiveStick=measuredSign;s.bodyYawStickSignConfirmed=true;
                 log("[BODY-YAW] confirmed native right-stick/body-yaw sign="+std::to_string(measuredSign));
@@ -990,7 +995,8 @@ void updateAcceptedPhysicalYaw(bool gameplay,bool bodyPoseValid,const float body
         }
     }
     s.previousBodyYaw=currentBodyYaw;s.previousBodyYawValid=true;
-    if(!gameplay){s.bodyFollowTurnX=0.f;s.previousManualTurnActive=false;}
+    s.priorBodyFollowTurnX=s.bodyFollowTurnX;
+    if(!gameplay){s.bodyFollowTurnX=0.f;s.priorBodyFollowTurnX=0.f;s.previousManualTurnActive=false;}
 }
 XrFovf enclosingSymmetricFov(const XrFovf& fov){const float halfX=kharvox::centeredProjectionHalfAngle(fov.angleLeft,fov.angleRight),halfY=kharvox::centeredProjectionHalfAngle(fov.angleDown,fov.angleUp);return {-halfX,halfX,halfY,-halfY};}
 XrFovf submittedEyeFov(const XrFovf& fov){return kharvox::useCenteredProjectionFov(s.runtimeKind)?enclosingSymmetricFov(fov):fov;}

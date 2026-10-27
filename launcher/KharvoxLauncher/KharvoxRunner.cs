@@ -143,7 +143,7 @@ internal sealed class KharvoxLaunchOptions
 
 internal static class KharvoxRunner
 {
-    internal const string BuildId = "2026.10.19-launcher-v1.4-final";
+    internal const string BuildId = "2026.10.27-launcher-v1.4a-ofxr";
     private const string LayerName = "VK_LAYER_KHARVOX_OPENXR";
     private const string RegistryPath = @"SOFTWARE\Khronos\Vulkan\ImplicitLayers";
     private static readonly CultureInfo Invariant = CultureInfo.InvariantCulture;
@@ -302,8 +302,8 @@ internal static class KharvoxRunner
         using var launchGate = AcquireLaunchGate();
         using var launchState = BeginLaunch();
         EnsureNoRunningDoom();
-        if (FileVersionInfo.GetVersionInfo(dllPath).ProductVersion != "1.4.0")
-            throw new InvalidOperationException("The 1.4 launcher requires its matching 1.4 KharvoxLayer.dll. Extract the complete release into its own folder.");
+        if (FileVersionInfo.GetVersionInfo(dllPath).ProductVersion != "1.4.1")
+            throw new InvalidOperationException("The 1.4a launcher requires its matching 1.4a KharvoxLayer.dll. Extract the complete release into its own folder.");
         using var gameIntro = await VrGameIntroSession.StartAsync(runtimeDir, statusUpdate, disableVrIntro: options.DisableVrIntro).ConfigureAwait(false);
         WriteManifest(manifestPath, dllPath);
         EnsureNativeControllerBindings(options.BackWeapon);

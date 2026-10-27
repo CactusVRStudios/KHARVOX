@@ -476,7 +476,7 @@ public sealed class MainForm : Form
         var releaseInfo = typeof(MainForm).Assembly
             .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "";
         footer.Controls.Add(new Label {
-            Text = releaseVersion.ToString(releaseVersion.Build == 0 ? 2 : 3)
+            Text = (releaseInfo == "1.4a" ? "1.4a" : releaseVersion.ToString(releaseVersion.Build == 0 ? 2 : 3))
                 + (releaseInfo.Contains("-test") ? " Test" : releaseInfo.Contains("-beta") ? " Beta" : releaseInfo.Contains("-rc") ? " RC" : ""),
             Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft,
             ForeColor = Color.Gray

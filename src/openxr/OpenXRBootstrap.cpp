@@ -253,9 +253,9 @@ struct State {
     TurnMode turnMode{TurnMode::Smooth}; float turnDeadzone{.35f}; float smoothTurnDegreesPerSecond{230.f}; float snapTurnDegrees{60.f}; bool snapTurnArmed{true};
     kharvox::MovementDirectionMode movementDirectionMode{kharvox::MovementDirectionMode::Head}; bool offHandMovementDirectionStateKnown{},offHandMovementDirectionActive{};
     bool snapTurnActivationPending{}; float snapTurnPendingDegrees{}; std::uint64_t snapTurnGeneration{},snapTurnStereoCompensations{}; bool snapTurnStereoTransitionActive{};
-    bool artificialTurnActive{}; float artificialTurnRemainingDegrees{}; float artificialTurnPublishedDegrees{}; float artificialTurnAccumulatedDegrees{}; float artificialTurnTotalDegrees{}; XrTime previousTurnDisplayTime{};
+    bool artificialTurnActive{}; float artificialTurnRemainingDegrees{}; float artificialTurnRateDegreesPerSecond{}; long long artificialTurnInputQpc{}; long long artificialTurnTargetQpc{}; float artificialTurnPublishedDegrees{}; float artificialTurnAccumulatedDegrees{}; float artificialTurnTotalDegrees{}; XrTime previousTurnDisplayTime{};
     float acceptedPhysicalYaw{}; float previousBodyYaw{}; bool previousBodyYawValid{};
-    float bodyFollowTurnX{}; bool previousManualTurnActive{}; float bodyYawPerPositiveStick{-1.f}; bool bodyYawStickSignConfirmed{};
+    float bodyFollowTurnX{}; float priorBodyFollowTurnX{}; int turnCarrierTail{}; bool previousManualTurnActive{}; float bodyYawPerPositiveStick{-1.f}; bool bodyYawStickSignConfirmed{};
     kharvox::PostCinematicYawGuard postCinematicYawGuard{};
     bool gameplayRecenterPending{true};
     bool weapon6Dof{},weaponCalibrated{},weaponGameplayActivated{},weaponPoseSubmitted{},weaponTrackingHeld{};WeaponPose weaponBaseline{};
@@ -950,9 +950,9 @@ float bodyYawDegrees(const float axis[9]){constexpr float radiansToDegrees=57.29
 float physicalResidualHeadYaw(){return wrapDegrees(s.head.yaw-s.acceptedPhysicalYaw);}
 float artificialTurnVisualYaw(){return s.artificialTurnActive?s.artificialTurnRemainingDegrees:0.f;}
 float renderResidualHeadYaw(){return wrapDegrees(physicalResidualHeadYaw()+artificialTurnVisualYaw());}
-void publishArtificialTurnYaw(){s.artificialTurnPublishedDegrees=artificialTurnVisualYaw();KharvoxCameraSetArtificialTurnYaw(s.artificialTurnPublishedDegrees);}
+void publishArtificialTurnYaw(){s.artificialTurnPublishedDegrees=artificialTurnVisualYaw();KharvoxCameraSetArtificialTurnYaw(s.artificialTurnPublishedDegrees,s.artificialTurnActive?s.artificialTurnRateDegreesPerSecond:0.f,s.artificialTurnActive?s.artificialTurnTargetQpc:0);}
 void updateAcceptedPhysicalYaw(bool gameplay,bool bodyPoseValid,const float bodyAxis[9],XrTime displayTime){
-    if(!bodyPoseValid){s.previousBodyYawValid=false;s.bodyFollowTurnX=0.f;s.previousManualTurnActive=false;return;}
+    if(!bodyPoseValid){s.previousBodyYawValid=false;s.bodyFollowTurnX=0.f;s.priorBodyFollowTurnX=0.f;s.turnCarrierTail=0;s.previousManualTurnActive=false;return;}
     const float currentBodyYaw=bodyYawDegrees(bodyAxis);
     if(s.previousBodyYawValid){
         const float delta=wrapDegrees(currentBodyYaw-s.previousBodyYaw);
@@ -970,12 +970,29 @@ void updateAcceptedPhysicalYaw(bool gameplay,bool bodyPoseValid,const float body
             s.artificialTurnRemainingDegrees=wrapDegrees(
                 s.artificialTurnRemainingDegrees-delta);
             if(std::abs(s.artificialTurnRemainingDegrees)<.15f){
+                // SFS: turn complete but the body isn't done: the dropped
+                // residual and the carrier's last step (landing next
+                // observation) would rotate the view after the stop. Give both
+                // to the accepted yaw; the follow brings the body back under a
+                // still view.
+                if(kharvox::sfs::vrEnabled()){
+                    s.acceptedPhysicalYaw=wrapDegrees(
+                        s.acceptedPhysicalYaw-s.artificialTurnRemainingDegrees);
+                    s.turnCarrierTail=2;
+                }
                 s.artificialTurnActive=false;
                 s.artificialTurnRemainingDegrees=0.f;
             }
-        }else if(gameplay&&!s.previousManualTurnActive&&std::abs(s.bodyFollowTurnX)>.001f){
+        }else if(gameplay&&s.turnCarrierTail==1){
             s.acceptedPhysicalYaw=wrapDegrees(s.acceptedPhysicalYaw+delta);
-            if(std::abs(delta)>.01f&&!s.bodyYawStickSignConfirmed){
+        }else if(gameplay&&!s.previousManualTurnActive
+            &&(std::abs(s.bodyFollowTurnX)>.001f
+                ||(kharvox::sfs::vrEnabled()&&std::abs(s.priorBodyFollowTurnX)>.001f))){
+            // SFS: the native turn lands a frame after its command, so also
+            // accept the step from the previous command; otherwise the last
+            // step of a follow burst isn't cancelled and the view rotates by it.
+            s.acceptedPhysicalYaw=wrapDegrees(s.acceptedPhysicalYaw+delta);
+            if(std::abs(delta)>.01f&&!s.bodyYawStickSignConfirmed&&std::abs(s.bodyFollowTurnX)>.001f){
                 const float measuredSign=delta*s.bodyFollowTurnX>=0.f?1.f:-1.f;
                 s.bodyYawPerPositiveStick=measuredSign;s.bodyYawStickSignConfirmed=true;
                 log("[BODY-YAW] confirmed native right-stick/body-yaw sign="+std::to_string(measuredSign));
@@ -990,7 +1007,9 @@ void updateAcceptedPhysicalYaw(bool gameplay,bool bodyPoseValid,const float body
         }
     }
     s.previousBodyYaw=currentBodyYaw;s.previousBodyYawValid=true;
-    if(!gameplay){s.bodyFollowTurnX=0.f;s.previousManualTurnActive=false;}
+    s.priorBodyFollowTurnX=s.bodyFollowTurnX;
+    if(s.turnCarrierTail>0)--s.turnCarrierTail;
+    if(!gameplay){s.bodyFollowTurnX=0.f;s.priorBodyFollowTurnX=0.f;s.turnCarrierTail=0;s.previousManualTurnActive=false;}
 }
 XrFovf enclosingSymmetricFov(const XrFovf& fov){const float halfX=kharvox::centeredProjectionHalfAngle(fov.angleLeft,fov.angleRight),halfY=kharvox::centeredProjectionHalfAngle(fov.angleDown,fov.angleUp);return {-halfX,halfX,halfY,-halfY};}
 XrFovf submittedEyeFov(const XrFovf& fov){return kharvox::useCenteredProjectionFov(s.runtimeKind)?enclosingSymmetricFov(fov):fov;}
@@ -1385,15 +1404,37 @@ float nativeManualTurnX(XrTime displayTime,bool active){
     float frameSeconds=0.f;
     if(s.previousTurnDisplayTime>0&&displayTime>s.previousTurnDisplayTime)frameSeconds=std::clamp(float(displayTime-s.previousTurnDisplayTime)*1e-9f,0.f,.05f);
     s.previousTurnDisplayTime=displayTime;
+    // SFS: advance the target on QPC, the clock the render pass extrapolates
+    // on; displayTime steps don't match render timing under external pacing.
+    // AER keeps the displayTime step and does not extrapolate.
+    const bool sfsTurn=kharvox::sfs::vrEnabled();
+    LARGE_INTEGER turnNow{};QueryPerformanceCounter(&turnNow);
+    static const double turnTicksPerSecond=[](){LARGE_INTEGER f{};QueryPerformanceFrequency(&f);return double(f.QuadPart);}();
+    float wallSeconds=0.f;
+    if(s.artificialTurnInputQpc>0&&turnNow.QuadPart>s.artificialTurnInputQpc)wallSeconds=std::clamp(float(double(turnNow.QuadPart-s.artificialTurnInputQpc)/turnTicksPerSecond),0.f,.05f);
+    s.artificialTurnInputQpc=turnNow.QuadPart;
+    const float turnSeconds=sfsTurn?wallSeconds:frameSeconds;
     if(s.turnMode==TurnMode::Off){s.snapTurnArmed=true;s.snapTurnActivationPending=false;s.artificialTurnActive=false;s.artificialTurnRemainingDegrees=0.f;publishArtificialTurnYaw();return 0.f;}
     if(s.turnMode==TurnMode::Smooth){
-        if(x!=0.f&&frameSeconds>0.f){
+        if(x!=0.f&&turnSeconds>0.f){
             const float openXrMagnitude=(std::abs(x)-s.turnDeadzone)/(1.f-s.turnDeadzone);
-            const float artificialDelta=s.bodyYawPerPositiveStick*std::copysign(openXrMagnitude*s.smoothTurnDegreesPerSecond*frameSeconds,x);
+            const float artificialDelta=s.bodyYawPerPositiveStick*std::copysign(openXrMagnitude*s.smoothTurnDegreesPerSecond*turnSeconds,x);
+            s.artificialTurnTargetQpc=turnNow.QuadPart;
+            s.artificialTurnRateDegreesPerSecond=s.bodyYawPerPositiveStick*std::copysign(openXrMagnitude*s.smoothTurnDegreesPerSecond,x);
             s.artificialTurnRemainingDegrees=wrapDegrees(s.artificialTurnRemainingDegrees+artificialDelta);
             s.artificialTurnTotalDegrees=wrapDegrees(
                 s.artificialTurnTotalDegrees+artificialDelta);
             s.artificialTurnActive=true;
+        }else if(x==0.f){
+            // Release: the render pass already extrapolated up to now, so stop
+            // the target here, not at the last input.
+            if(sfsTurn&&s.artificialTurnActive&&s.artificialTurnRateDegreesPerSecond!=0.f&&wallSeconds>0.f){
+                const float heldDelta=s.artificialTurnRateDegreesPerSecond*wallSeconds;
+                s.artificialTurnRemainingDegrees=wrapDegrees(s.artificialTurnRemainingDegrees+heldDelta);
+                s.artificialTurnTotalDegrees=wrapDegrees(s.artificialTurnTotalDegrees+heldDelta);
+            }
+            s.artificialTurnRateDegreesPerSecond=0.f;
+            s.artificialTurnTargetQpc=turnNow.QuadPart;
         }
     }else{
         if(std::abs(s.rightStick.x)<s.turnDeadzone*.6f)s.snapTurnArmed=true;
@@ -1403,6 +1444,8 @@ float nativeManualTurnX(XrTime displayTime,bool active){
             log("[TURN] snap queued artificialDelta="+std::to_string(s.snapTurnPendingDegrees));
         }
     }
+    // SFS: publish here too, so the render pass sees the new rate this frame.
+    if(sfsTurn)publishArtificialTurnYaw();
     if(!s.artificialTurnActive||frameSeconds<=0.f)return 0.f;
     if(s.artificialTurnPublishedDegrees*s.artificialTurnRemainingDegrees<=0.f)return 0.f;
     const float publishedCatchupDegrees=std::copysign(std::min(std::abs(s.artificialTurnPublishedDegrees),std::abs(s.artificialTurnRemainingDegrees)),s.artificialTurnRemainingDegrees);

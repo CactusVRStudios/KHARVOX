@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>KharvoxDesktop</AssemblyName>
+    <Version>1.4.1</Version>
+    <AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Avalonia.Desktop" Version="11.3.9" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.9" />
+    <PackageReference Include="Avalonia.Headless" Version="11.3.9" />
+    <PackageReference Include="Tmds.DBus.Protocol" Version="0.21.3" />
+    <Compile Include="../KharvoxLauncher/LauncherSettings.cs" Link="Shared/LauncherSettings.cs" />
+    <Compile Include="../KharvoxLauncher/LauncherPresetPolicy.cs" Link="Shared/LauncherPresetPolicy.cs" />
+    <Compile Include="../KharvoxLauncher/RendererSelection.cs" Link="Shared/RendererSelection.cs" />
+    <Compile Include="../KharvoxLauncher/VulkanSfs.cs" Link="Shared/VulkanSfs.cs" />
+    <AvaloniaResource Include="../../assets/branding/doom-vr-plus-frame.gif" Link="Assets/doom-vr-plus-frame.gif" />
+    <EmbeddedResource Include="Localization/*.json" />
+  </ItemGroup>
+</Project>

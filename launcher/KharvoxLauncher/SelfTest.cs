@@ -896,8 +896,31 @@ internal static class SelfTest
         Require(!swapJumpCrouch.Checked, "Jump/Crouch swap defaults off");
         swapJumpCrouch.Checked = true;
         Require(form.CreateLaunchOptions().SwapJumpCrouch, "Jump/Crouch swap reaches launch options");
+        var physicalCrouch = Field<CheckBox>("physicalCrouch");
+        Require(!physicalCrouch.Checked && !form.CreateLaunchOptions().PhysicalCrouch,
+            "Physical Crouch defaults off");
+        physicalCrouch.Checked = true;
+        Require(form.CreateLaunchOptions().PhysicalCrouch,
+            "Physical Crouch reaches launch options alongside swapped buttons");
+        var physicalGrenade = Field<CheckBox>("physicalGrenadeThrow");
+        Require(!physicalGrenade.Checked && !form.CreateLaunchOptions().PhysicalGrenadeThrow,
+            "Physical Grenade Throw defaults off");
+        physicalGrenade.Checked = true;
+        Require(form.CreateLaunchOptions().PhysicalGrenadeThrow,
+            "Physical Grenade Throw reaches launch options");
         typeof(MainForm).GetMethod("SaveSettings", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(form, null);
         Require(LauncherSettingsStore.Load(Path.Combine(testRoot, "ui-settings.json")).SwapJumpCrouch, "Jump/Crouch swap persisted");
+        Require(LauncherSettingsStore.Load(Path.Combine(testRoot, "ui-settings.json")).PhysicalCrouch,
+            "Physical Crouch persisted");
+        Require(LauncherSettingsStore.Load(Path.Combine(testRoot, "ui-settings.json")).PhysicalGrenadeThrow,
+            "Physical Grenade Throw persisted");
+        var oldCrouchSettings = Path.Combine(testRoot, "old-crouch-settings.json");
+        LauncherSettingsStore.Save(oldCrouchSettings,
+            new LauncherSettings { SettingsVersion = 34, PhysicalCrouch = true, PhysicalGrenadeThrow = true });
+        Require(!LauncherSettingsStore.Load(oldCrouchSettings).PhysicalCrouch,
+            "older settings never opt into Physical Crouch");
+        Require(!LauncherSettingsStore.Load(oldCrouchSettings).PhysicalGrenadeThrow,
+            "older settings never opt into Physical Grenade Throw");
         Require(LauncherSettingsStore.Load(Path.Combine(testRoot, "ui-settings.json")).HandsJump, "Hands Jump persisted");
         Require(LauncherSettingsStore.Load(Path.Combine(testRoot, "ui-settings.json")).DisableAa, "AA override persists");
         Require(LauncherSettingsStore.Load(Path.Combine(testRoot, "ui-settings.json")).CaptureEyes,"eye capture persists");
@@ -908,9 +931,13 @@ internal static class SelfTest
         {
             hands.Checked = false;
             handsJump.Checked = false;
+            physicalCrouch.Checked = true;
+            physicalGrenade.Checked = true;
             presets.SelectedIndex = index;
             Require(hands.Checked, "all named profiles enable hands");
             Require(handsJump.Checked, "all named profiles enable Hands Jump");
+            Require(!physicalCrouch.Checked, "named profiles leave Physical Crouch opt-in");
+            Require(!physicalGrenade.Checked, "named profiles leave Physical Grenade Throw opt-in");
         }
         presets.SelectedIndex = 3;
         var renderer=Field<ComboBox>("rendererMode");

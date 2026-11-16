@@ -1,4 +1,4 @@
-param([string]$Launcher = 'D:\KHARVOX\out\launcher-amiga\KharvoxLauncher.exe', [string]$Output = 'D:\KHARVOX\tmp\amiga-test')
+param([Parameter(Mandatory=$true)][string]$Launcher, [string]$Output = (Join-Path ([System.IO.Path]::GetTempPath()) 'KHARVOX-amiga-test'))
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName System.Windows.Forms

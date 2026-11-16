@@ -1,259 +1,154 @@
-# KHARVOX
+# DOOM VR PLUS
 
-![KHARVOX](assets/branding/kharvox-logo-dark.png)
+**Fork communautaire de [KHARVOX](https://github.com/CactusVRStudios/KHARVOX), le mod VR pour DOOM (2016) créé par CactusVRStudios.**
 
-**A DOOM (2016) VR conversion mod**
+DOOM VR PLUS reprend cette base pour améliorer les mains, les gestes, le HUD
+et l'interface de lancement. Une installation légitime de DOOM (2016) est requise.
+Le projet est indépendant, non affilié à id Software, Bethesda ou ZeniMax.
 
-KHARVOX is a total VR conversion for DOOM (2016). It adds room-scale 6DoF movement, tracked motion-controller input and stereoscopic VR rendering to the original campaign.
+> **AI-assisted development with OpenAI Codex.**
+> Ce fork a été créé et développé avec l'assistance d'OpenAI Codex.
+> Le mainteneur pilote les choix, ajuste les poses dans Blender et valide les
+> résultats en jeu. L'assistance IA ne remplace pas ces vérifications humaines.
+
+## Le launcher
+
+![Launcher DOOM VR PLUS en français](Docs/images/launcher-fr.png)
+
+- Cadre métallique orange **animé**, avec centre transparent.
+- Interface **Avalonia**, réglages répartis entre Jouer, Rendu, Mouvements et Aide.
+- **Français par défaut**, anglais sélectionnable immédiatement en haut à droite.
+- Langue mémorisée séparément des réglages VR.
+- Version **v1.4.1** affichée depuis la version réellement compilée.
+- Résumé des ajouts et explications des gestes directement dans l'interface.
+
+[Voir le launcher en anglais](Docs/images/launcher-en.png)
+
+## Nouvelles fonctionnalités
+
+| Fonction | Ce qui change | État |
+|---|---|---|
+| Mains Praetor | Poses ajustées à chaque arme, à une ou deux mains ; articulations de la main libre | Validé en jeu et inclus dans le paquet complet |
+| Prise à une main | La main droite réutilise la pose de poignée et de doigts validée dans Blender | Validé sur les dix armes |
+| HUD au poignet | HUD suspendu sur l'avant-bras gauche, consultation par orientation du poignet, blocs séparés manuellement | Dernier placement validé en jeu |
+| Crouch physique | Baisser le casque d'environ 35 cm pour s'accroupir ; remonter à moins de 20 cm de la hauteur debout pour se relever | Validé localement ; bouton classique conservé |
+| Recentrage | Appuyer simultanément sur les deux sticks | Implémenté ; commandes individuelles conservées |
+| Grenade tenue | Grenade fragmentaire texturée dans la main gauche avec la pose des doigts validée | Tenue visuelle validée ; main droite conserve l'arme |
+| Lancer gestuel | Maintenir la gâchette de soutien, effectuer le geste puis relâcher | Expérimental ; le modèle tenu reste distinct du projectile natif |
+| Performances | Corrections des chemins coûteux et partage des atlas des mains | Fluidité retrouvée et confirmée pendant les essais locaux |
+
+Le fork conserve SFS/AER, les commandes classiques et les mécanismes gauchers
+existants. Cela ne vaut pas validation de tous les casques et de tous les modes.
+Les retours en jeu incluent des contrôleurs **Quest/Touch**.
+
+### Armes validées localement
+
+Pistolet, fusil de combat, Super Shotgun, fusil d'assaut lourd, fusil plasma,
+lance-roquettes, canon Gauss, mitrailleuse, BFG 9000 et tronçonneuse.
+
+Les poses ont été réglées dans Blender puis testées en jeu. Le paquet complet
+de la release contient les ressources runtime nécessaires à leur affichage.
+
+## Téléchargements
+
+**Première publication complète : version 1.4.1.**
+
+- [Releases GitHub](https://github.com/papoulou/DOOM-VR-PLUS/releases)
+- [Paquet Windows complet](https://github.com/papoulou/DOOM-VR-PLUS/releases/download/v1.4.1/DOOM-VR-PLUS-v1.4.1-complet.zip)
+- [ZIP des sources](https://github.com/papoulou/DOOM-VR-PLUS/releases/download/v1.4.1/DOOM-VR-PLUS-v1.4.1-sources.zip)
+- [Manifeste et empreintes](https://github.com/papoulou/DOOM-VR-PLUS/releases/download/v1.4.1/PACKAGE-MANIFEST.json)
+
+Le ZIP complet contient le launcher compilé, la couche VR, les dépendances,
+les shaders SFS/AER et les modèles Praetor validés. Il ne contient ni
+exécutable DOOM ni préférence personnelle. [Contenu exact](Docs/PUBLICATION.md).
 
 ## Installation
 
-1. Download the latest KHARVOX release from the [GitHub Releases page](https://github.com/CactusVRStudios/KHARVOX/releases).
-2. Extract the complete archive into a new folder of your choice. Do not run the launcher from inside the ZIP file, and do not copy KHARVOX into the DOOM installation folder.
-3. Make sure DOOM (2016), your headset software and an OpenXR runtime such as SteamVR, Meta XR or VDXR are installed and ready.
-4. Run `KharvoxLauncher.exe` from the extracted KHARVOX folder.
-
-Keep all extracted KHARVOX files together in the same folder. Start DOOM through `KharvoxLauncher.exe` whenever you want to play in VR.
-
-**Windows Defender / VirusTotal:** Windows Defender may flag `KharvoxLauncher.exe` or `KharvoxGameIntro.exe` with machine-learning detections such as `Trojan:Win32/Bearfoos.A!ml` or `Trojan:Win32/Wacatac.B!ml`. This notice applies to both executables across releases. VirusTotal results are specific to the scanned file and may change over time.
-
-## Instructions
-
-### General information and limitations
-
-#### Known issues and limitations
-
-**Compatible with legally acquired Steam and GOG versions of DOOM (2016).**
-
-KHARVOX has been tested with the Steam and GOG releases of DOOM (2016). It changes the game's rendering, camera and controls, so compatibility or startup issues may occur. Some hardware, including AMD graphics cards and less common headsets, may need additional setup. If a launch fails, close any remaining DOOM window and select **Launch Game** again.
-
-Changing graphics quality while a level is loaded can freeze or crash the game. Change quality in the main menu before loading a level.
-
-#### Best practice
-
-- Use the **SFS** renderer. If it causes problems, select **AER** as fallback.
-- Quest headsets should use Virtual Desktop or Meta Quest Link.
-- Keep the DOOM game window in focus while playing. The launcher makes one focus attempt when the DOOM window becomes available and does not repeatedly reclaim focus. Click the status line beneath the launch button to bring a running game to the foreground manually.
-
-For setup help, testing feedback and community support, visit the [Flat2VR Discord](https://discord.com/invite/ZFSCSDe).
-
-### Controller bindings
-
-![Quest controller layout and KHARVOX bindings](assets/branding/quest-controller-mapping.png)
-
-#### Left controller
-
-| Input | Action |
-| --- | --- |
-| Trigger | Equipment / grenade |
-| Grip near support point | Two-hand support |
-| Grip tap away from support point | Next equipment |
-| Grip hold | BFG when not holding a weapon with two hands |
-| X | Dossier |
-| Y | Switch weapon modification |
-| Stick | Move |
-| Stick click | Menu / Pause |
-
-#### Right controller
-
-| Input | Action |
-| --- | --- |
-| Trigger | Fire |
-| Grip in front | Weapon modification / alternate fire |
-| Grip behind shoulder | Shoulder Weapon |
-| A | Crouch |
-| B | Jump |
-| Stick left / right | Turn |
-| Stick up | Chainsaw |
-| Stick down, tap | Switch weapon |
-| Stick down, hold | Weapon wheel; aim with the left stick |
-| Stick click | Use / Melee / Glory Kill |
-
-In menus, **A** confirms and **B** goes back. Full-screen interfaces preserve the selected handedness layout. Physical Glory Kills follow the launcher setting without replacing normal menu input.
-
-#### Left Hand mode — Button swap
-
-- Left Trigger and Grip become Fire and weapon modification; the left hand holds the weapon.
-- Right Trigger and Grip become Equipment and two-hand support.
-- Left Stick click becomes Use / Melee / Glory Kill; Right Stick click becomes Menu / Pause.
-- Face buttons and stick axes stay in their standard physical positions.
-
-#### Left Hand mode — Button and Stick swap
-
-- Uses the trigger, grip and stick-click swap described above.
-- Right Stick moves; Left Stick turns and controls weapon selection.
-- Left Y jumps and Left X crouches.
-- Right A opens the Dossier and Right B switches the weapon modification.
-
-### Movement
-
-Physical room-scale movement is translated into the game separately from stick locomotion.
-
-#### Turn mode
-
-- **Smooth:** continuous turning from 150°/s to 400°/s; the default is 230°/s.
-- **Snap:** rotates by the configured angle each time the turn stick is pushed sideways.
-- **Off:** disables artificial stick turning. Physical turning and room-scale movement remain available.
-
-#### Movement direction
-
-- **Head direction:** moving forward follows the horizontal headset direction. This is the default.
-- **Off hand direction:** moving forward follows the horizontal aim direction of the non-weapon controller. Right-handed mode uses the left controller; Left Hand mode uses the right controller. Invalid tracking or a nearly vertical controller safely falls back to Head direction.
-
-Left Hand mode moves the tracked weapon to the left hand and the support role to the right. **Button swap** keeps movement on the left stick and turning on the right. **Button and Stick swap** moves locomotion to the right stick and turning and weapon selection to the left stick, while moving face-button actions to the opposite controllers.
-
-### Game options
-
-#### Immersive Mode
-
-Keeps supported Glory Kills, traversal sequences, tutorials and cinematics in stereoscopic VR instead of presenting the complete frame on a flat Cine Window. This is more immersive, but authored camera motion can be uncomfortable.
-
-- **Freelook in cinematics and Glory Kills:** headset rotation controls the view while the authored sequence continues.
-- **Regular cinematics in Cine Window:** interactive VR moments remain immersive, while regular scripted cinematics use the comfort window.
-
-#### Cine Window follows headset
-
-Makes the virtual screen used for cinematics follow your headset. When disabled, the screen stays in a fixed position. Menus and other VR elements are unaffected.
-
-#### Physical Glory Kills
-
-A forward punch from the selected hand or hands can trigger Melee / Glory Kill. The threshold ranges from 1.0 m/s to 4.0 m/s in 0.2 m/s steps and defaults to 2.8 m/s. Move it toward **Fast** if normal hand movement causes accidental attacks.
-
-#### Shoulder Weapon
-
-Move the weapon hand behind its matching shoulder and make a fresh Grip press. If the selected weapon is unavailable or empty, KHARVOX tries the Combat Shotgun and then the Pistol. It never unlocks or grants a weapon.
-
-#### Enable Hands
-
-Shows static controller hands during gameplay. Enabled by default in all profiles. Hands are hidden during supported cinematics and transitions, and Left Hand mode mirrors the weapon and support hands.
-
-#### Hands Jump
-
-Raise both hands to jump. Enabled by default in all profile presets; you can switch it off in the launcher. You can still use the jump button. Works with either renderer, even when hand models are hidden. Disabled in menus and cinematics.
-
-#### Virtual Gunstock
-
-Adds a headset-relative rear anchor to calibrated two-handed, barrel-aligned weapons after the support grip is acquired. This can make long-range aiming steadier while preserving tracked controller movement.
-
-#### Laser sight
-
-Projects an aiming line from the rendered muzzle of supported firearms. It has no effect on weapon accuracy or projectile behavior.
-
-### Rendering
-
-#### Renderer selection
-
-**SFS is the default renderer for all profiles and first launch. If SFS causes problems, select AER as a fallback.** Resolution changes require restarting the game.
-
-#### Render Scale
-
-Render scale adjusts the resolution used to render the game. Higher values can improve clarity but demand more GPU power; lower values can improve performance at the cost of detail. The maximum supported resolution depends on your graphics card and VR runtime. Restart the game after changing this setting.
-
-#### FSR Upscaling
-
-- With Meta XR, VDXR or SteamVR, select **SFS** or **AER**, choose a Render Scale below 100%, and enable **Use FSR Upscaling** beside it.
-- Start at 80%. Lower values reduce more source-pixel work but also lose fine detail.
-- FSR remains inactive at 100% or higher. Below 100%, verify **FSR1 active** in the launcher status line.
-
-#### Recommended runtimes
-
-- Quest / Pico: Virtual Desktop with VDXR
-- Valve Index / PSVR2: SteamVR
-
-Use the highest stable headset refresh rate your system can sustain. Test with SFS first and include the headset, GPU and runtime when reporting a rendering issue.
-
-#### Anti-aliasing
-
-With SFS, choose anti-aliasing in DOOM's graphics settings. KHARVOX does not force SMAA in this renderer. The Debug option to disable AA still overrides that choice when enabled. AER uses SMAA by default.
-
-#### VR-safe image settings
-
-Every KHARVOX launch disables DOOM's native Motion Blur, automatic Glory Kill Motion Blur and Chromatic Aberration. These VR-safe overrides do not edit or replace the encrypted DOOM user profile or campaign saves.
-
-### bHaptics
-
-bHaptics feedback requires compatible gear and the [bHaptics Player for Windows](https://www.bhaptics.com/support/downloads/?type=bhaptics_player). Pair and verify the devices in the Player before starting the game.
-
-**Enable bHaptics** may remain selected without connected hardware. Missing equipment, an unavailable Player or a local bridge error does not block DOOM; normal controller rumble remains independent.
-
-### PSVR2 Toolkit
-
-**Use PSVR2 Toolkit** is experimental and works only with PlayStation VR2 hardware. It requires PSVR2 Toolkit 1.0 or later and a working PSVR2 SteamVR setup. KHARVOX applies weapon-specific adaptive-trigger resistance to the weapon hand; the support hand remains disabled and normal controller rumble is unaffected. Missing or inactive Toolkit software never blocks game startup.
-
-Install and update [PSVR2 Toolkit](https://github.com/BnuuySolutions/PSVR2Toolkit) separately. Support is available through the [PSVR2 Toolkit Discord](https://discord.gg/jym8CgJPF3).
-
-### About
-
-KHARVOX is an independent community project and is not affiliated with, endorsed by or sponsored by the publishers or developers of supported games. All trademarks and product names are the property of their respective owners.
-
-Made by Cactus.
-
-**Contributors:** [Cabalistic](https://github.com/fholger), [Dilshan](https://dilshanvisuals.com) and TinyBlackDog.
-
-**Thanks:** Crementif, Hoshi82, Galaghan, thefreemike, nabelo, VR DaD, Tino, Vince Crusty, BaggyG and Team Beef.
-
-## Support me
-
-If you enjoy KHARVOX, you can support its development on Ko-fi. Thank you!
-
-<a href="https://ko-fi.com/cactusvrstudios/tip">
-  <img src="assets/branding/kofi-support.png" alt="Support me on Ko-fi" width="320">
-</a>
-
-## Building from source
-
-### Requirements
-
-- Windows 10 or Windows 11, x64
-- CMake 3.20 or newer
-- Visual Studio with **Desktop development with C++** and a Windows SDK
-- .NET SDK with the .NET Framework 4.8 targeting pack
-
-Clone the repository and its optional PSVR2 Toolkit source link:
+1. Télécharger puis extraire entièrement le paquet complet dans un dossier
+   accessible en écriture. Ne pas exécuter le launcher directement depuis le ZIP.
+2. Garder une copie de toute ancienne installation KHARVOX fonctionnelle. Ne
+   pas installer le mod dans le dossier du jeu.
+3. Ouvrir `DOOM_VR_PLUS.cmd`, sélectionner le dossier contenant `DOOMx64vk.exe`,
+   puis choisir ses réglages et cliquer sur **LANCER EN VR**.
+4. Le menu en haut à droite permet de choisir Français ou English ; le choix
+   est enregistré dans `launcher_language.cfg`.
+
+Pour inspecter uniquement le rendu du launcher, utiliser `VOIR_INTERFACE.cmd` :
+il ne lance pas le jeu et n'enregistre pas les préférences.
+
+## Limites connues
+
+- Le rendu GLB des bras n'utilise pas encore toutes les lumières dynamiques
+  natives de DOOM, notamment lors des flashs de tir.
+- La grenade tenue n'est pas encore le projectile natif : son départ depuis
+  la main, sa vitesse et son délai restent à raccorder.
+- Son aperçu ne lit pas encore le type sélectionné ni le cooldown. Le premier
+  essai concerne la frag, main gauche, en mode droitier.
+- Les dessins SWF natifs du HUD diffèrent de leur maquette Blender.
+
+## Reprendre le développement
+
+Lire d'abord **[AGENTS.md](AGENTS.md)** et **[Docs/HANDOFF.md](Docs/HANDOFF.md)**.
+Ils consignent les règles, l'état des chantiers, les points d'entrée du code,
+les tests et les ressources manquantes dans un clone public.
 
 ```powershell
-git clone --recurse-submodules https://github.com/CactusVRStudios/KHARVOX.git
-cd KHARVOX
+git clone --recurse-submodules https://github.com/papoulou/DOOM-VR-PLUS.git
+cd DOOM-VR-PLUS
+git switch doom-vr-plus
 ```
 
-Configure and build the native layer and bridges outside the source tree:
+`doom-vr-plus` contient le travail du fork ; `main` conserve la référence
+upstream au moment du fork.
+
+### Compiler le launcher
+
+Windows et SDK .NET 10 :
 
 ```powershell
-cmake -S . -B ..\kharvox-build\native -A x64 -DKHARVOX_BUILD_LAYER=ON -DBUILD_TESTING=ON
-cmake --build ..\kharvox-build\native --config Release --parallel
+dotnet publish launcher/KharvoxDesktop/KharvoxDesktop.csproj -c Release -r win-x64 --self-contained true -o build/launcher
 ```
 
-Build the launcher:
+Pour le runtime C++ et ses dépendances, consulter les instructions
+[upstream conservées](README-KHARVOX-UPSTREAM.md). Les fixtures Praetor et les
+dépendances du compilateur SFS sont locales/optionnelles : ne pas présenter
+leurs tests comme exécutables sans ces ressources.
 
-```powershell
-dotnet restore launcher\KharvoxLauncher\KharvoxLauncher.csproj
-dotnet build launcher\KharvoxLauncher\KharvoxLauncher.csproj --configuration Release --no-restore
-```
+La validation locale comprend une suite CMake/CTest de 158 tests, des contrôles
+GPU dans les deux yeux, les transitions des dix profils d'armes, et les quatre
+pages du launcher dans les deux langues. Les tests automatisés complètent les
+retours humains ; ils ne garantissent pas toutes les configurations matérielles.
 
-Run the native tests:
+## Signaler un problème
 
-```powershell
-ctest --test-dir ..\kharvox-build\native -C Release --output-on-failure
-```
+Ouvrir une [issue](https://github.com/papoulou/DOOM-VR-PLUS/issues) avec la version,
+le casque, les contrôleurs, le runtime OpenXR, SFS/AER et les étapes du problème.
+Retirer les chemins personnels et informations sensibles des journaux joints.
 
-The PSVR2 bridge is optional. CMake builds it only when the linked PSVR2 Toolkit headers are available under `tools/PSVR2Toolkit`. A clone without submodules still builds the rest of KHARVOX.
+## Crédits et licence
 
-## Source tree
+- **CactusVRStudios** : créateur de KHARVOX, base du fork.
+- **papoulou** : direction du projet, réglages Blender et validations en jeu.
+- **OpenAI Codex** : assistance IA à l'analyse, au développement et aux tests — **AI-assisted**.
+- Bibliothèques tierces : [notices d'origine](Docs/THIRD_PARTY_NOTICES.txt).
 
-- `src/` — Vulkan/OpenXR compatibility layer and optional native bridges
-- `launcher/` — Windows launcher source
-- `config/` — default calibration and weapon profiles
-- `tests/` — automated tests
-- `third-party/` — vendored interfaces and permitted runtime components
+La [licence MIT et le copyright CactusVRStudios](LICENSE.txt) sont conservés.
+Les composants tiers gardent leurs licences. La licence du code ne relicense
+ni les ressources ni les marques du jeu. Aucun exécutable DOOM, identifiant,
+chemin personnel ou contournement de protection n'est inclus dans les ZIP.
 
-## Legal and licensing
+## English summary
 
-KHARVOX is not affiliated with, endorsed by or sponsored by Bethesda Softworks, id Software, ZeniMax Media or their affiliates. DOOM and related names and marks are trademarks of their respective owners. A legally acquired installation of DOOM (2016) is required.
+DOOM VR PLUS is an independent community fork of CactusVRStudios' KHARVOX for
+DOOM (2016). **This fork was created with AI assistance from OpenAI Codex.**
+The maintainer directs the work, edits poses in Blender and tests in VR.
+The animated Avalonia launcher supports French and English, remembers the
+language and shows its compiled version. Local work adds weapon-specific
+Praetor poses, a wrist HUD, physical crouching, recentering and a left-hand
+visual grenade prototype.
 
-The repository contains no DOOM executable, game data, extracted assets, DRM material, official artwork, audio or fonts.
-
-Original KHARVOX code is released under the [MIT License](LICENSE.txt). Bundled and externally linked third-party material remains under its own licenses and notices; see [THIRD_PARTY_NOTICES.txt](Docs/THIRD_PARTY_NOTICES.txt).
-
-KHARVOX performs no update checks, telemetry uploads, crash-report uploads or external downloads. Local configuration and diagnostic data remain on the user's computer unless the user chooses to share them.
-
-KHARVOX logs are written to `%TEMP%`, including `KHARVOX-NATIVE-STEREO.log` and `KHARVOX-VR-INTRO.log`. Additional native diagnostic captures are stored in `%TEMP%/KHARVOX-Diagnostics`. Calibration and launcher status files remain with the runtime.
+The v1.4.1 Windows download is a complete tested package containing the compiled
+launcher, VR layer, SFS/AER profiles and the validated Praetor runtime models.
+Players still need their own legitimate installation of DOOM (2016).
+Native lighting and a synchronized hand-origin grenade release are unfinished.
+Read the release notes, AGENTS.md and HANDOFF.md before installing or contributing.

@@ -831,6 +831,9 @@ internal sealed class InfoForm : Form
             "                    Aim with left stick\n" +
             "Stick click         Use / Melee / Glory Kill");
         AddBullet(page, "Swap Jump/Crouch in MOVEMENT makes A jump and B crouch during gameplay. Menu Confirm/Cancel and Hands Jump stay unchanged.");
+        AddBullet(page, "Physical Crouch is optional and off by default. Stand upright when gameplay starts to calibrate. Lower your headset about 35 cm to trigger native crouch, then rise to within 20 cm of your standing height to stand. Crouch buttons and Jump retain priority. Works with SFS, AER and Left Hand mode.");
+        AddBullet(page, "Click both thumbsticks together to recenter. The chord consumes Pause and Melee; single clicks retain their usual action after a 150 ms detection window. Recenter waits for tracked gameplay and a stereo-pair boundary. Stand upright when recalibrating Physical Crouch.");
+        AddBullet(page, "Physical Grenade Throw is experimental and off by default (supported Steam build). Hold the support-hand trigger, throw your hand and release. Brief taps retain the normal throw. The gesture supplies direction while native launch speed, origin and collision handling are preserved. Other builds retain the normal equipment button.");
         AddHeading(page, "Motion weapon wheel");
         AddBullet(page, "Hold the weapon-selection stick down as usual, then move the right weapon hand sideways or vertically to select a slot. Release the opening stick to confirm. In Left Hand mode, move the left weapon hand instead.");
         AddBullet(page, "The selection stick takes priority only while deflected beyond its 0.3 radial deadzone. Center it to resume hand selection immediately. Sector clicks vibrate the controller used for selection: left for stick, right for motion with the default mapping. Tracking loss clears the motion origin; recovery captures a new hand position.");

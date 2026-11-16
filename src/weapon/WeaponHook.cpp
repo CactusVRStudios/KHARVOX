@@ -3,20 +3,27 @@
 #include "LaserSourcePolicy.h"
 #include "../common/AerRenderOrder.h"
 #include "../common/DiagnosticLogging.h"
+#include "../common/PerformanceCpuCounters.h"
 #include "../common/PoseTrace.h"
 #include "WeaponHook.h"
 #include "WeaponIdentityPolicy.h"
 #include "AerWeaponPairPolicy.h"
 #include "AerWeaponPoseCache.h"
 #include "CollectiblePresentation.h"
+#include "GrenadeThrowAim.h"
 #include "../sfs/NativeSfs.h"
 
 #include "../camera/CameraHook.h"
 #include "../hud/HudHook.h"
 #include "../hands/HandDepthPolicy.h"
+#include "../hands/NativeHandsDiagnosticPolicy.h"
+#include "../hands/WeaponSupportPolicy.h"
+#include "../hands/WeaponSupportConfig.h"
 
 #include <windows.h>
 #include <intrin.h>
+#include <MinHook.h>
+#include <mutex>
 
 #include <array>
 #include <algorithm>
@@ -185,6 +192,12 @@ kharvox::AerInputHistory<LaserSourceSnapshot> laserSources;
 kharvox::AerInputHistory<LaserSourceSnapshot> laserDrawSources;
 kharvox::AerWeaponDrawFrames weaponDrawFrames;
 LaserSourceSnapshot latestLaserSource;
+kharvox::AerInputHistory<kharvox::hands::WeaponSupportFrame,32> supportSources,supportDrawSources;
+kharvox::hands::WeaponSupportFrame latestSupportSource;
+bool supportModelsRequested(){
+    static const bool enabled=GetFileAttributesW(kharvox::runtimePath(L"support_hands.cfg").c_str())!=INVALID_FILE_ATTRIBUTES;
+    return enabled;
+}
 std::atomic<unsigned> laserMuzzleKindsLogged{};
 std::atomic<unsigned> laserMuzzleFailureKindsLogged{};
 constexpr size_t weaponObjectSnapshotBytes = 0x2000;
@@ -205,12 +218,169 @@ kharvox::AerWeaponPoseCache aerWeaponPoseCache;
 
 bool readableRange(const void* address, size_t bytes);
 void log(const std::string& text);
+
+bool nativeHandsDiagnosticRequested(){
+    static const bool requested=[]{
+        char value[8]{};
+        return kharvox::runtimeFileExists(L"native_hands_diagnostics")
+            ||(GetEnvironmentVariableA("KHARVOX_NATIVE_HANDS_DIAGNOSTICS",value,sizeof(value))==1&&value[0]=='1');
+    }();
+    return requested;
+}
+std::atomic<bool> nativeHandsDiagnosticLayoutSupported{};
+std::atomic<bool> nativeHandsDiagnosticFull{};
+struct NativeHandsDiagnosticSnapshot {
+    kharvox::hands::NativeHandsDiagnosticKey key{};
+    bool enabled{},maskReadable{},animatorReadable{},gameplay{},cutscene{},collectible{},controller{};
+};
+
+NativeHandsDiagnosticSnapshot captureNativeHandsDiagnostic(void* hands,bool collectible){
+    NativeHandsDiagnosticSnapshot result;
+    if(!nativeHandsDiagnosticRequested()||!nativeHandsDiagnosticLayoutSupported.load()
+        ||nativeHandsDiagnosticFull.load()||!KharvoxCameraWorldActive())return result;
+    result.enabled=true;result.gameplay=KharvoxCameraGameplayActive();
+    result.cutscene=KharvoxCameraCutsceneActive();result.collectible=collectible;
+    result.controller=controllerPlacementActive();
+    auto&key=result.key;key.owner=reinterpret_cast<uintptr_t>(hands);
+    key.level=KharvoxCameraLevelTransitionGeneration();
+    key.weapon=static_cast<unsigned>(KharvoxWeaponCurrentKind());
+    // The installed Steam getter is exactly MOV RAX,[RCX+2B8]; RET.
+    // Copy data only here: no native helper/animator calls during transitions.
+    if(hands&&readableRange(hands,0x2C0)){
+        std::memcpy(&key.model,static_cast<const unsigned char*>(hands)+0x2B8,sizeof(key.model));
+        const auto model=reinterpret_cast<const unsigned char*>(key.model);
+        if(readableRange(model,0xEF0)){
+            std::memcpy(&key.animator,model+0xE98,sizeof(key.animator));
+            std::memcpy(&key.maskBefore,model+0xEE8,sizeof(key.maskBefore));
+            result.maskReadable=true;
+            result.animatorReadable=readableRange(reinterpret_cast<const void*>(key.animator),sizeof(uintptr_t));
+        }
+    }
+    key.context=(result.gameplay?1u:0u)|(result.cutscene?2u:0u)|(collectible?4u:0u)
+        |(result.controller?8u:0u)|(result.maskReadable?16u:0u)|(result.animatorReadable?32u:0u);
+    return result;
+}
+
+void finishNativeHandsDiagnostic(NativeHandsDiagnosticSnapshot snapshot){
+    if(!snapshot.enabled)return;
+    bool afterReadable=false;
+    const auto model=reinterpret_cast<const unsigned char*>(snapshot.key.model);
+    if(snapshot.maskReadable&&readableRange(model,0xEF0)){
+        std::memcpy(&snapshot.key.maskAfter,model+0xEE8,sizeof(snapshot.key.maskAfter));
+        afterReadable=true;
+    }
+    if(afterReadable)snapshot.key.context|=64u;
+    static std::mutex mutex;
+    static kharvox::hands::NativeHandsDiagnosticPolicy policy;
+    std::lock_guard<std::mutex> guard(mutex);
+    const auto tick=GetTickCount64();
+    if(!policy.sample(true,true,tick,snapshot.key))return;
+    const auto path=kharvox::logPathA("native_hands.log");
+    std::ofstream out(path,policy.count()==1?std::ios::trunc:std::ios::app);
+    if(!out){
+        log("[NATIVE-HANDS] cannot open diagnostic file; capture disabled");
+        nativeHandsDiagnosticFull.store(true);return;
+    }
+    if(policy.count()==1){
+        out<<"KHARVOX_NATIVE_HANDS_DIAGNOSTIC version=1 profile="<<kharvox::game::name()<<'\n';
+        log("[NATIVE-HANDS] read-only capture active: "+path);
+    }
+    const auto pair=kharvox::unpackAerWeaponPairState(aerRenderPairState.load());
+    const auto&key=snapshot.key;
+    out<<"[NATIVE-HANDS] sample="<<policy.count()<<" tick_ms="<<tick<<" level="<<key.level
+        <<" gameplay="<<snapshot.gameplay<<" cutscene="<<snapshot.cutscene
+        <<" collectible="<<snapshot.collectible<<" controller="<<snapshot.controller
+        <<" weapon="<<KharvoxWeaponKindKey(static_cast<KharvoxWeaponKind>(key.weapon))
+        <<" hands_token=0x"<<std::hex<<key.owner<<" model_token=0x"<<key.model
+        <<" animator_token=0x"<<key.animator<<" mask_before=0x"<<key.maskBefore
+        <<" mask_after=0x"<<key.maskAfter<<std::dec<<" mask_readable="<<snapshot.maskReadable
+        <<" after_readable="<<afterReadable<<" animator_readable="<<snapshot.animatorReadable
+        <<" sfs_vr="<<kharvox::sfs::vrEnabled()<<" pair_enabled="<<pair.enabled
+        <<" pair_phase="<<pair.eye<<" pair_serial="<<pair.serial<<'\n';
+    if(policy.count()==kharvox::hands::NativeHandsDiagnosticPolicy::maximumSamples){
+        out<<"CAPTURE_LIMIT samples="<<policy.count()<<'\n';nativeHandsDiagnosticFull.store(true);
+        log("[NATIVE-HANDS] capture limit reached; restart for another capture");
+    }
+}
 void setHandsHitReactionsSuppressed(bool suppress);
 void setWeaponKickSuppressed(bool suppress);
 void invalidateAerWeaponPairCache();
 bool synchronizeAerAnimatedWeaponProp(
     uintptr_t entity, const float* nativeOrigin, const float* nativeAxis,
     float synchronizedOrigin[3], float synchronizedAxis[9],bool finalEntity=false);
+
+using NativeHandsThrowMessageFn=void*(__fastcall*)(void*,void*,int,void*,
+    const float*,const float*,float,int);
+NativeHandsThrowMessageFn originalHandsThrowMessage{};
+std::atomic<bool> physicalGrenadeThrowAvailable{};
+std::mutex grenadeThrowMutex;
+kharvox::GrenadeThrowAim grenadeThrowAim;
+std::atomic<std::uint64_t> lastPhysicalGrenadeQueue{};
+
+__declspec(noinline) void* __fastcall handsThrowMessageHook(void* message,
+    void* player,int type,void* throwable,const float* origin,const float* axis,
+    float initialSpeed,int serverTime) {
+    const auto base=reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+    const auto caller=reinterpret_cast<uintptr_t>(_ReturnAddress())-base;
+    std::array<float,9> physicalAxis{};
+    bool overrideAxis=false;
+    if(kharvox::extendedDiagnosticsEnabled()&&KharvoxCameraIsLocalPlayer(player)){
+        const auto tick=GetTickCount64(),queued=lastPhysicalGrenadeQueue.load(std::memory_order_relaxed);
+        std::ostringstream trace;trace<<"[GRENADE-NATIVE] tick_ms="<<tick
+            <<" type="<<type<<" caller_rva=0x"<<std::hex<<caller
+            <<" throwable_token="<<throwable<<std::dec<<" queue_age_ms="<<(queued?tick-queued:0)
+            <<" initial_speed="<<initialSpeed;
+        log(trace.str());
+    }
+    // Steam idHands::ThrowItem constructs this release message at D6B932.
+    // Constructor B1FE40 copies all nine axis floats synchronously to E40..E60.
+    // Neither AI projectiles nor other players/callers may consume this aim.
+    if(caller==0xD6B937&&type==5&&KharvoxCameraIsLocalPlayer(player)
+        &&KharvoxCameraGameplayActive()&&!KharvoxCameraCutsceneActive()){
+        std::lock_guard<std::mutex> guard(grenadeThrowMutex);
+        overrideAxis=grenadeThrowAim.take(GetTickCount64(),true,physicalAxis);
+    }
+    if(overrideAxis&&kharvox::extendedDiagnosticsEnabled())
+        log("[GRENADE-THROW] physical release axis applied; native origin, speed and projectile lifecycle retained");
+    return originalHandsThrowMessage(message,player,type,throwable,origin,
+        overrideAxis?physicalAxis.data():axis,initialSpeed,serverTime);
+}
+
+bool installPhysicalGrenadeThrow(unsigned char* image) {
+    if(physicalGrenadeThrowAvailable.load(std::memory_order_acquire))return true;
+    char enabled[8]{};
+    if(GetEnvironmentVariableA("KHARVOX_PHYSICAL_GRENADE_THROW",enabled,sizeof(enabled))!=1
+        ||enabled[0]!='1')return false;
+    // New ABI/caller observations are verified against the installed Steam
+    // executable. Do not infer a GOG address or signature from another game.
+    if(kharvox::game::build()!=kharvox::game::Build::Steam20240321){
+        log("[GRENADE-THROW] physical aiming unavailable on this build; native equipment button retained");
+        return false;
+    }
+    constexpr unsigned char constructorSignature[]{
+        0x40,0x55,0x56,0x57,0x48,0x83,0xec,0x40,0x48,0xc7,0x44,0x24,
+        0x30,0xfe,0xff,0xff,0xff,0x48,0x89,0x5c,0x24,0x70,0x49,0x8b,
+        0xf9,0x41,0x8b,0xd8,0x48,0x8b,0xea};
+    constexpr unsigned char callerSignature[]{
+        0x89,0x5c,0x24,0x38,0xf3,0x44,0x0f,0x11,0x4c,0x24,0x30,
+        0x48,0x8d,0x45,0xb0,0x48,0x89,0x44,0x24,0x28,0x48,0x8d,
+        0x44,0x24,0x60,0x48,0x89,0x44,0x24,0x20,0x41,0xb8,0x05,
+        0x00,0x00,0x00,0x48,0x8b,0x96,0xb0,0x02,0x00,0x00,0x48,
+        0x8d,0x4d,0x10,0xe8,0x09,0x45,0xdb,0xff};
+    if(std::memcmp(image+0xB1FE40,constructorSignature,sizeof(constructorSignature))
+        ||std::memcmp(image+0xD6B903,callerSignature,sizeof(callerSignature))){
+        log("[GRENADE-THROW] native constructor/caller signature mismatch; equipment button retained");
+        return false;
+    }
+    const auto initialized=MH_Initialize();
+    if(initialized!=MH_OK&&initialized!=MH_ERROR_ALREADY_INITIALIZED)return false;
+    if(MH_CreateHook(image+0xB1FE40,reinterpret_cast<void*>(&handsThrowMessageHook),
+        reinterpret_cast<void**>(&originalHandsThrowMessage))!=MH_OK)return false;
+    if(MH_EnableHook(image+0xB1FE40)!=MH_OK){MH_RemoveHook(image+0xB1FE40);return false;}
+    physicalGrenadeThrowAvailable.store(true,std::memory_order_release);
+    log("[GRENADE-THROW] Steam native throw-axis hook ready; physical releases only");
+    return true;
+}
 
 bool installMuzzleFireAxisOverride(unsigned char* image) {
     // idHands::FireWeapon normally redirects the muzzle toward the 2D
@@ -1247,6 +1417,97 @@ bool validPropJoint(const float origin[3], const float axis[9]) {
     return true;
 }
 
+// Optional workshop data is read once. The validated shotgun keeps its native
+// pump/base indices, regardless of external configuration.
+const kharvox::hands::WeaponNativeBinding& workshopBinding(unsigned kind) {
+    static const auto binding=[] {
+        std::ifstream file(kharvox::runtimePathA("hand_joint_bindings.cfg"));
+        return kharvox::hands::readWeaponNativeBindings(file);
+    }();
+    return binding[kind<binding.size()?kind:0];
+}
+void captureWorkshopJoints(void* entity,const float* propAxis,unsigned kind) {
+    const auto& b=workshopBinding(kind);
+    if(!b.capture||b.kind!=kind||!getJointTransform||!getNamedJointTransform)return;
+    static std::mutex captureMutex;
+    std::lock_guard captureLock(captureMutex);
+    static unsigned captured{}; static unsigned attempts{};
+    static std::array<std::array<float,3>,128> previous{};
+    static ULONGLONG previousTick{};
+    const auto tick=GetTickCount64();
+    if(tick-previousTick<100)return;
+    previousTick=tick;
+    if(captured>=3||attempts>=90)return;
+    ++attempts;
+    std::array<std::array<float,3>,128> origins{};
+    std::array<std::array<float,9>,128> axes{};
+    for(unsigned i=0;i<b.count;++i)
+        if(!getJointTransform(entity,1,i,origins[i].data(),axes[i].data())
+            ||!validPropJoint(origins[i].data(),axes[i].data()))return;
+    const auto bytes=static_cast<const unsigned char*>(entity);
+    if(!readableRange(bytes+0xC8,48))return;
+    float cachedOrigin[3]{},cachedAxis[9]{};
+    std::memcpy(cachedOrigin,bytes+0xC8,12);std::memcpy(cachedAxis,bytes+0xD4,36);
+    for(unsigned slot=0;slot<2;++slot){
+        float world[3]{},worldAxis[9]{},local[3]{},localAxis[9]{};
+        if(!getNamedJointTransform(entity,1,b.names[slot].c_str(),world,worldAxis)
+            ||!kharvox::laserWorldToLocal(world,worldAxis,cachedOrigin,cachedAxis,local,localAxis))return;
+        for(unsigned c=0;c<3;++c)if(std::fabs(local[c]-origins[b.indices[slot]][c])>.002f)return;
+    }
+    if(captured){
+        for(unsigned i=0;i<b.count;++i)for(unsigned c=0;c<3;++c)
+            if(std::fabs(origins[i][c]-previous[i][c])>.0001f){captured=0;break;}
+    }
+    previous=origins;
+    std::ofstream out(kharvox::runtimePathA("native_hand_calibration.json"));
+    if(!out)return;
+    out.precision(9);
+    out<<"{\"version\":1,\"weapon\":\""<<KharvoxWeaponKindKey(static_cast<KharvoxWeaponKind>(kind))
+       <<"\",\"cast_sha256\":\""<<b.sourceHash<<"\",\"named_indices_verified\":true,\"samples\":"<<++captured
+       <<",\"prop_axis\":[";
+    for(unsigned i=0;i<9;++i)out<<(i?",":"")<<propAxis[i];
+    out<<"],\"joints\":[";
+    for(unsigned i=0;i<b.count;++i){
+        out<<(i?",":"")<<"{\"index\":"<<i<<",\"origin\":[";
+        for(unsigned c=0;c<3;++c)out<<(c?",":"")<<origins[i][c];
+        out<<"],\"axis\":[";
+        for(unsigned c=0;c<9;++c)out<<(c?",":"")<<axes[i][c];
+        out<<"]}";
+    }
+    out<<"]}";
+}
+
+void publishPropSupportFrame(void* propEntity,const float* origin,const float* axis){
+    if(!supportModelsRequested()||!customHandsRequested()||!controllerPlacementActive()
+        ||!KharvoxCameraGameplayActive()||KharvoxCameraCutsceneActive()
+        ||KharvoxWeaponCollectibleAnimationActive())return;
+    kharvox::hands::WeaponSupportFrame frame{};
+    std::copy_n(origin,3,frame.origin.begin());std::copy_n(axis,9,frame.axis.begin());
+    frame.tick=GetTickCount64();frame.epoch=weaponSourceEpoch.load(std::memory_order_acquire);
+    frame.level=KharvoxCameraLevelTransitionGeneration();frame.present=KharvoxCameraCurrentPresentSerial();
+    frame.weapon=static_cast<unsigned>(KharvoxWeaponCurrentKind());
+    captureWorkshopJoints(propEntity,axis,frame.weapon);
+    const auto& configured=workshopBinding(frame.weapon);
+    const bool shotgun=frame.weapon==static_cast<unsigned>(KharvoxWeaponKind::Shotgun);
+    if((shotgun||(configured.kind&&configured.kind==frame.weapon))&&getJointTransform){
+        const std::array<unsigned,2> indices=shotgun?std::array<unsigned,2>{3,1}:configured.indices;
+        for(unsigned slot=0;slot<2;++slot)
+            if(getJointTransform(propEntity,1,indices[slot],frame.jointOrigin[slot].data(),frame.jointAxis[slot].data())
+                &&validPropJoint(frame.jointOrigin[slot].data(),frame.jointAxis[slot].data()))
+                frame.jointMask|=1u<<slot;
+    }
+    kharvox::AerSourceKey key{};
+    if(KharvoxCameraUsesAerGameplaySource()){
+        if(!weaponRootSourceValid||!kharvox::aerWeaponPropSourceMatches(weaponRootSource,
+            weaponRootSourcePresent,frame.present,frame.level,frame.epoch,
+            pose.resetGeneration.load(std::memory_order_acquire)))return;
+        frame.bodyOrigin=weaponRootSource.camera.bodyOrigin;frame.bodyAxis=weaponRootSource.camera.bodyAxis;
+        key=weaponRootSource.camera.key;
+    }else if(!KharvoxCameraGetBodyPose(frame.bodyOrigin.data(),frame.bodyAxis.data()))return;
+    std::lock_guard lock(laserSourceMutex);
+    latestSupportSource=frame;supportSources.remember(key,frame);
+}
+
 void publishPropLaserMuzzlePose(void* propEntity, const float* propOrigin,
                                 const float* propAxis) {
     const auto kind = activeWeaponKind.load(std::memory_order_acquire);
@@ -1764,6 +2025,24 @@ void dumpBoneSnapshot(void* hands) {
     };
 
     const unsigned validBones = dumpModelBones("BONE", model, 96);
+    if(nativeHandsDiagnosticRequested()&&nativeHandsDiagnosticLayoutSupported.load()
+        &&getNamedJointTransform&&readableRange(model,0xEF0)){
+        // Explicit F4 capture only, on the existing guarded bone-snapshot path.
+        // Record the proven attachment names rather than guessing joint indices.
+        for(const char*name:{"lefthandattach","righthandattach"}){
+            float origin[3]{},axis[9]{};
+            const bool found=getNamedJointTransform(model,1,name,origin,axis);
+            bool finite=found;
+            for(float value:origin)finite=finite&&std::isfinite(value);
+            for(float value:axis)finite=finite&&std::isfinite(value);
+            out<<"NAMED_BONE name="<<name<<" mode=1 valid="<<finite;
+            if(finite){
+                out<<" origin="<<origin[0]<<','<<origin[1]<<','<<origin[2]<<" axis=";
+                for(int i=0;i<9;++i)out<<(i?",":"")<<axis[i];
+            }
+            out<<'\n';
+        }
+    }
     const auto propEntity = lastWeaponPropEntity.load(std::memory_order_acquire);
     const unsigned validPropBones = dumpModelBones(
         "PROP_BONE", reinterpret_cast<void*>(propEntity), 128);
@@ -1832,11 +2111,16 @@ bool readCollectibleAnimation(void* hands) {
 extern "C" void __fastcall updateHandsTransformHook(void* hands) {
     activeHands = hands;
     if(kharvox::sfs::vrEnabled())weaponRootSourceValid=false;
-    if (originalUpdateHandsTransform) originalUpdateHandsTransform(hands);
+    if (originalUpdateHandsTransform) {
+        const kharvox::PerformanceCpuTimer timer(kharvox::PerformanceCpuScope::NativeHandsUpdate);
+        originalUpdateHandsTransform(hands);
+    }
+    const kharvox::PerformanceCpuTimer timer(kharvox::PerformanceCpuScope::CustomHandsUpdate);
 
     // Observe the live native animation even in Quad/cinematics, before the
     // gameplay-only model helper guard. Never retain a game object pointer.
     const bool collectible = readCollectibleAnimation(hands);
+    const auto nativeDiagnostic=captureNativeHandsDiagnostic(hands,collectible);
     collectibleSeenLevel.store(KharvoxCameraLevelTransitionGeneration(), std::memory_order_relaxed);
     collectibleSeenPresent.store(collectible ? KharvoxCameraCurrentPresentSerial() : 0,
         std::memory_order_release);
@@ -1850,11 +2134,13 @@ extern "C" void __fastcall updateHandsTransformHook(void* hands) {
         neutralGripPivotValid.store(false, std::memory_order_release);
         controllerRootProbeValid = false;
         activeHands = nullptr;
+        finishNativeHandsDiagnostic(nativeDiagnostic);
         return;
     }
     pollBoneSnapshot(hands);
     captureAnimatedGripPivot(hands);
     hideAnimatedPlayerRootModel(hands);
+    finishNativeHandsDiagnostic(nativeDiagnostic);
     activeHands = nullptr;
 }
 
@@ -1924,6 +2210,19 @@ bool installUpdateHandsTransformHook(unsigned char* image) {
     if (kharvox::game::compare(target, signature, sizeof(signature))) {
         log("RVA 0xD7D5D0 idHands update signature mismatch; joint scanner disabled");
         return false;
+    }
+    if(nativeHandsDiagnosticRequested()){
+        constexpr unsigned char getterSignature[]{0x48,0x8B,0x81,0xB8,0x02,0x00,0x00,0xC3};
+        constexpr unsigned char hideSignature[]{0x48,0x63,0xC2,0x48,0x8B,0x91,0xE8,0x0E,0x00,0x00,
+            0x48,0x0F,0xB3,0xC2,0x48,0x89,0x91,0xE8,0x0E,0x00,0x00,0xC3};
+        const bool supported=kharvox::game::build()==kharvox::game::Build::Steam20240321
+            &&readableRange(image+0xD60D10,sizeof(getterSignature))
+            &&!std::memcmp(image+0xD60D10,getterSignature,sizeof(getterSignature))
+            &&readableRange(image+0x15EFEC0,sizeof(hideSignature))
+            &&!std::memcmp(image+0x15EFEC0,hideSignature,sizeof(hideSignature));
+        nativeHandsDiagnosticLayoutSupported.store(supported);
+        log(supported?"[NATIVE-HANDS] Steam getter/visibility layout validated; read-only diagnostic armed"
+            :"[NATIVE-HANDS] unsupported getter/visibility layout; diagnostic disabled, normal VR retained");
     }
     auto trampoline = static_cast<unsigned char*>(
         VirtualAlloc(nullptr, 64, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
@@ -2504,6 +2803,7 @@ extern "C" void __fastcall setRenderEntityAxisHook(void* rawEntity, const float*
             // Query its native animated joints while the entity is valid; unlike
             // the transient child-render scratch object, this exposes the barrel
             // joints consistently for every recognized weapon.
+            publishPropSupportFrame(rawEntity,propOrigin,axisToCopy);
             publishPropLaserMuzzlePose(rawEntity, propOrigin, axisToCopy);
         }
     }
@@ -2518,6 +2818,7 @@ bool KharvoxWeaponInstallHook() {
     if (installed.load(std::memory_order_acquire)) return true;
     auto image = reinterpret_cast<unsigned char*>(GetModuleHandleW(nullptr));
     if (!image) return false;
+    installPhysicalGrenadeThrow(image);
     installWeaponAmmoSnapshot(image);
     installHandsResourceResolverNullGuard(image);
     installFrontPushbackSuppression(image);
@@ -2567,6 +2868,21 @@ bool KharvoxWeaponInstallHook() {
         << " scale=" << configuredWeaponScale();
     log(installedMessage.str());
     return true;
+}
+
+bool KharvoxWeaponPhysicalGrenadeThrowAvailable() {
+    return physicalGrenadeThrowAvailable.load(std::memory_order_acquire);
+}
+bool KharvoxWeaponQueueGrenadeThrow(const float worldDirection[3]) {
+    if(!worldDirection||!KharvoxWeaponPhysicalGrenadeThrowAvailable())return false;
+    std::lock_guard<std::mutex> guard(grenadeThrowMutex);
+    const auto tick=GetTickCount64();
+    lastPhysicalGrenadeQueue.store(tick,std::memory_order_relaxed);
+    return grenadeThrowAim.queue(worldDirection,tick);
+}
+void KharvoxWeaponCancelGrenadeThrow() {
+    std::lock_guard<std::mutex> guard(grenadeThrowMutex);
+    grenadeThrowAim.cancel();
 }
 
 bool KharvoxWeaponIsTrackingActive() {
@@ -2624,6 +2940,14 @@ int KharvoxWeaponResolveAerDraw(kharvox::AerSourceKey source,const float* origin
             &&kharvox::laserFollowDraw(origin,axis,targetOrigin,targetAxis,sample.origin.data(),sample.direction.data())){
             sample.bodyOrigin=frame.camera.bodyOrigin;sample.bodyAxis=frame.camera.bodyAxis;
             laserDrawSources.remember(source,sample);
+        }
+        kharvox::hands::WeaponSupportFrame support{};
+        if(supportModelsRequested()&&supportSources.find({matchedPoseId,source.level,source.eye,source.domain},support)
+            &&support.epoch==frame.input.epoch&&support.weapon==static_cast<unsigned>(KharvoxWeaponCurrentKind())
+            &&kharvox::aerWeaponPoseNear(support.origin.data(),support.axis.data(),origin,axis)){
+            std::copy_n(targetOrigin,3,support.origin.begin());std::copy_n(targetAxis,9,support.axis.begin());
+            support.bodyOrigin=frame.camera.bodyOrigin;support.bodyAxis=frame.camera.bodyAxis;
+            supportDrawSources.remember(source,support);
         }
     }
     return status;
@@ -2756,6 +3080,25 @@ KharvoxWeaponAmmoState KharvoxWeaponGetAmmoState(KharvoxWeaponKind kind) {
     const auto tick = weaponAmmoSnapshotTick.load(std::memory_order_acquire);
     if (!tick || GetTickCount64() - tick > 500) return KharvoxWeaponAmmoState::Unknown;
     return weaponAmmoStates[index].load(std::memory_order_acquire);
+}
+
+bool KharvoxWeaponGetSupportFrame(kharvox::hands::WeaponSupportFrame& frame,
+    unsigned long long sourcePose,int sourceEye){
+    if(!supportModelsRequested())return false;
+    kharvox::hands::WeaponSupportFrame sample{};
+    {
+        std::lock_guard lock(laserSourceMutex);
+        if(sourcePose&&sourceEye>=0&&sourceEye<2){
+            const kharvox::AerSourceKey key{sourcePose,KharvoxCameraLevelTransitionGeneration(),sourceEye,0};
+            const bool draw=kharvox::sfs::vrEnabled()&&supportDrawSources.find(key,sample);
+            if(!draw&&!supportSources.find(key,sample))return false;
+        }else if(sourcePose)return false;
+        else sample=latestSupportSource;
+    }
+    if(!kharvox::hands::weaponSupportFrameCurrent(sample,GetTickCount64(),
+        weaponSourceEpoch.load(std::memory_order_acquire),KharvoxCameraLevelTransitionGeneration(),
+        static_cast<unsigned>(KharvoxWeaponCurrentKind())))return false;
+    frame=sample;return true;
 }
 
 bool KharvoxWeaponGetLaserMuzzlePose(float origin[3], float direction[3],

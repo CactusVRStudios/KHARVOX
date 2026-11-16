@@ -3,7 +3,9 @@
 
 #include <cmath>
 #include <sstream>
+#include <fstream>
 #include "../src/hud/OffhandHudPolicy.h"
+#include "../src/hands/WeaponSupportPolicy.h"
 
 namespace {
 
@@ -13,8 +15,121 @@ bool near(float left, float right) {
 
 }
 
-int main() {
+int main(int argc,char** argv) {
+    if(argc>2)return 190;
+    if(argc==2){
+        std::ifstream input(argv[1]);kharvox::OffhandHudConfig config;
+        if(!input||!kharvox::readOffhandHudConfig(input,config)||!config.watchReading
+            ||!near(config.armourGapCm,3.5f))return 191;
+        for(const auto& bounds:config.armourBounds)for(int i=0;i<3;++i)
+            if(bounds.minimum[i]>=bounds.maximum[i])return 192;
+    }
     using namespace kharvox;
+    {
+        // Original reading: no reflection or watch rotation, independent of
+        // viewer/eye. Exercise both physical hands, all panel calibrations,
+        // wrist orientations and the existing native support-wrist mapping.
+        constexpr float modes[6][7]{
+            {-9.5f,-5,24.5f,-65,90,15,.4f},{-10,-14,0,-75,-65,20,.4f},
+            {-4.5f,20.5f,17.5f,-65,60,15,.4f},{-13,12.5f,11,-55,-100,0,.4f},
+            {-11.5f,7.5f,18,-130,95,-50,.4f},{-18,-1,6,-85,-65,30,.4f}};
+        const OffhandHudBounds bounds{{-16,-12,-18},{10,20,37}};
+        constexpr float units=39.3701f;
+        const float identity[9]{1,0,0,0,1,0,0,0,1};
+        for(int mode=0;mode<6;++mode)for(int angle:{0,45,90,180,270})
+            for(bool locked:{false,true})for(float reference:{-1.f,1.f}){
+            OffhandHudCalibration values;
+            for(int i=0;i<3;++i){values.centimeters[i]=modes[mode][i];values.degrees[i]=modes[mode][3+i];}
+            OffhandHudCalibration wrist;wrist.degrees={float(angle),float(angle/2),float(-angle/3)};
+            float hand[9]{},grip[3]{10,20,30};offhandHudBasis(identity,wrist,hand);
+            if(locked){
+                hands::SupportHudGeometry geometry;geometry.valid=true;
+                geometry.metersPerAssetUnit=.02f;geometry.anchor={22,-2,3};
+                geometry.gripToAsset=hands::math::scale(50);
+                const float degrees[]{float(angle),float(angle/2),float(-angle/3)};
+                auto weapon=hands::math::multiply(hands::math::translation(10,20,30),
+                    hands::math::rotationDegrees(degrees));
+                if(!hands::supportHudFrame(weapon,geometry,units,grip,hand))return 212;
+            }
+            float axis[9]{},center[3]{};
+            offhandHudBasis(hand,values,axis);
+            offhandHudOrigin(grip,hand,axis,values,mode/2,units,center);
+            const std::array<float,9> beforeAxis{axis[0],axis[1],axis[2],axis[3],axis[4],axis[5],axis[6],axis[7],axis[8]};
+            const std::array<float,3> before{center[0],center[1],center[2]};
+            if(!clearOriginalOffhandHud(center,axis,grip,hand,bounds,reference,2,units,25))return 213;
+            for(int i=0;i<9;++i)if(axis[i]!=beforeAxis[i])return 214;
+            float normal[3]{axis[1]*axis[5]-axis[2]*axis[4],axis[2]*axis[3]-axis[0]*axis[5],axis[0]*axis[4]-axis[1]*axis[3]};
+            for(float& v:normal)v*=reference>0?-1.f:1.f;
+            for(int row=0;row<2;++row){float tangent{};
+                for(int i=0;i<3;++i)tangent+=(center[i]-before[i])*axis[row*3+i];
+                if(std::abs(tangent)>.0001f)return 215;
+            }
+            for(int corner=0;corner<8;++corner){float distance{};
+                for(int i=0;i<3;++i){float point=grip[i];
+                    for(int j=0;j<3;++j)point+=hand[j*3+i]*((corner&(1<<j))?bounds.maximum[j]:bounds.minimum[j])*units*.01f;
+                    distance+=(center[i]-point)*normal[i];}
+                if(distance<2.f*units*.01f-.0001f)return 216;
+            }
+            const std::array<float,3> once{center[0],center[1],center[2]};
+            if(!clearOriginalOffhandHud(center,axis,grip,hand,bounds,reference,2,units,25))return 217;
+            for(int i=0;i<3;++i)if(!near(center[i],once[i]))return 218;
+            for(float eyeOffset:{-1.28f,1.28f}){
+                const float eye[3]{eyeOffset,0,0},forward[3]{0,0,1};float nearest{};
+                if(!offhandHudNearestDepth(center,axis,25,512.f/300.f,eye,forward,nearest))return 219;
+                for(int i=0;i<3;++i)if(!near(center[i],once[i]))return 220;
+            }
+        }
+        // Invalid native reference cannot leave a partial transform.
+        float center[3]{},axis[9]{1,0,0,0,1,0,0,0,1},grip[3]{};
+        if(clearOriginalOffhandHud(center,axis,grip,identity,bounds,0,2,units)
+            ||center[2]!=0||axis[0]!=1)return 221;
+        // Far-away forearm sections do not affect this panel's clearance.
+        OffhandHudBounds sectioned=bounds;sectioned.sectionMask=3;
+        sectioned.sections[0]={-4,-4,-1,4,4,1};
+        sectioned.sections[1]={80,-4,-1,100,4,37};
+        if(!clearOriginalOffhandHud(center,axis,grip,identity,sectioned,-1,2,100,25)
+            ||!near(center[2],3))return 222;
+    }
+    {
+        // A remote part of the forearm must not lift a panel by 30 cm when
+        // the armor directly under its footprint needs only 3 cm clearance.
+        OffhandHudBounds bounds{{-100,-100,-2},{100,100,30}};
+        bounds.sectionMask=3;
+        bounds.sections[0]={-4,-4,-1,4,4,1};
+        bounds.sections[1]={80,-4,-1,100,4,30};
+        const float hand[9]{1,0,0,0,1,0,0,0,1},grip[3]{},eye[3]{0,0,100};
+        float axis[9]{1,0,0,0,1,0,0,0,1},center[3]{};
+        if(!watchOffhandHud(center,axis,grip,hand,bounds,eye,2,100,false,25)
+            ||!near(center[2],3))return 200;
+        center[0]=90;center[2]=0;
+        if(!watchOffhandHud(center,axis,grip,hand,bounds,eye,2,100,false,25)
+            ||!near(center[2],32))return 201;
+        center[0]=40;center[2]=0;
+        if(!watchOffhandHud(center,axis,grip,hand,bounds,eye,2,100,false,25)
+            ||!near(center[2],0))return 202;
+        // Missing section metadata retains the compatible conservative path.
+        bounds.sectionMask=0;center[0]=0;
+        if(!watchOffhandHud(center,axis,grip,hand,bounds,eye,2,100,false,25)
+            ||!near(center[2],32))return 203;
+    }
+    {
+        const float native[9]{0,-2,0,0,0,-3,4,0,0},forward[3]{1,0,0},center[3]{};
+        const float reference=offhandHudPixelFacing(native,forward);
+        if(!near(reference,1))return 204;
+        for(float sign:{-1.f,1.f})for(float eyeX:{-3.2f,3.2f}){
+            float axis[9]{2,0,0,0,3,0,0,0,4};const float eye[3]{eyeX,0,sign*100};
+            const bool changed=faceOriginalOffhandHud(axis,center,eye,reference);
+            if(changed!=(sign>0)||!near(axis[4],3)||!near(axis[0]*axis[4]*axis[8],24))return 205;
+            if(offhandHudPixelFacing(axis,eye)*reference>=0)return 206;
+            if(faceOriginalOffhandHud(axis,center,eye,reference))return 207;
+            float origin[3]{},x{},y{};
+            if(!centeredOffhandHud(center,axis,25,512.f/300.f,origin,x,y))return 208;
+            for(int i=0;i<3;++i)if(!near(origin[i]+.5f*(axis[i]*x+axis[3+i]*y),center[i]))return 209;
+        }
+        float axis[9]{2,0,0,0,3,0,0,0,4};const float eye[3]{0,0,100};
+        if(faceOriginalOffhandHud(axis,center,eye,0)||!near(axis[0],2))return 210;
+        if(faceOriginalOffhandHud(axis,center,eye,-reference)||!near(axis[0],2))return 211;
+    }
     {
         if(!ownedWeaponWheel(0x22456f8)||!ownedWeaponWheel(0x2245608)||ownedWeaponWheel(0x2240978))return 170;
         const float eye[3]{5,6,7},head[9]{0,1,0,-1,0,0,0,0,1};float center[3]{},out[9]{};
@@ -121,6 +236,26 @@ int main() {
         if(!near(origin[1],16))return 143;
     }
 
+    {
+        // Regression: original reading must retain armor clearance. Turning
+        // the watch rotation off must not leave the panel inside Praetor.
+        std::ostringstream encoded;encoded<<"4 1 0 2 ";
+        for(int i=0;i<6;++i)encoded<<"1 2 3 4 5 6 .4 ";
+        encoded<<"-10 -20 -4 10 20 8 -11 -21 -5 11 21 9";
+        OffhandHudConfig config;std::istringstream input(encoded.str());
+        if(!readOffhandHudConfig(input,config)||config.watchReading||!near(config.armourGapCm,2))return 195;
+        for(int handed=0;handed<2;++handed)for(float sign:{-1.f,1.f}){
+            float center[3]{},axis[9]{2,0,0,0,3,0,0,0,4};
+            const float grip[3]{},hand[9]{1,0,0,0,1,0,0,0,1},eye[3]{0,0,sign*100};
+            if(!watchOffhandHud(center,axis,grip,hand,config.armourBounds[handed],eye,
+                config.armourGapCm,39.3701f,config.watchReading))return 196;
+            const float expected=(sign>0?config.armourBounds[handed].maximum[2]+2.f
+                :config.armourBounds[handed].minimum[2]-2.f)*.393701f;
+            if(!near(center[2],expected)||!near(center[0],0)||!near(center[1],0))return 197;
+            for(int i=0;i<9;++i)if(!near(axis[i],i==0?2.f:i==4?3.f:i==8?4.f:0.f))return 198;
+        }
+    }
+
     // Deferred submission loses the thread-local extraction scope. Decline
     // jobs only for the exact owned SWF/GUI pair with an active hand surface.
     if(!drawProgMeterInline(true,10,10,20,20,0))return 144;
@@ -140,6 +275,54 @@ int main() {
     if(!suppressOffhandHudFallback(true,true,false,false,true,true))return 117;
     if(!suppressOffhandHudFallback(true,true,false,false,false,false))return 118;
     if(suppressOffhandHudFallback(false,false,true,true,true,false))return 119;
+
+    {
+        const OffhandHudBounds bounds{{-10,-20,-4},{10,20,8}};
+        float center[3]{5,6,0},axis[9]{2,0,0,0,3,0,0,0,4};
+        const float grip[3]{},hand[9]{1,0,0,0,1,0,0,0,1},eye[3]{0,0,100};
+        if(!watchOffhandHud(center,axis,grip,hand,bounds,eye,3.5f,100)
+            ||!near(center[0],5)||!near(center[1],6)||!near(center[2],11.5f)
+            ||!near(axis[0],-2)||!near(axis[4],-3)||!near(axis[8],4))return 180;
+        float origin[3]{},sx{},sy{};
+        if(!centeredOffhandHud(center,axis,25,512.f/300.f,origin,sx,sy))return 181;
+        for(int i=0;i<3;++i)if(!near(origin[i]+.5f*(axis[i]*sx+axis[3+i]*sy),center[i]))return 182;
+        if(!watchOffhandHud(center,axis,grip,hand,bounds,eye,3.5f,100,false)
+            ||!near(center[2],11.5f)||!near(axis[0],-2))return 183;
+        center[2]=40;
+        if(!watchOffhandHud(center,axis,grip,hand,bounds,eye,3.5f,100,false)||!near(center[2],40))return 184;
+        const float below[3]{0,0,-100};center[2]=0;
+        if(!watchOffhandHud(center,axis,grip,hand,bounds,below,3.5f,100,false)||!near(center[2],-7.5f))return 185;
+        const OffhandHudBounds invalid{};const float before=center[2];
+        if(watchOffhandHud(center,axis,grip,hand,invalid,eye,3.5f,100)
+            ||!near(center[2],before)||!near(axis[0],-2))return 186;
+        std::ostringstream encoded;encoded<<"4 1 1 3.5 ";
+        for(int i=0;i<6;++i)encoded<<"1 2 3 4 5 6 .4 ";
+        encoded<<"-10 -20 -4 10 20 8 -11 -21 -5 11 21 9";
+        OffhandHudConfig restored;std::istringstream input(encoded.str());
+        if(!readOffhandHudConfig(input,restored)||!restored.watchReading
+            ||!near(restored.armourGapCm,3.5f)||!near(restored.armourBounds[1].maximum[2],9))return 187;
+        std::istringstream truncated(encoded.str().substr(0,encoded.str().size()-2));
+        if(readOffhandHudConfig(truncated,restored)||!restored.watchReading)return 188;
+        std::istringstream bad("4 1 1 -1");if(readOffhandHudConfig(bad,restored))return 189;
+    }
+
+    {
+        const OffhandHudBounds bounds{{-8,-20,-5},{9,22,11}};
+        for(float sign:{-1.f,1.f}){
+            const float grip[3]{10,20,30},hand[9]{0,1,0,-1,0,0,0,0,1};
+            float center[3]{11,21,31},axis[9]{0,2,2,3,0,0,0,0,4};
+            const float eye[3]{11,21+sign*100,31-sign*100};
+            if(!watchOffhandHud(center,axis,grip,hand,bounds,eye,3.5f,39.3701f))return 193;
+            float n[3]{0,sign/std::sqrt(2.f),-sign/std::sqrt(2.f)};
+            for(int corner=0;corner<8;++corner){
+                float distance{};
+                for(int i=0;i<3;++i){float p=grip[i];
+                    for(int j=0;j<3;++j)p+=hand[j*3+i]*((corner&(1<<j))?bounds.maximum[j]:bounds.minimum[j])*.393701f;
+                    distance+=(center[i]-p)*n[i];}
+                if(distance<3.5f*.393701f-.0001f)return 194;
+            }
+        }
+    }
 
     // The physically reviewed Meta/VDXR projection remains the reference.
     if (!near(selectHudLayoutFit(0.83909965f, 0.966f), calibratedHudLayoutFit)) return 1;

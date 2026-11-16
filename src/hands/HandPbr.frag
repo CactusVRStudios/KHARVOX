@@ -43,7 +43,9 @@ void main() {
         outColor=vec4(outputTransfer==1 ? linearToSrgb(baseColor.rgb) : baseColor.rgb,1.0);
         return;
     }
-    vec4 albedo = texture(baseColorTexture, uv) * baseColor;
+    // Negative W marks procedural equipment: retain the normal lit material,
+    // without sampling a controller hand's skin texture.
+    vec4 albedo = material.w < 0.0 ? baseColor : texture(baseColorTexture, uv) * baseColor;
     vec3 normal = normalize(worldNormal);
     // Blender marks the supplied hand material double-sided. glTF requires
     // the normal to face the viewer on a back-facing fragment. Without this,

@@ -27,7 +27,8 @@ kharvox::AerWorldViewResult KharvoxCameraRecognizeAerWorldView(const float pose[
 void KharvoxCameraRecordAerWorldSource(const kharvox::AerWorldView& source);
 bool KharvoxCameraUsesAerGameplaySource();
 kharvox::AerSourceObservation KharvoxCameraTakeAerWorldSource();
-void KharvoxCameraSetCrouchState(bool active);
+void KharvoxCameraSetCrouchState(bool active,bool physical=false);
+bool KharvoxCameraGetStanceHeights(float& measured,float& standing);
 void KharvoxCameraSetImmersiveCinematicFov(
     float fovXDegrees, float fovYDegrees,
     bool requested, bool active);
@@ -50,6 +51,7 @@ bool KharvoxCameraGetHudCenterRenderPose(float origin[3], float axis[9]);
 unsigned long long KharvoxCameraCurrentPresentSerial();
 unsigned long long KharvoxCameraLevelTransitionGeneration();
 bool KharvoxCameraGetPlayerPhysicsOrigin(float origin[3]);
+bool KharvoxCameraIsLocalPlayer(const void* player);
 void KharvoxCameraSetStereoEye(float localXUnits, float fovXDegrees, float fovYDegrees, float opticalCenterYawDegrees, float opticalCenterPitchDegrees, bool enabled);
 // Separates an authored animated-camera interval from ordinary gameplay. The
 // gameplay body is gravity-level at all other times; physical HMD pitch/roll is

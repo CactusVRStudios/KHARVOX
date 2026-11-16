@@ -5,6 +5,7 @@
 #include <string>
 #include <unordered_map>
 #include <cstdint>
+#include "../src/hud/OffhandHudPolicy.h"
 
 namespace {
 std::uint32_t calibrationFingerprint(const std::filesystem::path& path) {
@@ -22,9 +23,33 @@ bool readScalar(const std::filesystem::path& path, float expected) {
     float value{};
     return input >> value && std::fabs(value - expected) < 0.0001f;
 }
+bool originalPraetorHud(const std::filesystem::path& path) {
+    std::ifstream input(path);
+    kharvox::OffhandHudConfig hud;
+    if(!kharvox::readOffhandHudConfig(input,hud)||!hud.enabled||hud.watchReading
+        ||std::fabs(hud.armourGapCm-2.f)>.0001f)return false;
+    // Original six modes: Life/Ammo/ProgMeter, physical left/right. Restore
+    // every offset, angle and scale. Clearance is perpendicular to the native
+    // pixel plane; adding Grip-local Z does not guarantee escaping the armor.
+    constexpr float original[6][7]{
+        {-9.5f,-5,24.5f,-65,90,15,.4f},{-10,-14,0,-75,-65,20,.4f},
+        {-4.5f,20.5f,17.5f,-65,60,15,.4f},{-13,12.5f,11,-55,-100,0,.4f},
+        {-11.5f,7.5f,18,-130,95,-50,.4f},{-18,-1,6,-85,-65,30,.4f}};
+    for(int i=0;i<6;++i){
+        const auto& mode=hud.modes[i];
+        for(int j=0;j<3;++j){
+            if(std::fabs(mode.centimeters[j]-original[i][j])>.0001f)return false;
+            if(std::fabs(mode.degrees[j]-original[i][j+3])>.0001f)return false;
+        }
+        if(std::fabs(mode.scale-original[i][6])>.0001f)return false;
+    }
+    return true;
+}
 }
 
 int main(int argc, char** argv) {
+    if(argc==3&&std::string(argv[1])=="--original-praetor-hud")
+        return originalPraetorHud(argv[2])?0:22;
     if (argc != 2) return 1;
     const std::filesystem::path config(argv[1]);
     if (!readScalar(config / "weapon_yaw_default.cfg", -8.0f)) return 2;
@@ -84,7 +109,6 @@ int main(int argc, char** argv) {
     if (calibrationFingerprint(config / "hud_profile_calibration_default.cfg")
         != 0x59b52852u) return 20;
     if (!readScalar(config / "hud_quad_scale_default.cfg", 16.75f)) return 21;
-    if (calibrationFingerprint(config / "offhand_hud_default.cfg")
-        != 0xe54166b8u) return 22;
+    if (!originalPraetorHud(config / "offhand_hud_default.cfg")) return 22;
     return 0;
 }

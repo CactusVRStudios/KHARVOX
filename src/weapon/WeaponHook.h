@@ -1,5 +1,10 @@
 #pragma once
 #include "AerWeaponSource.h"
+namespace kharvox::hands { struct WeaponSupportFrame; }
+// Native prop transform for the completed source image. A zero sourcePose is
+// a recent gameplay sample for grab acquisition, never a replacement draw key.
+bool KharvoxWeaponGetSupportFrame(kharvox::hands::WeaponSupportFrame& frame,
+    unsigned long long sourcePose=0,int sourceEye=-1);
 // drawCameraPose points to the validated 12-float origin + 3x3 view basis.
 int KharvoxWeaponResolveAerDraw(kharvox::AerSourceKey source,const float* origin,const float* axis,
     float* targetOrigin,float* targetAxis,uint64_t& matchedPoseId,
@@ -35,6 +40,9 @@ enum class KharvoxWeaponAmmoState {
 };
 
 bool KharvoxWeaponInstallHook();
+bool KharvoxWeaponPhysicalGrenadeThrowAvailable();
+bool KharvoxWeaponQueueGrenadeThrow(const float worldDirection[3]);
+void KharvoxWeaponCancelGrenadeThrow();
 bool KharvoxWeaponIsTrackingActive();
 bool KharvoxWeaponCollectibleAnimationActive();
 KharvoxWeaponKind KharvoxWeaponCurrentKind();

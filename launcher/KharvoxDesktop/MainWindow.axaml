@@ -1,0 +1,182 @@
+<Window xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="using:KharvoxDesktop"
+        x:Class="KharvoxDesktop.MainWindow" Title="{Binding WindowTitle}"
+        Width="1196" Height="1000" MinWidth="1000" MinHeight="800"
+        WindowStartupLocation="CenterScreen" ExtendClientAreaToDecorationsHint="True"
+        ExtendClientAreaChromeHints="NoChrome" ExtendClientAreaTitleBarHeightHint="40"
+        Background="Transparent" TransparencyLevelHint="Transparent"
+        SystemDecorations="None">
+  <Window.DataTemplates>
+    <DataTemplate DataType="{x:Type local:LocalizedChoice}">
+      <TextBlock Text="{Binding Label}" />
+    </DataTemplate>
+  </Window.DataTemplates>
+  <Grid>
+    <Border Background="#101218" Margin="30,44,30,45" CornerRadius="38" />
+    <Grid RowDefinitions="40,*,94" ColumnDefinitions="204,*" Margin="44,84,44,62">
+    <Border Grid.ColumnSpan="2" Background="#0C0E13" PointerPressed="TitleDrag">
+      <Grid ColumnDefinitions="*,Auto" Margin="20,3,6,3">
+        <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+          <Border Width="5" Height="15" CornerRadius="2" Background="{StaticResource Accent}" />
+          <TextBlock Text="{DynamicResource Ui000}" FontWeight="Bold" FontSize="11" LetterSpacing="2" />
+          <TextBlock Text="/" Foreground="#414754" /><TextBlock Text="{DynamicResource Ui001}" Foreground="#70798C" FontSize="10" LetterSpacing="1.5" />
+          <Border Background="#2F211A" BorderBrush="#714022" BorderThickness="1" CornerRadius="5" Padding="9,3">
+            <TextBlock x:Name="VersionBadge" Text="{Binding VersionLabel}" Foreground="#FFAF79" FontSize="11" FontWeight="SemiBold" />
+          </Border>
+        </StackPanel>
+        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="3">
+          <ComboBox x:Name="LanguageBox" ItemsSource="{Binding Languages}"
+                    SelectedIndex="{Binding LanguageIndex, Mode=TwoWay}" Width="112"
+                    Height="30" MinHeight="30" FontSize="11" Margin="0,0,12,0"
+                    AutomationProperties.Name="{DynamicResource Ui002}" ToolTip.Tip="{DynamicResource Ui002}" />
+          <Button Classes="captionButton" Content="—" Click="MinimizeClick" AutomationProperties.Name="{DynamicResource Ui003}" />
+          <Button Classes="captionButton" Content="□" Click="MaximizeClick" AutomationProperties.Name="{DynamicResource Ui004}" />
+          <Button Classes="captionButton" Content="✕" Click="CloseClick" AutomationProperties.Name="{DynamicResource Ui005}" />
+        </StackPanel>
+      </Grid>
+    </Border>
+    <Border Grid.Row="1" Grid.RowSpan="2" Background="#0C0E13" BorderBrush="#242834" BorderThickness="0,0,1,0">
+      <Grid RowDefinitions="Auto,28,Auto,*,Auto" Margin="15,24,15,20">
+        <StackPanel>
+          <TextBlock Text="{DynamicResource Ui006}" FontSize="28" FontWeight="Bold" LetterSpacing="3" HorizontalAlignment="Center" Foreground="#FF925C" Margin="0,15,0,10" />
+          <TextBlock Text="{DynamicResource Ui007}" FontSize="8" LetterSpacing=".7" HorizontalAlignment="Center" Foreground="#6D7688" Margin="0,7,0,0" />
+        </StackPanel>
+        <ListBox Grid.Row="2" Classes="nav" SelectedIndex="{Binding ActivePage, Mode=TwoWay}">
+          <ListBoxItem><StackPanel Orientation="Horizontal" Spacing="12"><TextBlock Text="▷" FontSize="16" /><TextBlock x:Name="PlayNavigationLabel" Text="{DynamicResource Ui008}" VerticalAlignment="Center" /></StackPanel></ListBoxItem>
+          <ListBoxItem><StackPanel Orientation="Horizontal" Spacing="12"><TextBlock Text="◈" FontSize="16" /><TextBlock Text="{DynamicResource Ui009}" FontSize="12" VerticalAlignment="Center" /></StackPanel></ListBoxItem>
+          <ListBoxItem><StackPanel Orientation="Horizontal" Spacing="12"><TextBlock Text="⌁" FontSize="16" /><TextBlock Text="{DynamicResource Ui010}" VerticalAlignment="Center" /></StackPanel></ListBoxItem>
+          <ListBoxItem><StackPanel Orientation="Horizontal" Spacing="12"><TextBlock Text="≡" FontSize="16" /><TextBlock Text="{DynamicResource Ui011}" FontSize="12" VerticalAlignment="Center" /></StackPanel></ListBoxItem>
+        </ListBox>
+        <StackPanel Grid.Row="4" Spacing="12">
+          <Border Background="#151922" CornerRadius="9" Padding="12">
+            <StackPanel Spacing="6">
+              <StackPanel Orientation="Horizontal" Spacing="7"><Ellipse Width="6" Height="6" Fill="#75CBA4" /><TextBlock Text="{Binding RuntimeLabel}" FontSize="10" FontWeight="SemiBold" LetterSpacing="1" /></StackPanel>
+              <TextBlock Classes="caption" Text="{DynamicResource Ui012}" FontSize="10" />
+            </StackPanel>
+          </Border>
+          <Button Classes="quiet" Content="{DynamicResource Ui013}" FontSize="11" Click="SupportClick" HorizontalAlignment="Stretch" />
+          <StackPanel Orientation="Horizontal" Spacing="5" HorizontalAlignment="Center">
+            <TextBlock Text="{Binding VersionLabel}" Foreground="#939BAE" FontSize="10" />
+            <TextBlock Text="·" Foreground="#525C70" FontSize="10" />
+            <TextBlock Text="{DynamicResource Ui014}" Foreground="#525C70" FontSize="10" />
+          </StackPanel>
+        </StackPanel>
+      </Grid>
+    </Border>
+    <Grid Grid.Row="1" Grid.Column="1" RowDefinitions="Auto,*" Margin="30,25,30,0">
+      <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,22">
+        <StackPanel Spacing="5">
+          <TextBlock Text="{Binding PageTitle}" FontSize="25" FontWeight="SemiBold" />
+          <TextBlock Text="{Binding PageSubtitle}" Classes="caption" />
+        </StackPanel>
+        <Border Grid.Column="1" Background="#2F211A" BorderBrush="#5B3421" BorderThickness="1" CornerRadius="8" Padding="12,6" VerticalAlignment="Center">
+          <TextBlock Text="{Binding RendererLabel}" Foreground="#FF9B65" FontSize="11" FontWeight="Bold" />
+        </Border>
+      </Grid>
+      <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <Grid Margin="0,0,5,20">
+          <!-- Session -->
+          <StackPanel IsVisible="{Binding PlayPage}" Spacing="15">
+            <Border CornerRadius="14" Padding="23,20" BorderBrush="#4D3326" BorderThickness="1">
+              <Border.Background><LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,100%"><GradientStop Color="#38261C" Offset="0" /><GradientStop Color="#1C202C" Offset="1" /></LinearGradientBrush></Border.Background>
+              <Grid ColumnDefinitions="*,Auto">
+                <StackPanel Spacing="7">
+                  <TextBlock Text="{DynamicResource Ui015}" Foreground="#FFA06F" FontSize="10" LetterSpacing="2" FontWeight="SemiBold" />
+                  <TextBlock Text="{DynamicResource Ui016}" FontSize="27" FontWeight="SemiBold" />
+                  <TextBlock x:Name="FeatureSummaryText" Classes="caption" Text="{DynamicResource Ui017}" />
+                  <TextBlock Classes="caption" Text="{DynamicResource Ui018}" />
+                  <TextBlock Classes="caption" Text="{DynamicResource Ui019}" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center" Width="180" Spacing="7" Margin="15,0,0,0">
+                  <TextBlock Text="{DynamicResource Ui020}" FontSize="9" Foreground="#9A9BA5" LetterSpacing="1.3" />
+                  <ComboBox ItemsSource="{Binding Presets}" SelectedIndex="{Binding PresetIndex, Mode=TwoWay}" IsEnabled="{Binding CanEdit}" />
+                </StackPanel>
+              </Grid>
+            </Border>
+            <Border Classes="card" Padding="18,14">
+              <StackPanel Spacing="9">
+                <TextBlock Text="{DynamicResource Ui021}" Foreground="#A7AEBE" FontSize="10" LetterSpacing="1" />
+                <Grid ColumnDefinitions="*,Auto">
+                  <TextBox x:Name="GamePathBox" Text="{Binding GamePath, Mode=TwoWay}" Watermark="{DynamicResource Ui022}" IsEnabled="{Binding CanEdit}" />
+                  <Button Grid.Column="1" Classes="quiet" Content="{DynamicResource Ui023}" Margin="10,0,0,0" Click="BrowseClick" IsEnabled="{Binding CanEdit}" />
+                </Grid>
+              </StackPanel>
+            </Border>
+            <Grid ColumnDefinitions="*,*">
+              <Border Classes="card" Margin="0,0,8,0" IsEnabled="{Binding CanEdit}">
+                <StackPanel Spacing="15">
+                  <TextBlock Classes="section" Text="{DynamicResource Ui024}" />
+                  <Grid ColumnDefinitions="*,Auto">
+                    <StackPanel Spacing="4"><TextBlock Text="{DynamicResource Ui025}" FontWeight="SemiBold" /><TextBlock Classes="caption" Text="{DynamicResource Ui026}" /></StackPanel>
+                    <ToggleSwitch x:Name="HandsToggle" Grid.Column="1" IsChecked="{Binding Hands, Mode=TwoWay}" Margin="12,0,0,0" AutomationProperties.Name="{DynamicResource Ui025}" />
+                  </Grid>
+                  <Border Height="1" Background="{StaticResource Line}" />
+                  <Grid ColumnDefinitions="*,Auto">
+                    <StackPanel Spacing="4"><TextBlock Text="{DynamicResource Ui027}" FontWeight="SemiBold" /><TextBlock Classes="caption" Text="{DynamicResource Ui028}" /></StackPanel>
+                    <ToggleSwitch x:Name="CrouchToggle" Grid.Column="1" IsChecked="{Binding Crouch, Mode=TwoWay}" Margin="12,0,0,0" AutomationProperties.Name="{DynamicResource Ui027}" />
+                  </Grid>
+                  <Border Height="1" Background="{StaticResource Line}" />
+                  <Grid ColumnDefinitions="*,Auto">
+                    <StackPanel Spacing="4"><TextBlock Text="{DynamicResource Ui029}" FontWeight="SemiBold" /><TextBlock Classes="caption" Text="{DynamicResource Ui030}" /></StackPanel>
+                    <ToggleSwitch x:Name="ThrowToggle" Grid.Column="1" IsChecked="{Binding Throw, Mode=TwoWay}" Margin="12,0,0,0" AutomationProperties.Name="{DynamicResource Ui031}" />
+                  </Grid>
+                </StackPanel>
+              </Border>
+              <Border Grid.Column="1" Classes="card" Margin="8,0,0,0" IsEnabled="{Binding CanEdit}">
+                <StackPanel Spacing="13">
+                  <TextBlock Classes="section" Text="{DynamicResource Ui032}" />
+                  <StackPanel Spacing="6"><TextBlock Classes="caption" Text="{DynamicResource Ui033}" /><ComboBox x:Name="RendererBox" ItemsSource="{Binding Renderers}" SelectedIndex="{Binding RendererIndex, Mode=TwoWay}" /></StackPanel>
+                  <Grid ColumnDefinitions="*,120"><TextBlock Text="{DynamicResource Ui034}" VerticalAlignment="Center" /><NumericUpDown Grid.Column="1" Value="{Binding RenderScale, Mode=TwoWay}" Minimum="50" Maximum="400" Increment="5" FormatString="0" /></Grid>
+                  <CheckBox Content="{DynamicResource Ui035}" IsChecked="{Binding Fsr, Mode=TwoWay}" />
+                  <TextBlock Classes="caption" Text="{DynamicResource Ui036}" />
+                  <CheckBox Content="{DynamicResource Ui037}" IsChecked="{Binding SkipIntro, Mode=TwoWay}" />
+                </StackPanel>
+              </Border>
+            </Grid>
+            <Border Background="#151923" BorderBrush="#2C3343" BorderThickness="1" CornerRadius="10" Padding="16,12">
+              <Grid ColumnDefinitions="Auto,*"><Border Background="#272D3A" CornerRadius="5" Padding="10,6"><TextBlock Text="{DynamicResource Ui038}" FontSize="11" FontWeight="Bold" /></Border><StackPanel Grid.Column="1" Margin="13,0,0,0" Spacing="3"><TextBlock Text="{DynamicResource Ui039}" FontWeight="SemiBold" /><TextBlock Classes="caption" Text="{DynamicResource Ui040}" /></StackPanel></Grid>
+            </Border>
+          </StackPanel>
+          <!-- Rendering -->
+          <StackPanel IsVisible="{Binding RenderPage}" Spacing="16" IsEnabled="{Binding CanEdit}">
+            <Border Classes="card"><StackPanel Spacing="16"><TextBlock Classes="section" Text="{DynamicResource Ui041}" /><Grid ColumnDefinitions="*,*"><StackPanel Margin="0,0,12,0" Spacing="7"><TextBlock Classes="caption" Text="{DynamicResource Ui042}" /><ComboBox ItemsSource="{Binding Renderers}" SelectedIndex="{Binding RendererIndex, Mode=TwoWay}" /></StackPanel><StackPanel Grid.Column="1" Spacing="7"><TextBlock Classes="caption" Text="{DynamicResource Ui043}" /><NumericUpDown Value="{Binding RenderScale, Mode=TwoWay}" Minimum="50" Maximum="400" Increment="5" FormatString="0" /></StackPanel></Grid><CheckBox Content="{DynamicResource Ui044}" IsChecked="{Binding Fsr, Mode=TwoWay}" /><TextBlock Classes="caption" Text="{DynamicResource Ui045}" /></StackPanel></Border>
+            <Border Classes="card"><StackPanel Spacing="10"><TextBlock Classes="section" Text="{DynamicResource Ui046}" /><CheckBox x:Name="ImmersionToggle" Content="{DynamicResource Ui047}" IsChecked="{Binding Immersive, Mode=TwoWay}" /><StackPanel Margin="22,0,0,0" IsEnabled="{Binding Immersive}"><CheckBox Content="{DynamicResource Ui048}" IsChecked="{Binding Freelook, Mode=TwoWay}" /><CheckBox x:Name="CinemaToggle" Content="{DynamicResource Ui049}" IsChecked="{Binding CineWindow, Mode=TwoWay}" /><TextBlock Classes="caption" Text="{DynamicResource Ui050}" Margin="0,3,0,8" /></StackPanel><CheckBox Content="{DynamicResource Ui051}" IsChecked="{Binding FollowWindow, Mode=TwoWay}" /><CheckBox Content="{DynamicResource Ui037}" IsChecked="{Binding SkipIntro, Mode=TwoWay}" /></StackPanel></Border>
+            <Border Classes="card"><StackPanel Spacing="8"><TextBlock Classes="section" Text="{DynamicResource Ui052}" /><CheckBox Content="{DynamicResource Ui053}" IsChecked="{Binding Bhaptics, Mode=TwoWay}" /><CheckBox Content="{DynamicResource Ui054}" IsChecked="{Binding Psvr2, Mode=TwoWay}" /><TextBlock Classes="caption" Text="{DynamicResource Ui055}" /></StackPanel></Border>
+          </StackPanel>
+          <!-- Movement -->
+          <StackPanel IsVisible="{Binding MovementPage}" Spacing="16" IsEnabled="{Binding CanEdit}">
+            <Grid ColumnDefinitions="*,*">
+              <Border Classes="card" Margin="0,0,8,0"><StackPanel Spacing="13"><TextBlock Classes="section" Text="{DynamicResource Ui056}" /><TextBlock Classes="caption" Text="{DynamicResource Ui057}" /><ComboBox ItemsSource="{Binding TurnModes}" SelectedIndex="{Binding TurnMode, Mode=TwoWay}" /><Grid ColumnDefinitions="*,115"><TextBlock Text="{DynamicResource Ui058}" VerticalAlignment="Center" /><NumericUpDown Grid.Column="1" Value="{Binding TurnSpeed, Mode=TwoWay}" Minimum="150" Maximum="400" Increment="10" FormatString="0" /></Grid><Grid ColumnDefinitions="*,115"><TextBlock Text="{DynamicResource Ui059}" VerticalAlignment="Center" /><NumericUpDown Grid.Column="1" Value="{Binding SnapAngle, Mode=TwoWay}" Minimum="10" Maximum="180" Increment="5" FormatString="0" /></Grid><TextBlock Classes="caption" Text="{DynamicResource Ui060}" /><ComboBox ItemsSource="{Binding MoveModes}" SelectedIndex="{Binding MoveMode, Mode=TwoWay}" /></StackPanel></Border>
+              <Border Grid.Column="1" Classes="card" Margin="8,0,0,0"><StackPanel Spacing="12"><TextBlock Classes="section" Text="{DynamicResource Ui061}" /><CheckBox Content="{DynamicResource Ui062}" IsChecked="{Binding LeftHanded, Mode=TwoWay}" /><ComboBox ItemsSource="{Binding HandSwapModes}" SelectedIndex="{Binding HandSwapMode, Mode=TwoWay}" IsEnabled="{Binding LeftHanded}" /><CheckBox Content="{DynamicResource Ui063}" IsChecked="{Binding SwapJump, Mode=TwoWay}" /><CheckBox Content="{DynamicResource Ui064}" IsChecked="{Binding HandsJump, Mode=TwoWay}" /><CheckBox Content="{DynamicResource Ui027}" IsChecked="{Binding Crouch, Mode=TwoWay}" /><CheckBox Content="{DynamicResource Ui029}" IsChecked="{Binding Throw, Mode=TwoWay}" /></StackPanel></Border>
+            </Grid>
+            <Border Classes="card"><StackPanel Spacing="12"><TextBlock Classes="section" Text="{DynamicResource Ui065}" /><Grid ColumnDefinitions="*,*"><StackPanel Spacing="8" Margin="0,0,15,0"><CheckBox Content="{DynamicResource Ui066}" IsChecked="{Binding Stock, Mode=TwoWay}" /><CheckBox Content="{DynamicResource Ui067}" IsChecked="{Binding Laser, Mode=TwoWay}" /><CheckBox Content="{DynamicResource Ui068}" IsChecked="{Binding Hands, Mode=TwoWay}" /></StackPanel><StackPanel Grid.Column="1" Spacing="7"><TextBlock Classes="caption" Text="{DynamicResource Ui069}" /><ComboBox ItemsSource="{Binding BackWeapons}" SelectedIndex="{Binding BackWeapon, Mode=TwoWay}" /><TextBlock Classes="caption" Text="{DynamicResource Ui070}" /></StackPanel></Grid></StackPanel></Border>
+            <Border Classes="card"><StackPanel Spacing="12"><TextBlock Classes="section" Text="{DynamicResource Ui071}" /><CheckBox Content="{DynamicResource Ui072}" IsChecked="{Binding GloryKill, Mode=TwoWay}" /><Grid ColumnDefinitions="*,*" IsEnabled="{Binding GloryKill}"><StackPanel Margin="0,0,15,0" Spacing="7"><TextBlock Classes="caption" Text="{DynamicResource Ui073}" /><NumericUpDown Value="{Binding GlorySpeed, Mode=TwoWay}" Minimum="1" Maximum="4" Increment="0.2" FormatString="0.0" /></StackPanel><StackPanel Grid.Column="1" Spacing="7"><TextBlock Classes="caption" Text="{DynamicResource Ui074}" /><ComboBox ItemsSource="{Binding GloryHands}" SelectedIndex="{Binding GloryHand, Mode=TwoWay}" /></StackPanel></Grid></StackPanel></Border>
+          </StackPanel>
+          <!-- Help and diagnostics -->
+          <StackPanel IsVisible="{Binding HelpPage}" Spacing="16">
+            <Border Classes="card"><StackPanel Spacing="14"><TextBlock Classes="section" Text="{DynamicResource Ui075}" /><TextBlock Text="{DynamicResource Ui076}" FontWeight="SemiBold" /><TextBlock Classes="caption" Text="{DynamicResource Ui077}" /><TextBlock Text="{DynamicResource Ui078}" FontWeight="SemiBold" /><TextBlock Classes="caption" Text="{DynamicResource Ui079}" /><TextBlock Text="{DynamicResource Ui080}" FontWeight="SemiBold" /><TextBlock Classes="caption" Text="{DynamicResource Ui081}" /><TextBlock Classes="caption" Text="{DynamicResource Ui082}" /><Button x:Name="CorrectionsButton" Classes="quiet" Content="{Binding CorrectionsButtonText}" IsEnabled="{Binding CanEnableCorrections}" Click="EnableCorrectionsClick" HorizontalAlignment="Left" /></StackPanel></Border>
+            <Border Classes="card" IsEnabled="{Binding CanEdit}"><StackPanel Spacing="9"><TextBlock Classes="section" Text="{DynamicResource Ui083}" /><TextBlock Classes="caption" Text="{DynamicResource Ui084}" /><CheckBox Content="{DynamicResource Ui085}" IsChecked="{Binding ExtendedLog, Mode=TwoWay}" /><CheckBox Content="{DynamicResource Ui086}" IsChecked="{Binding CaptureEyes, Mode=TwoWay}" /><CheckBox Content="{DynamicResource Ui087}" IsChecked="{Binding DisableAa, Mode=TwoWay}" /><Button Classes="quiet" Content="{DynamicResource Ui088}" Click="LogsClick" HorizontalAlignment="Left" /></StackPanel></Border>
+            <Border Classes="card" IsEnabled="{Binding CanEdit}"><Expander Header="{DynamicResource Ui089}" HorizontalAlignment="Stretch"><StackPanel Spacing="10" Margin="0,14,0,0"><CheckBox Content="{DynamicResource Ui090}" IsChecked="{Binding CalibrateHands, Mode=TwoWay}" /><CheckBox Content="{DynamicResource Ui091}" IsChecked="{Binding CalibrateHud, Mode=TwoWay}" /><ComboBox ItemsSource="{Binding WeaponModes}" SelectedIndex="{Binding WeaponMode, Mode=TwoWay}" /><ComboBox ItemsSource="{Binding CalibrationWeapons}" SelectedIndex="{Binding CalibrationWeapon, Mode=TwoWay}" /><ComboBox ItemsSource="{Binding GripModes}" SelectedIndex="{Binding GripMode, Mode=TwoWay}" /><TextBlock Classes="caption" Text="{DynamicResource Ui092}" /></StackPanel></Expander></Border>
+            <TextBlock Classes="caption" Text="{DynamicResource Ui093}" Margin="4,0" />
+          </StackPanel>
+        </Grid>
+      </ScrollViewer>
+    </Grid>
+    <Border Grid.Row="2" Grid.Column="1" Background="#14171F" BorderBrush="#2B303D" BorderThickness="0,1,0,0" Padding="29,15">
+      <Grid ColumnDefinitions="*,230" RowDefinitions="Auto,Auto">
+        <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+          <Ellipse Width="6" Height="6" Fill="{StaticResource Accent}" />
+          <TextBlock Text="{Binding StateLabel}" Foreground="#F0B492" FontSize="10" LetterSpacing="1.3" FontWeight="SemiBold" />
+        </StackPanel>
+        <TextBlock Grid.Row="1" Text="{Binding Status}" Classes="caption" VerticalAlignment="Center" Margin="0,5,16,0" MaxLines="2" TextTrimming="CharacterEllipsis" />
+        <Button x:Name="LaunchButton" Grid.Column="1" Grid.RowSpan="2" Classes="primary" Content="{Binding PrimaryButtonText}" IsEnabled="{Binding CanLaunch}" Click="LaunchClick" HorizontalAlignment="Stretch" VerticalAlignment="Center" MinHeight="48" />
+      </Grid>
+    </Border>
+    <Border Grid.Row="1" Grid.Column="1" IsVisible="{Binding HasError}" VerticalAlignment="Bottom" Margin="30,0,30,18" Background="#3A2024" BorderBrush="#A04E51" BorderThickness="1" CornerRadius="10" Padding="18">
+      <TextBlock Text="{Binding ErrorMessage}" TextWrapping="Wrap" Foreground="#FFD5D3" />
+    </Border>
+    </Grid>
+    <local:AnimatedLauncherFrame x:Name="LauncherFrame" IsHitTestVisible="False" />
+    <Border Height="78" VerticalAlignment="Top" Margin="170,0" Background="Transparent" PointerPressed="TitleDrag" />
+  </Grid>
+</Window>

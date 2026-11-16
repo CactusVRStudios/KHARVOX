@@ -4,14 +4,15 @@ import hashlib
 import json
 from pathlib import Path
 import sys
+import tempfile
 import unittest
 import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 from analyze_headset_evidence import analyze
 
-RUNTIME = r'D:\headset-fixture\r139'
-OWNER_SOURCE = r'C:\Users\Bernd\AppData\Local\Temp\KHARVOX.log'
+RUNTIME = r'C:\TestFixtures\headset-fixture\r139'
+OWNER_SOURCE = r'C:\TestFixtures\KHARVOX.log'
 OWNER = ('[KHARVOX][LAUNCHER] build=r139 runtimeDir=' + RUNTIME + '\\ twoHandMode=gameplay-test renderer=NATIVE\n'
          '[KHARVOX][XR] OpenXR runtime reported name=OpenXR Simulator Runtime version=1.0.27\n'
          '[KHARVOX][XR] State -> 4\n'
@@ -31,7 +32,7 @@ def pair():
 
 
 def fixture(owner=OWNER, native=NATIVE, capture=None, extras=None, live=False):
-    root = Path(r'D:\KHARVOX-backups\headset-acceptance-r139\analysis-tests') / uuid.uuid4().hex
+    root = Path(tempfile.gettempdir()) / 'KHARVOX-evidence-tests' / uuid.uuid4().hex
     root.mkdir(parents=True, exist_ok=False)
     (root / 'context.json').write_text(json.dumps(dict(Runtime=RUNTIME, Processes=[dict(Id=1)] if live else [])), encoding='utf-8')
     files = {OWNER_SOURCE: owner, RUNTIME + '\\native_stereo.log': native}

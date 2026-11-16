@@ -1,10 +1,14 @@
+#if NETFRAMEWORK
 using System.Web.Script.Serialization;
+#else
+using System.Text.Json;
+#endif
 
 namespace KharvoxLauncher;
 
 internal sealed class LauncherSettings
 {
-    internal const int CurrentVersion = 34;
+    internal const int CurrentVersion = 35;
 
     public int SettingsVersion { get; set; }
     public int Preset { get; set; }
@@ -38,6 +42,8 @@ internal sealed class LauncherSettings
     public bool DisableAa { get; set; }
     public bool HandsJump { get; set; } = true;
     public bool SwapJumpCrouch { get; set; }
+    public bool PhysicalCrouch { get; set; }
+    public bool PhysicalGrenadeThrow { get; set; }
     public bool DisableVrIntro { get; set; } = false;
     public bool ShowHands { get; set; } = LauncherPresetPolicy.DefaultEnableHands;
     public int HandCalibrationMode { get; set; }
@@ -56,7 +62,7 @@ internal sealed class LauncherSettings
         decimal physicalGlorykillSpeed, int physicalGlorykillHands, bool leftHanded,
         int leftHandSwapMode, bool laserSight, bool hudDebugging, bool extendedLogging,
         bool showHands, int handCalibrationMode,
-        bool enableBhaptics, bool usePsvr2Toolkit, bool handsJump = true, bool disableAa = false, bool captureEyes = false, bool swapJumpCrouch = false)
+        bool enableBhaptics, bool usePsvr2Toolkit, bool handsJump = true, bool disableAa = false, bool captureEyes = false, bool swapJumpCrouch = false, bool physicalCrouch = false, bool physicalGrenadeThrow = false)
     {
         SettingsVersion = CurrentVersion;
         Preset = preset;
@@ -89,6 +95,8 @@ internal sealed class LauncherSettings
         ShowHands = showHands;
         HandsJump = handsJump;
         SwapJumpCrouch = swapJumpCrouch;
+        PhysicalCrouch = physicalCrouch;
+        PhysicalGrenadeThrow = physicalGrenadeThrow;
         DisableAa = disableAa;
         CaptureEyes = captureEyes;
 
@@ -106,7 +114,11 @@ internal static class LauncherSettingsStore
 
     internal static LauncherSettings Load(string path)
     {
+#if NETFRAMEWORK
         var settings = new JavaScriptSerializer().Deserialize<LauncherSettings>(File.ReadAllText(path));
+#else
+        var settings = JsonSerializer.Deserialize<LauncherSettings>(File.ReadAllText(path));
+#endif
         if (settings is null)
             throw new InvalidDataException("The KHARVOX settings file is empty.");
         // bHaptics is opt-in. A value injected into an older settings schema
@@ -152,6 +164,8 @@ internal static class LauncherSettingsStore
             settings.DisableAa = false;
         if (settings.SettingsVersion < 31) settings.DisableVrIntro = false;
         if (settings.SettingsVersion < 34) settings.SwapJumpCrouch = false;
+        if (settings.SettingsVersion < 35) settings.PhysicalCrouch = false;
+        if (settings.SettingsVersion < 35) settings.PhysicalGrenadeThrow = false;
         // Adopt the release renderer once for existing Custom profiles. Later AER choices remain valid.
         if (settings.SettingsVersion < 33 && settings.Preset == 3
             && string.Equals(settings.RendererMode, "AER", StringComparison.OrdinalIgnoreCase))
@@ -164,6 +178,10 @@ internal static class LauncherSettingsStore
     {
         var directory = Path.GetDirectoryName(path);
         if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
+#if NETFRAMEWORK
         File.WriteAllText(path, new JavaScriptSerializer().Serialize(settings));
+#else
+        File.WriteAllText(path, JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true }));
+#endif
     }
 }

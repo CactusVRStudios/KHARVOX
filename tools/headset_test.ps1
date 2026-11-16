@@ -3,7 +3,7 @@ param(
     [ValidateSet('None','Once','Sequence')][string]$Capture = 'None',
     [string]$Runtime,
     [string]$Evidence,
-    [string]$EvidenceRoot = 'D:\KHARVOX-backups\headset-acceptance-r139'
+    [string]$EvidenceRoot = (Join-Path ([System.IO.Path]::GetTempPath()) 'KHARVOX-headset-evidence')
 )
 # Preparation only: never launches a game, changes an OpenXR runtime, or edits
 # saved launcher settings. Every preparation gets a fresh extracted package.

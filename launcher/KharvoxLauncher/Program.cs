@@ -20,6 +20,18 @@ internal static class Program
         if (args.Any(argument => string.Equals(argument, "--self-test", StringComparison.OrdinalIgnoreCase)))
             return SelfTest.Run();
 
+        if (args.Length == 3 && args[0] == "--desktop-options")
+        {
+            try
+            {
+                using var form = new MainForm(args[1]);
+                File.WriteAllText(args[2], new System.Web.Script.Serialization.JavaScriptSerializer()
+                    .Serialize(form.CreateLaunchOptions()));
+                return 0;
+            }
+            catch (Exception error) { File.WriteAllText(args[2], error.ToString()); return 1; }
+        }
+
         if (args.Any(argument => string.Equals(argument, "--intro", StringComparison.OrdinalIgnoreCase)))
         {
             using var intro = new CracktroForm();
@@ -31,11 +43,55 @@ internal static class Program
         AppDomain.CurrentDomain.ProcessExit += (_, _) => KharvoxRunner.DisableLayerRegistrationsOnExit();
         Application.ApplicationExit += (_, _) => KharvoxRunner.DisableLayerRegistrationsOnExit();
 
+        if (args.Length == 4 && args[0] == "--desktop-run")
+            return RunDesktopSession(args[1], args[2], args[3]);
+
         if (args.Any(argument => string.Equals(argument, "-run", StringComparison.OrdinalIgnoreCase)))
             return RunSavedSettings();
 
         Application.Run(new MainForm());
         return 0;
+    }
+
+    private static int RunDesktopSession(string settingsPath, string statusPath, string controlPath)
+    {
+        void Status(string state, string text)
+        {
+            try { File.WriteAllText(statusPath, state + "\n" + text); }
+            catch { /* A closed desktop UI must not stop the running game. */ }
+        }
+        try
+        {
+            KharvoxLaunchOptions options;
+            using (var form = new MainForm(settingsPath)) options = form.CreateLaunchOptions();
+            // Control construction installs a WinForms synchronization context;
+            // the background backend has no visible message loop to service it.
+            Task.Run(async () => {
+                await KharvoxRunner.LaunchAsync(options,
+                    () => Status("RUNNING", "Jeu en cours — le casque est prêt."),
+                    message => Status("STARTING", message)).ConfigureAwait(false);
+                while (KharvoxRunner.IsRunning)
+                {
+                    if (File.Exists(controlPath) && File.ReadAllText(controlPath).Trim() == "stop")
+                    {
+                        Status("STOPPING", "Fermeture de DOOM…");
+                        await KharvoxRunner.EndDoomAsync().ConfigureAwait(false);
+                        break;
+                    }
+                    await Task.Delay(250).ConfigureAwait(false);
+                }
+                await KharvoxRunner.StopBhapticsAsync().ConfigureAwait(false);
+                await KharvoxRunner.StopPsvr2Async().ConfigureAwait(false);
+            }).GetAwaiter().GetResult();
+            Status("STOPPED", "Session terminée. Prêt pour la prochaine.");
+            return 0;
+        }
+        catch (Exception error)
+        {
+            Status("ERROR", error.Message);
+            try { File.AppendAllText(Path.Combine(Path.GetTempPath(), "KHARVOX-desktop-errors.log"), error + Environment.NewLine); } catch { }
+            return 1;
+        }
     }
 
     private static int RunSavedSettings()
@@ -84,7 +140,7 @@ internal static class Program
             Log(ex.ToString());
             Log("ExitCode=1");
             if (ex is HeadsetUnavailableException)
-                MessageBox.Show(ex.Message, "KHARVOX � Headset unavailable", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show(ex.Message, "KHARVOX – Headset unavailable", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             if (ex is RenderMemoryCapacityException)
                 MessageBox.Show(ex.Message, "KHARVOX – Render Scale too high",
                     MessageBoxButtons.OK, MessageBoxIcon.Error);

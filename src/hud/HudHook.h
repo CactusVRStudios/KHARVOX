@@ -40,6 +40,12 @@ void KharvoxHudSetHandPose(
     float gripForward, float gripLateral, float gripUp,
     float quaternionX, float quaternionY, float quaternionZ, float quaternionW,
     bool valid);
+namespace kharvox::hands {struct SupportHudGeometry;}
+namespace kharvox {struct OffhandHudBounds;}
+void KharvoxHudSetFreeHandBounds(bool physicalLeft,const kharvox::OffhandHudBounds& bounds,bool valid);
+void KharvoxHudSetSupportGeometry(unsigned weapon,bool physicalLeft,
+    const kharvox::hands::SupportHudGeometry& geometry);
+void KharvoxHudSetSupportHeld(unsigned weapon,bool active);
 bool KharvoxHudCompleteFinalEntity(
     const void* entity, const float* nativeAxis,
     float desiredOrigin[3], float desiredAxis[9]);

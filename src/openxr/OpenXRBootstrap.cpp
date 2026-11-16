@@ -3,15 +3,19 @@
 #include "../common/VulkanSfs.h"
 #include "../sfs/NativeSfs.h"
 #include "CopyGpuTiming.h"
+#include "PerformanceComparisonLog.h"
+#include "../common/PerformanceCpuCounters.h"
 #include "../common/AerRenderOrder.h"
 #include "../common/AerEyeBasis.h"
 #include "../common/AerCinematicProjection.h"
 #include "ControllerFrameYaw.h"
 #include "../common/AerSourceTracking.h"
 #include "../common/DiagnosticLogging.h"
+#include "../vulkan/TextureQualityLog.h"
 #include "../common/PoseTrace.h"
 #include "ProjectionSourceCrop.h"
 #include "FreshAerHandsPolicy.h"
+#include "RoomscaleLocomotionPolicy.h"
 #include "../native/NativeStereo.h"
 #include "../native/NativeFrameTrace.h"
 #include "../native/NativeXrFrameTrace.h"
@@ -41,7 +45,10 @@
 #include "../native/NativePresentationPolicy.h"
 #include "../fsr/Fsr1Upscaler.h"
 #include "../hands/HandRenderer.h"
+#include "../hands/HandSceneDrawPolicy.h"
 #include "../hands/HandDepthPolicy.h"
+#include "../hands/WeaponSupportPolicy.h"
+#include "../hands/WeaponSupportConfig.h"
 #include "../common/RuntimePaths.h"
 #include "OpenXRRuntimePolicy.h"
 #include "RuntimeVulkanDispatch.h"
@@ -49,6 +56,10 @@
 #include "CinematicRefreshPolicy.h"
 #include "CinewindowPosePolicy.h"
 #include "HandsJumpPolicy.h"
+#include "PhysicalCrouchPolicy.h"
+#include "StickRecenterPolicy.h"
+#include "GrenadeThrowPolicy.h"
+#include "../camera/BodyStanceHeight.h"
 #include "GripThresholdPolicy.h"
 #include "EquipmentGripPolicy.h"
 #include "MovementDirectionPolicy.h"
@@ -102,6 +113,7 @@ struct AerCapturedInput {
     float artificialTurn{};uint64_t snapGeneration{};
     XrPosef center{};
     XrPosef laserBodyTracking{};
+    kharvox::hands::HandGameplayState hands{};
 };
 struct EyeRenderProjection { XrFovf symmetricFov{}; };
 enum class TurnMode { Off, Smooth, Snap };
@@ -147,6 +159,7 @@ struct State {
     kharvox::ControllerFrameYaw controllerFrameYaw;
     kharvox::AerInputHistory<AerCapturedInput> aerInputHistory;
     ControllerPose aerPairInputLeft{},aerPairInputRight{};
+    kharvox::hands::HandGameplayState aerPairInputHands{};
     uint64_t aerPairInputPoseId{},integratedPairSourcePoseId{},aerPublishedSourcePoseId{};
     XrPosef aerPairInputCenter{};unsigned aerPublishedDomain{};
     kharvox::AerInputHistory<XrVector3f> aerCinematicPairAnchors;
@@ -163,6 +176,7 @@ struct State {
     VkInstance vkInstance{}; VkPhysicalDevice physical{},xrPhysical{}; VkDevice device{}; VkQueue queue{}; uint32_t queueFamily{},queueIndex{},runtimeMaxVulkanApiVersion{}; KharvoxVulkanDispatch vk{};
     VkCommandPool commandPool{}; VkCommandBuffer commandBuffer{}; VkFence copyFence{};
     kharvox::CopyGpuTiming sfsCopyTiming;
+    kharvox::PerformanceComparisonLog handPerformanceComparison;
     std::unordered_map<VkSwapchainKHR,DoomSwapchain> doomSwapchains; DoomSwapchain retiredCompatibleDoomSwapchain{}; bool retiredCompatibleDoomSwapchainValid{}; ULONGLONG retiredCompatibleDoomSwapchainAt{}; VkSwapchainKHR startupActiveDoomSwapchain{}; bool vdxrSessionDeferralLogged{}; std::array<EyeSwapchain,2> eyes; EyeSwapchain hudQuad; uint32_t hudSurfaceWidth{},hudSurfaceHeight{}; float hudSafeTanHalfHorizontal{},hudSafeTanHalfVertical{}; int64_t hudQuadFormat{}; uint64_t hudQuadCopiedFrames{}; bool hudQuadRuntimeFailureLogged{}; std::array<XrView,2> views{{{XR_TYPE_VIEW},{XR_TYPE_VIEW}}};
     HeadPose head{}; XrVector3f trackingHeadPosition{}; bool trackingHeadPositionValid{}; XrQuaternionf headZero{0,0,0,1}; XrVector3f headZeroPosition{}; bool headZeroValid{}; bool headZeroPositionValid{}; bool headCameraArmed{true}; bool nativeMenuCameraPoseHeld{}; bool quadMode{true}; bool centeredQuadTransitionPending{}; unsigned centeredQuadFramesRemaining{}; bool cinewindowFollowsHeadset{cinewindowFollowsHeadsetRequested()}; bool cinewindowPresentationActive{}; bool cinewindowFixedPoseFallbackLogged{}; kharvox::CinewindowAnchor cinewindowAnchor{}; kharvox::CinewindowCaptureReadiness cinewindowCaptureReadiness{}; bool hudEverythingQuad{},hudEverythingQuadAvailable{}; bool hudEverythingQuadKeyDown{}; bool steamQuadOnly{}; bool steamMetaCompatibilityMode{}; bool presentationKeyDown{}; bool presentationManualOverride{}; XrTime lastSteamDisplayTime{}; uint64_t steamDuplicateFrames{},steamLinkReprojectedFrames{};
     uint64_t steamWaitCalls{},steamBeginCalls{},steamEndCalls{},steamDiscardedBegins{},steamEndFailures{},steamLocalOrderViolations{};bool steamFrameBegun{};
@@ -226,6 +240,13 @@ struct State {
     bool jumpSuppressedUntilRelease{},crouchSuppressedUntilRelease{};
     bool meleePressed{},missionInfoPressed{};
     bool handsJumpEnabled{}; kharvox::HandsJumpState handsJump{};
+    bool physicalCrouchEnabled{},physicalCrouchTrackingValid{};
+    bool physicalGrenadeThrowEnabled{};
+    kharvox::GrenadeThrowPolicy grenadeThrow{};
+    kharvox::BodyStanceHeight physicalStanceHeight{};
+    kharvox::PhysicalCrouchCommand physicalCrouchCommand{};
+    XrTime physicalCrouchReferenceChangeTime{};
+    std::uint64_t physicalCrouchLevelGeneration{};
     bool physicalGlorykillEnabled{};
     float physicalGlorykillSpeed{2.8f};
     PhysicalGlorykillHands physicalGlorykillHands{PhysicalGlorykillHands::Both};
@@ -258,9 +279,15 @@ struct State {
     float bodyFollowTurnX{}; float priorBodyFollowTurnX{}; int turnCarrierTail{}; bool previousManualTurnActive{}; float bodyYawPerPositiveStick{-1.f}; bool bodyYawStickSignConfirmed{};
     kharvox::PostCinematicYawGuard postCinematicYawGuard{};
     bool gameplayRecenterPending{true};
+    bool stickRecenterPending{};
+    kharvox::StickRecenterPolicy stickRecenter{};
     bool weapon6Dof{},weaponCalibrated{},weaponGameplayActivated{},weaponPoseSubmitted{},weaponTrackingHeld{};WeaponPose weaponBaseline{};
     bool laserSightEnabled{};
     bool twoHandEnabled{},twoHandCalibrationMode{},twoHandLatched{},supportGripPressed{},virtualGunstockEnabled{};
+    kharvox::hands::HandInteractionState handInteraction{};
+    XrQuaternionf supportHandRelativeOrientation{0,0,0,1};
+    XrVector3f reviewedSupportAimOffset{};
+    bool reviewedSupportAimValid{};
     bool bfgGripTriggered{},bfgGripSuppressedUntilRelease{};
     XrTime bfgGripHoldStart{},bfgPulseUntil{};
     kharvox::BackWeaponState backWeaponState{};
@@ -1046,6 +1073,7 @@ void publishGameCameraHeadPose(
         s.previousBodyYaw,s.previousBodyYawValid&&KharvoxCameraGameplayActive()
             &&!KharvoxCameraCutsceneActive());
 }
+void invalidateAlternatingStereoHistory(bool clearProgrammedViews);
 void updateHeadPose(const XrViewState& viewState,XrTime displayTime,bool nativePackedStereoAtFrame){
     const bool fieldDroneMenuActive=KharvoxHudFieldDroneMenuActive();
     const bool suitUpgradeMenuActive=KharvoxHudSuitUpgradeMenuActive();
@@ -1058,6 +1086,13 @@ void updateHeadPose(const XrViewState& viewState,XrTime displayTime,bool nativeP
         ||suitUpgradeMenuActive||playerUpgradeMenuActive||runeSelectMenuActive;
     const bool orientationValid=(viewState.viewStateFlags&XR_VIEW_STATE_ORIENTATION_VALID_BIT)!=0;
     const bool positionValid=(viewState.viewStateFlags&XR_VIEW_STATE_POSITION_VALID_BIT)!=0;
+    s.physicalCrouchTrackingValid=orientationValid&&positionValid
+        &&(viewState.viewStateFlags&XR_VIEW_STATE_POSITION_TRACKED_BIT)!=0;
+    if(s.physicalCrouchReferenceChangeTime&&displayTime>=s.physicalCrouchReferenceChangeTime){
+        s.physicalStanceHeight.resetPhysicalCrouch();
+        if(s.physicalCrouchEnabled)s.headZeroPositionValid=false;
+        s.physicalCrouchReferenceChangeTime=0;
+    }
     if(!orientationValid){resetBodyFollow();s.head.valid=false;s.trackingHeadPositionValid=false;s.previousBodyYawValid=false;s.bodyFollowTurnX=0.f;s.previousManualTurnActive=false;s.snapTurnActivationPending=false;s.artificialTurnActive=false;s.artificialTurnRemainingDegrees=0.f;s.artificialTurnTotalDegrees=0.f;publishArtificialTurnYaw();publishGameCameraHeadPose(0,0,0,0,0,0,false,centeredNativeMenuActive);return;}
     const auto raw=s.views[0].pose.orientation;
     const XrVector3f midpoint{(s.views[0].pose.position.x+s.views[1].pose.position.x)*.5f,(s.views[0].pose.position.y+s.views[1].pose.position.y)*.5f,(s.views[0].pose.position.z+s.views[1].pose.position.z)*.5f};
@@ -1066,7 +1101,21 @@ void updateHeadPose(const XrViewState& viewState,XrTime displayTime,bool nativeP
     if(!s.headZeroValid){s.headZero=yawOnlyTrackingBaseline(raw);s.headZeroValid=true;s.headZeroPositionValid=positionValid;if(positionValid)s.headZeroPosition=midpoint;log("[HEAD] yaw-only tracking baseline acquired; pitch/roll remain gravity-level; F8 recenter disabled");}
     const bool nativeGameplayActive=KharvoxCameraGameplayActive();
     if(!nativeGameplayActive)s.gameplayRecenterPending=true;
-    if(nativeGameplayActive&&s.gameplayRecenterPending){
+    const bool manualRecenterReady=s.stickRecenterPending&&s.physicalCrouchTrackingValid
+        &&s.sessionState==XR_SESSION_STATE_FOCUSED&&KharvoxCameraWorldActive()
+        &&!KharvoxHudPauseMenuActive()&&!KharvoxHudFullscreenMenuActive()
+        &&!KharvoxHudDeathMenuActive()&&!s.immersiveCinematicActive
+        &&!KharvoxCameraCutsceneActive()&&!KharvoxCameraBossSequenceActive()
+        &&!KharvoxCameraLedgeTransitionActive()&&KharvoxCameraPlayerWeaponControlActive()
+        &&kharvox::snapTurnMayActivateAtStereoBoundary(s.alternatingStereo,
+            nativePackedStereoAtFrame,s.alternatingStereoWarmupActive,s.renderEye);
+    if(nativeGameplayActive&&(s.gameplayRecenterPending||manualRecenterReady)){
+        if(manualRecenterReady){
+            s.physicalStanceHeight.resetPhysicalCrouch();
+            s.grenadeThrow.cancel(true);KharvoxWeaponCancelGrenadeThrow();
+            s.stickRecenterPending=false;
+            invalidateAlternatingStereoHistory(true);
+        }
         s.headZero=yawOnlyTrackingBaseline(raw);s.headZeroValid=true;
         if(positionValid){s.headZeroPosition=midpoint;s.headZeroPositionValid=true;}
         s.acceptedPhysicalYaw=0.f;s.previousBodyYawValid=false;s.bodyFollowTurnX=0.f;s.previousManualTurnActive=false;s.snapTurnActivationPending=false;s.artificialTurnActive=false;s.artificialTurnRemainingDegrees=0.f;s.artificialTurnTotalDegrees=0.f;s.previousTurnDisplayTime=0;
@@ -1074,12 +1123,18 @@ void updateHeadPose(const XrViewState& viewState,XrTime displayTime,bool nativeP
         resetBodyFollow();s.weaponCalibrated=false;s.weaponTrackingHeld=false;
         if(s.weapon6Dof)KharvoxWeaponResetCalibration();
         s.gameplayRecenterPending=false;
+        if(manualRecenterReady)log("[HEAD] dual-stick recenter applied; standing-height calibration reset");
         log("[HEAD] gameplay/load entry rebased tracking yaw only; pitch/roll remain aligned to the OpenXR horizon");
     }
     const bool worldActive=nativeGameplayActive
         &&!KharvoxHudPauseMenuActive()&&!KharvoxHudDeathMenuActive()
         &&!centeredNativeMenuActive;
     if(positionValid&&(!s.headZeroPositionValid||!worldActive)){s.headZeroPosition=midpoint;s.headZeroPositionValid=true;}
+    // Keep camera and weapon/controller body space on the same calibrated
+    // vertical origin, even if a pause/menu was entered while crouching.
+    float physicalStandingHeight{};
+    if(s.physicalCrouchEnabled&&s.physicalStanceHeight.physicalStandingHeight(physicalStandingHeight))
+        s.headZeroPosition.y=physicalStandingHeight;
     s.head=ConvertOpenXRToDoom(s.views[0].pose);
     // HUD17 steep-pitch control: do not alter the pose. Record the Euler
     // branch and presentation state at the reported down-look boundary so a
@@ -1178,7 +1233,9 @@ void updateHeadPose(const XrViewState& viewState,XrTime displayTime,bool nativeP
     const float horizontalError=std::hypot(forwardMeters,lateralMeters);
     s.roomscaleStick={};s.previousRoomscaleCommand=false;
     const bool manualMove=std::abs(s.leftStick.x)>.15f||std::abs(s.leftStick.y)>.15f;
-    if(physicsValid&&bodyPoseValid&&!manualMove&&horizontalError>.0025f){
+    static const bool roomscaleMovementEnabled=[](){char value[8]{};
+        return GetEnvironmentVariableA("KHARVOX_ROOMSCALE_LOCOMOTION",value,sizeof(value))==1&&value[0]=='1';}();
+    if(kharvox::allowRoomscaleMovement(roomscaleMovementEnabled,physicsValid,bodyPoseValid,manualMove,horizontalError)){
         const float forwardDirection=forwardMeters/horizontalError,lateralDirection=lateralMeters/horizontalError;
         const float desiredSpeed=std::min(horizontalError*40.f,5.5f);
         constexpr float nativeMaxSpeed=5.5f;
@@ -1600,6 +1657,60 @@ XrPosef laserBodyTrackingTransform(){
     return {multiply(s.headZero,multiply(accepted,pending)),
         addVector(s.headZeroPosition,rotateVector(s.headZero,s.bodyFollowPosition))};
 }
+const std::array<kharvox::hands::WeaponSupportProfile,15>& reviewedSupportProfiles(){
+    static const auto profiles=[] {
+        std::array<kharvox::hands::WeaponSupportProfile,15> values{};
+        std::ifstream input(kharvox::runtimePathA("support_hands.cfg"));
+        kharvox::hands::readWeaponSupportProfiles(input,values);return values;
+    }();
+    return profiles;
+}
+bool renderedSupportModel(kharvox::hands::math::Mat4& model,const XrPosef& tracking,
+    uint64_t sourcePose=0,int sourceEye=-1,
+    std::array<kharvox::hands::math::Mat4,2>* joints=nullptr,unsigned* jointMask=nullptr){
+    kharvox::hands::WeaponSupportFrame frame{};
+    const bool valid=s.headZeroValid&&s.headZeroPositionValid
+        &&KharvoxWeaponGetSupportFrame(frame,sourcePose,sourceEye)
+        &&kharvox::hands::weaponSupportMatrix(frame,
+            kharvox::hands::math::poseMatrix({{tracking.position.x,tracking.position.y,tracking.position.z},
+                {tracking.orientation.x,tracking.orientation.y,tracking.orientation.z,tracking.orientation.w},true}),
+            s.worldScale,model);
+    if(jointMask)*jointMask=valid?frame.jointMask:0;
+    if(valid&&joints)for(unsigned slot=0;slot<2;++slot){
+        auto local=kharvox::hands::math::identity();
+        for(int col=0;col<3;++col)for(int row=0;row<3;++row)
+            local.m[col*4+row]=frame.jointAxis[slot][col*3+row];
+        for(int row=0;row<3;++row)local.m[12+row]=frame.jointOrigin[slot][row];
+        (*joints)[slot]=local;
+    }
+    return valid;
+}
+bool reviewedSupportPointInBody(KharvoxWeaponKind kind,XrVector3f& point){
+    const auto index=static_cast<size_t>(kind);const auto& profiles=reviewedSupportProfiles();
+    if(index>=profiles.size()||!profiles[index].valid||!s.handRenderer.hasSupportProfile(kind,s.leftHanded))return false;
+    const auto tracking=laserBodyTrackingTransform();kharvox::hands::math::Mat4 model{};
+    std::array<kharvox::hands::math::Mat4,2> joints{};unsigned mask{};
+    if(!renderedSupportModel(model,tracking,0,-1,&joints,&mask))return false;
+    const auto hand=s.leftHanded?1:0;
+    const int slot=profiles[index].jointSlot[hand];
+    if(slot>=0&&(!(mask&(1u<<slot))||!kharvox::hands::weaponJointModel(
+        model,joints[slot],profiles[index].jointBindInverse[hand],model)))return false;
+    const auto& local=s.leftHanded?profiles[index].rightPoint:profiles[index].point;
+    float values[3]{};
+    if((kind==KharvoxWeaponKind::HeavyAssaultRifle||kind==KharvoxWeaponKind::PlasmaRifle
+        ||kind==KharvoxWeaponKind::RocketLauncher||kind==KharvoxWeaponKind::GaussCannon
+        ||kind==KharvoxWeaponKind::Chaingun||kind==KharvoxWeaponKind::Bfg
+        ||kind==KharvoxWeaponKind::Chainsaw||kind==KharvoxWeaponKind::Pistol)&&!s.leftHanded){
+        std::array<float,3> grip{};
+        if(!s.handRenderer.authoredSupportGrip(kind,s.leftHanded,model,grip))return false;
+        std::copy(grip.begin(),grip.end(),values);
+    }else{
+        for(int row=0;row<3;++row)values[row]=model.m[12+row]
+            +model.m[row]*local[0]+model.m[4+row]*local[1]+model.m[8+row]*local[2];
+    }
+    point=rotateVector(conjugate(tracking.orientation),subtractVector({values[0],values[1],values[2]},tracking.position));
+    return std::isfinite(point.x)&&std::isfinite(point.y)&&std::isfinite(point.z);
+}
 bool renderedLaserPoseInTrackingSpace(XrVector3f& trackingOrigin,XrVector3f& trackingDirection,
     const XrPosef& tracking, uint64_t sourcePose=0,int sourceEye=-1){
     float muzzle[3]{},direction[3]{},body[3]{},axis[9]{};
@@ -1896,10 +2007,18 @@ bool supportGripInCaptureRange(){
     const auto current=controllerRelativeToBodyTrackingOrigin(primary);
     const auto grip=controllerRelativeToBodyTrackingOrigin(support);
     const auto active=activeHandCalibration(*calibration);
+    XrVector3f reviewed{};
+    if(!s.twoHandCalibrationMode&&reviewedSupportPointInBody(KharvoxWeaponCurrentKind(),reviewed))
+        return kharvox::hands::weaponSupportWithinCapture(true,
+            vectorLength(subtractVector(grip.position,reviewed)),0,active.captureRadius);
     const auto target=addVector(current.position,rotateVector(current.orientation,active.supportPosition));
     return vectorLength(subtractVector(grip.position,target))<=active.captureRadius;
 }
 void updateWeapon6Dof(){
+    kharvox::PerformanceCpuTimer cpuTiming(kharvox::PerformanceCpuScope::WeaponUpdate);
+    s.handInteraction.support.valid=false;
+    s.handInteraction.supportModelValid=false;
+    if(!s.twoHandLatched)s.reviewedSupportAimValid=false;
     const bool gameplay=KharvoxCameraGameplayActive()
         &&!KharvoxWeaponCollectibleAnimationActive()
         &&!KharvoxCameraCutsceneActive()&&!KharvoxHudPauseMenuActive()
@@ -1988,18 +2107,30 @@ void updateWeapon6Dof(){
             writeTwoHandStatus(std::string(weaponKindName(kind))+": "+supportHandName()+" controller tracking unavailable; holding one-hand orientation");
         }else{
             const auto supportGrip=controllerRelativeToBodyTrackingOrigin(supportController);
-            const auto activeCalibration=activeHandCalibration(*calibration);
+            auto activeCalibration=activeHandCalibration(*calibration);
+            const bool previouslyLatched=s.twoHandLatched;
             if(!s.twoHandLatched){
+                s.reviewedSupportAimValid=false;
                 const auto target=addVector(current.position,rotateVector(current.orientation,activeCalibration.supportPosition));
                 const float distance=vectorLength(subtractVector(supportGrip.position,target));
-                if(distance<=activeCalibration.captureRadius){
+                XrVector3f reviewed{};
+                const bool nativePoint=!s.twoHandCalibrationMode&&reviewedSupportPointInBody(kind,reviewed);
+                if(kharvox::hands::weaponSupportWithinCapture(nativePoint,
+                    nativePoint?vectorLength(subtractVector(supportGrip.position,reviewed)):0,
+                    distance,activeCalibration.captureRadius)){
                     s.twoHandLatched=true;
                     s.twoHandLatchedWeapon=kind;
+                    if(nativePoint){
+                        s.reviewedSupportAimOffset=rotateVector(conjugate(current.orientation),
+                            subtractVector(reviewed,current.position));
+                        s.reviewedSupportAimValid=true;
+                    }
                     log(std::string("[TWO-HAND] ")+KharvoxWeaponKindKey(kind)+" support acquired mode="+twoHandModeName(activeCalibration.aimMode)
                         +" distance="+std::to_string(distance));
                 }
             }
             if(s.twoHandLatched){
+                if(s.reviewedSupportAimValid)activeCalibration.supportPosition=s.reviewedSupportAimOffset;
                 const bool useVirtualGunstock=s.virtualGunstockEnabled
                     &&activeCalibration.aimMode==TwoHandAimMode::Barrel
                     &&s.trackingHeadPositionValid;
@@ -2009,6 +2140,40 @@ void updateWeapon6Dof(){
                 if(useVirtualGunstock)gunstockPosition.y-=.18f;
                 rotation=solveTwoHandOrientation(current,supportGrip,activeCalibration,
                     useVirtualGunstock,gunstockPosition);
+                // Capture the physical wrist once, relative to the solved
+                // weapon. Later controller drift must not drag a locked hand
+                // away from the calibrated contact point or roll it freely.
+                if(!previouslyLatched)s.supportHandRelativeOrientation=normalizeQuaternion(
+                    multiply(conjugate(rotation),supportGrip.orientation));
+                const auto tracking=laserBodyTrackingTransform();
+                const auto origin=addVector(tracking.position,rotateVector(tracking.orientation,current.position));
+                const auto weaponOrientation=normalizeQuaternion(multiply(tracking.orientation,rotation));
+                const auto&relative=s.supportHandRelativeOrientation;
+                s.handInteraction.support=kharvox::hands::supportAnchorPose(
+                    {{origin.x,origin.y,origin.z},{weaponOrientation.x,weaponOrientation.y,
+                        weaponOrientation.z,weaponOrientation.w},true},
+                    {activeCalibration.supportPosition.x,activeCalibration.supportPosition.y,
+                        activeCalibration.supportPosition.z},{relative.x,relative.y,relative.z,relative.w});
+                if(kharvox::extendedDiagnosticsEnabled()){
+                    static std::uint64_t nextSupportReport{};
+                    const auto tick=GetTickCount64();
+                    if(tick>=nextSupportReport){
+                        nextSupportReport=tick+1000;
+                        const auto target=addVector(current.position,
+                            rotateVector(rotation,activeCalibration.supportPosition));
+                        std::ostringstream hand;
+                        hand<<"[HAND-SUPPORT] renderer="<<(kharvox::vulkanSfsEnabled()?"SFS":"AER")
+                            <<" weapon="<<KharvoxWeaponKindKey(kind)<<" hand="<<supportHandName()
+                            <<" mode="<<twoHandModeName(activeCalibration.aimMode)
+                            <<" controller_to_support_m="<<vectorLength(subtractVector(supportGrip.position,target))
+                            <<" capture_radius_m="<<activeCalibration.captureRadius
+                            <<" grip_orientation="<<supportGrip.orientation.x<<','<<supportGrip.orientation.y
+                            <<','<<supportGrip.orientation.z<<','<<supportGrip.orientation.w
+                            <<" weapon_orientation="<<rotation.x<<','<<rotation.y<<','<<rotation.z<<','<<rotation.w
+                            <<" space=body-tracking";
+                        log(hand.str());
+                    }
+                }
                 writeTwoHandStatus(std::string(weaponKindName(kind))+": TWO-HAND ACTIVE — "
                     +(useVirtualGunstock?"virtual stock / ":"")
                     +twoHandModeName(activeCalibration.aimMode)+" alignment");
@@ -2018,6 +2183,7 @@ void updateWeapon6Dof(){
         }
     }
     const WeaponPose publishedWeaponPose{current.position,rotation};
+    if(s.twoHandLatched)s.handInteraction.grenadeHeld=false;
     if(s.controllerFrameYaw.active&&kharvox::pose_trace::active.load(std::memory_order_relaxed)){
         kharvox::pose_trace::Event e{};e.kind=kharvox::pose_trace::ControllerTurnFrame;e.frame=s.frame;
         e.data[0]=s.controllerFrameYaw.turnForPose(artificialTurnVisualYaw());
@@ -2038,6 +2204,7 @@ void updateWeapon6Dof(){
 
 }
 void updateGameplayActions(XrTime displayTime){
+    kharvox::PerformanceCpuTimer cpuTiming(kharvox::PerformanceCpuScope::GameplayActions);
     if(!s.actionsReady){s.primaryFireDown=false;return;}
     *reinterpret_cast<int*>(doomFloat(0x5B64540))=0;
     holdNativeTurnCvars(manualTurnCarrierSpeed());
@@ -2047,6 +2214,9 @@ void updateGameplayActions(XrTime displayTime){
     if(XR_FAILED(s.syncActionsFn(s.session,&sync))
         ||s.sessionState!=XR_SESSION_STATE_FOCUSED){
         s.motionWheelState={};
+        s.stickRecenter.cancel();
+        s.grenadeThrow.cancel(true);
+        if(s.physicalGrenadeThrowEnabled)KharvoxWeaponCancelGrenadeThrow();
         s.wheelStickHaptics={};
         s.equipmentGrip.cancel();
         clearCapturedXInputRumble();
@@ -2108,15 +2278,20 @@ void updateGameplayActions(XrTime displayTime){
             +std::to_string(s.postCinematicYawGuard.absorbedDegrees)+"deg");
     }
     const float fireValue=readFloatAction(s.doomFire);
+    const float primaryGripValue=readFloatAction(s.doomSecondaryFireGrip);
+    const float supportGripValue=readFloatAction(s.doomSupportGrip);
+    const float equipmentValue=readFloatAction(s.doomEquipment);
+    s.handInteraction.fingers[s.leftHanded?0:1]=kharvox::hands::controllerFingerPose(fireValue,primaryGripValue);
+    s.handInteraction.fingers[s.leftHanded?1:0]=kharvox::hands::controllerFingerPose(equipmentValue,supportGripValue);
     const bool triggerDown=fireValue>.55f;
     const bool weaponSelectDown=gameplay&&turnActive&&rightStickY<-.75f;
     const bool secondaryFireGripDown=kharvox::updateGripPressed(
-        readFloatAction(s.doomSecondaryFireGrip),s.secondaryFireGripPressed,
+        primaryGripValue,s.secondaryFireGripPressed,
         s.primaryGripUsesValveIndex
             ?kharvox::GripControllerProfile::ValveIndex
             :kharvox::GripControllerProfile::Default);
     const bool supportGripDown=kharvox::updateGripPressed(
-        readFloatAction(s.doomSupportGrip),s.supportGripPressed,
+        supportGripValue,s.supportGripPressed,
         s.supportGripUsesValveIndex
             ?kharvox::GripControllerProfile::ValveIndex
             :kharvox::GripControllerProfile::Default);
@@ -2322,7 +2497,15 @@ void updateGameplayActions(XrTime displayTime){
     const bool movementActive=!weaponWheelActive&&(moveActionActive||(gameplay&&(std::abs(movementStick.x)>.001f||std::abs(movementStick.y)>.001f)));
     if(std::abs(movementStick.x)>.15f||std::abs(movementStick.y)>.15f)focusDoomWindow();
     if(xinputHookReady)updateVirtualLeftStick(movementStick,movementActive);else{updateVirtualLeftStick({},false);updateVirtualRightStick({},false);}
-    const bool meleeDown=readBooleanAction(s.doomMelee);
+    const auto stickClicks=s.stickRecenter.update(displayTime,
+        readBooleanAction(s.doomMelee),readBooleanAction(s.doomPause));
+    if(stickClicks.recenter){
+        s.stickRecenterPending=true;
+        s.usePulseUntil=0;s.meleePulseUntil=0;
+        log("[INPUT] both thumbsticks -> recenter queued for tracked gameplay stereo boundary");
+    }
+    const bool meleeDown=stickClicks.primary;
+    const bool pauseDown=stickClicks.support;
     const bool meleeUseDown=gameplay&&meleeDown;
     if(meleeUseDown!=s.meleePressed){
         if(meleeUseDown){
@@ -2501,15 +2684,85 @@ void updateGameplayActions(XrTime displayTime){
         log("[INPUT] Hands Jump -> native gamepad A jump pulse; leftUp="
             +std::to_string(s.leftGripController.linearVelocity.y)+" rightUp="
             +std::to_string(s.rightGripController.linearVelocity.y)+"m/s");
-    const bool gamepadADown=(s.swapJumpCrouch?crouchGameplayDown:jumpGameplayDown)||handsJumpDown||crouchUiDown;
-    const bool gamepadBDown=(s.swapJumpCrouch?jumpGameplayDown:crouchGameplayDown)||jumpUiDown;
-    KharvoxCameraSetCrouchState(s.swapJumpCrouch?jumpGameplayDown:crouchGameplayDown);
+    const bool manualCrouch=s.swapJumpCrouch?jumpGameplayDown:crouchGameplayDown;
+    const bool nativeJump=(s.swapJumpCrouch?crouchGameplayDown:jumpGameplayDown)||handsJumpDown;
+    const auto levelGeneration=KharvoxCameraLevelTransitionGeneration();
+    if(levelGeneration!=s.physicalCrouchLevelGeneration){
+        s.physicalCrouchLevelGeneration=levelGeneration;
+        s.physicalCrouchCommand={}; // A previous player cannot own this stance.
+    }
+    const bool physicalGameplay=gameplay&&KharvoxCameraWorldActive()
+        &&!s.quadMode&&!s.immersiveCinematicActive
+        &&!KharvoxCameraLedgeTransitionActive()&&!KharvoxCameraBossSequenceActive()
+        &&KharvoxCameraPlayerWeaponControlActive();
+    const bool physicalCrouch=s.physicalStanceHeight.updatePhysicalCrouch(
+        s.trackingHeadPosition.y,s.physicalCrouchEnabled,physicalGameplay,
+        s.physicalCrouchTrackingValid&&s.trackingHeadPositionValid,
+        static_cast<std::uint64_t>(displayTime));
+    float nativeHeight{},standingHeight{};
+    const bool ownedPhysicalCrouch=s.physicalCrouchCommand.ownsCrouch();
+    const bool nativeStanceValid=s.physicalCrouchCommand.needsStanceFeedback(physicalCrouch)
+        &&KharvoxCameraGetStanceHeights(nativeHeight,standingHeight);
+    const bool physicalCrouchPulse=s.physicalCrouchCommand.update(displayTime,
+        physicalCrouch,physicalGameplay&&s.physicalCrouchTrackingValid
+            &&s.trackingHeadPositionValid&&std::isfinite(s.trackingHeadPosition.y),
+        manualCrouch,nativeJump,nativeStanceValid,
+        standingHeight-nativeHeight>=s.worldScale*.20f);
+    if(ownedPhysicalCrouch!=s.physicalCrouchCommand.ownsCrouch())
+        log(std::string("[INPUT] Physical Crouch native ownership ")
+            +(s.physicalCrouchCommand.ownsCrouch()?"acquired":"released"));
+    const bool gamepadADown=nativeJump||crouchUiDown;
+    const bool gamepadBDown=manualCrouch||physicalCrouchPulse||jumpUiDown;
+    KharvoxCameraSetCrouchState(manualCrouch,
+        physicalGameplay&&s.physicalCrouchCommand.ownsCrouch());
     s.jumpPressed=jumpDown;
     s.crouchPressed=crouchDown;
     const bool nativeUseDown=gameplay&&displayTime<s.usePulseUntil;
     const bool nativeMeleeDown=gameplay&&displayTime>=s.usePulseUntil
         &&(meleeDown||displayTime<s.meleePulseUntil);
-    const bool equipmentDown=readFloatAction(s.doomEquipment)>.55f;
+    const bool rawEquipmentDown=equipmentValue>.55f;
+    const auto& throwController=supportGripController();
+    const bool wasHoldingGrenade=s.grenadeThrow.holding();
+    const auto grenade=s.grenadeThrow.update(displayTime,
+        s.physicalGrenadeThrowEnabled&&KharvoxWeaponPhysicalGrenadeThrowAvailable(),
+        gameplay,rawEquipmentDown,throwController.valid&&throwController.positionTracked
+            &&throwController.linearVelocityValid,
+        !s.twoHandLatched&&!weaponWheelActive&&!s.twoHandCalibrationMode,
+        {throwController.linearVelocity.x,throwController.linearVelocity.y,throwController.linearVelocity.z});
+    // Explicitly enabled visual test only. This does not alter the equipment
+    // pulse, native release timing, origin, speed, charges or cooldown.
+    s.handInteraction.grenadeHeld=s.handRenderer.hasGrenadeVisualPose()
+        &&!s.leftHanded&&s.grenadeThrow.holding();
+    if(kharvox::extendedDiagnosticsEnabled()
+        &&(wasHoldingGrenade!=s.grenadeThrow.holding()||grenade.released)){
+        std::ostringstream trace;trace<<"[GRENADE-INPUT] tick_ms="<<GetTickCount64()
+            <<" trigger="<<rawEquipmentDown<<" holding="<<s.grenadeThrow.holding()
+            <<" released="<<grenade.released<<" gesture="<<grenade.physical
+            <<" native_equipment="<<grenade.equipment;
+        log(trace.str());
+    }
+    if(s.handInteraction.grenadeHeld){
+        auto& fingers=s.handInteraction.fingers[s.leftHanded?1:0];
+        fingers.grip=std::max(fingers.grip,.75f);fingers.thumb=std::max(fingers.thumb,.75f);
+    }
+    if(s.physicalGrenadeThrowEnabled&&!gameplay)KharvoxWeaponCancelGrenadeThrow();
+    if(grenade.released){
+        KharvoxWeaponCancelGrenadeThrow();
+        if(grenade.physical){
+            const auto local=rotateVector(conjugate(laserBodyTrackingTransform().orientation),
+                {grenade.velocity[0],grenade.velocity[1],grenade.velocity[2]});
+            float bodyOrigin[3]{},bodyAxis[9]{},worldDirection[3]{};
+            bool queued=false;
+            if(KharvoxCameraGetBodyPose(bodyOrigin,bodyAxis)){
+                for(int axis=0;axis<3;++axis)worldDirection[axis]=
+                    -local.z*bodyAxis[axis]-local.x*bodyAxis[3+axis]+local.y*bodyAxis[6+axis];
+                queued=KharvoxWeaponQueueGrenadeThrow(worldDirection);
+            }
+            log(std::string("[GRENADE-THROW] ")+supportHandName()+" release gesture aim="
+                +(queued?"queued":"native-fallback"));
+        }
+    }
+    const bool equipmentDown=grenade.equipment;
     const bool missionInfoDown=readBooleanAction(s.doomMissionInfo);
     if(missionInfoDown!=s.missionInfoPressed)
         log(std::string(nativeUiMenu?"[FULLSCREEN-UI] ":"[INPUT] ")+leftFaceButtonHandName()
@@ -2517,7 +2770,6 @@ void updateGameplayActions(XrTime displayTime){
             +(missionInfoDown?"pressed":"released"));
     s.missionInfoPressed=missionInfoDown;
     const bool switchWeaponModDown=readBooleanAction(s.doomSwitchWeaponMod);
-    const bool pauseDown=readBooleanAction(s.doomPause);
     const bool restrictedLeftHandSwap=s.leftHanded&&!s.leftHandSwapSticks;
     if(pauseDown&&!s.pausePressed)log(std::string("[INPUT] ")+pauseHandName()+" thumbstick click -> native JOY9/start pause");
     s.pausePressed=pauseDown;
@@ -2528,8 +2780,8 @@ void updateGameplayActions(XrTime displayTime){
         // preserved. Both sticks remain centered/raw and every release is
         // explicit.
         const bool gamepadXDown=chainsawPulse||(!gameplay&&!nativeUiMenu&&missionInfoDown);
-        const bool nativeUiRightTriggerDown=restrictedLeftHandSwap?equipmentDown:triggerDown;
-        const bool nativeUiLeftTriggerDown=restrictedLeftHandSwap?triggerDown:equipmentDown;
+        const bool nativeUiRightTriggerDown=restrictedLeftHandSwap?rawEquipmentDown:triggerDown;
+        const bool nativeUiLeftTriggerDown=restrictedLeftHandSwap?triggerDown:rawEquipmentDown;
         const bool nativeUiLeftShoulderDown=restrictedLeftHandSwap?secondaryFireGripDown:supportGripDown;
         const bool nativeUiRightShoulderDown=restrictedLeftHandSwap?supportGripDown
             :(secondaryFireGripDown&&!backWeaponOutput.gripConsumed);
@@ -2556,11 +2808,15 @@ void updateGameplayActions(XrTime displayTime){
     };
     publishHudHandPose(true,s.rightGripController);
     publishHudHandPose(false,s.leftGripController);
+    KharvoxHudSetSupportHeld(static_cast<unsigned>(KharvoxWeaponCurrentKind()),
+        gameplay&&s.showHands&&s.twoHandLatched);
     updateWeapon6Dof();
 }
 bool createGameplayActions(){
     s.leftHanded=environmentEnabled("KHARVOX_LEFT_HANDED");
     s.swapJumpCrouch=environmentEnabled("KHARVOX_SWAP_JUMP_CROUCH");
+    s.physicalCrouchEnabled=environmentEnabled("KHARVOX_PHYSICAL_CROUCH");
+    s.physicalGrenadeThrowEnabled=environmentEnabled("KHARVOX_PHYSICAL_GRENADE_THROW");
     s.favoriteBackWeapon=loadBackWeaponKind();
     char leftHandSwap[32]{};
     GetEnvironmentVariableA("KHARVOX_LEFT_HAND_SWAP",leftHandSwap,sizeof(leftHandSwap));
@@ -3014,6 +3270,7 @@ void pollEvents(){
         }else if(e.type==XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING){
             auto&change=*reinterpret_cast<XrEventDataReferenceSpaceChangePending*>(&e);
             if(change.referenceSpaceType==XR_REFERENCE_SPACE_TYPE_LOCAL){
+                s.physicalCrouchReferenceChangeTime=change.changeTime;
                 s.cinewindowCaptureReadiness.referenceChanged(change.changeTime);
                 kharvox::resetCinewindowAnchor(s.cinewindowAnchor);
                 s.cinewindowFixedPoseFallbackLogged=false;
@@ -3726,6 +3983,8 @@ void KharvoxXRNativePresentCompleted(VkSwapchainKHR sc,VkResult presentResult){
 }
 bool KharvoxXRIsDoomSwapchainImage(VkImage image){std::lock_guard<std::mutex>l(mutex);for(const auto&pair:s.doomSwapchains)for(auto candidate:pair.second.images)if(candidate==image)return true;return false;}
 void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWaits,kharvox::GameImageLifetime::Use& gameImages){
+    LARGE_INTEGER comparisonXrBegin{};
+    if(s.handPerformanceComparison.enabled())QueryPerformanceCounter(&comparisonXrBegin);
     // A quality setter must not race a copy that passed the epoch check but
     // has not submitted yet. Order: Native presentation -> XR state -> queues.
     struct NativeQualityLease {
@@ -4062,6 +4321,8 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
     // the next prediction; compositing fresh hands onto it creates a time skew.
     const auto sourceLeftGripController=s.leftGripController;
     const auto sourceRightGripController=s.rightGripController;
+    const kharvox::hands::HandGameplayState sourceHandsBeforeInput{
+        KharvoxWeaponCurrentKind(),s.leftHanded,s.handInteraction,s.twoHandLatched};
     updateGameplayActions(frame.predictedDisplayTime);updateXInputHaptics();updatePresentationMode();updatePsvr2TriggerPolicy();
     kharvox::native::StereoFrame nativeFrame{};
     bool nativeFrameValid=false;
@@ -4193,6 +4454,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
             kharvox::native::sceneDomain(s.quadMode,next.cinematic,next.scripted,next.gameplay)};
         next.weaponKind=static_cast<uint32_t>(KharvoxWeaponCurrentKind());
         next.leftHanded=s.leftHanded;next.twoHanded=s.twoHandLatched;
+        next.hands=s.handInteraction;
         next.weaponControlActive=KharvoxCameraPlayerWeaponControlActive();
         next.viewSpace=next.cinematic&&!s.immersiveCinematicFreelookActive;
         next.controllersValid={s.leftGripController.valid,s.rightGripController.valid};
@@ -4654,6 +4916,8 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
         &&!s.quadMode&&KharvoxCameraGameplayActive()
         &&KharvoxCameraWorldActive()&&!KharvoxCameraCutsceneActive()
         &&!s.immersiveCinematicActive;
+    s.handPerformanceComparison.update(handGameplayActive,s.showHands,sfsBackend?"SFS":"AER");
+    const bool drawCustomHands=s.showHands&&!s.handPerformanceComparison.hideHands();
     // Berserk is intentionally false until a reliable native state probe is
     // found. The pure policy and renderer are already prepared for it. Every
     // authored camera sequence is excluded explicitly: Glory Kills and ledge
@@ -4661,7 +4925,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
     const auto handVisibility=kharvox::hands::selectHandVisibility({
         nativeFrameValid?nativeFrame.pose.leftHanded:s.leftHanded,
         nativeFrameValid?nativeFrame.pose.twoHanded:s.twoHandLatched,false,s.handRenderer.availability(),
-        s.showHands,handGameplayActive});
+        drawCustomHands,handGameplayActive});
     auto handPose=[](const ControllerPose&controller){
         kharvox::hands::HandPose pose{};
         pose.position[0]=controller.position.x;pose.position[1]=controller.position.y;
@@ -4680,9 +4944,43 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
         ?handPose(aerSourceQualified?aerCapturedInput.left:sourceLeftGripController):currentLeftHandPose;
     const auto sourceRightHandPose=alignAerSourceHands
         ?handPose(aerSourceQualified?aerCapturedInput.right:sourceRightGripController):currentRightHandPose;
-    const kharvox::hands::HandGameplayState currentHandGameplay{
+    kharvox::hands::HandGameplayState currentHandGameplay{
         nativeFrameValid?static_cast<KharvoxWeaponKind>(nativeFrame.pose.weaponKind):KharvoxWeaponCurrentKind(),
-        nativeFrameValid?nativeFrame.pose.leftHanded:s.leftHanded};
+        nativeFrameValid?nativeFrame.pose.leftHanded:s.leftHanded,
+        nativeFrameValid?nativeFrame.pose.hands:s.handInteraction,
+        nativeFrameValid?nativeFrame.pose.twoHanded:s.twoHandLatched};
+    auto sourceHandGameplay=alignAerSourceHands
+        ?(aerSourceQualified?aerCapturedInput.hands:sourceHandsBeforeInput):currentHandGameplay;
+    currentHandGameplay.interaction.supportModelValid=false;
+    sourceHandGameplay.interaction.supportModelValid=false;
+    const bool currentModelRequired=kharvox::hands::weaponPoseFrameRequired(
+        currentHandGameplay.leftHanded,currentHandGameplay.twoHanded,
+        s.handRenderer.hasPrimaryProfile(currentHandGameplay.weapon));
+    const bool sourceModelRequired=kharvox::hands::weaponPoseFrameRequired(
+        sourceHandGameplay.leftHanded,sourceHandGameplay.twoHanded,
+        s.handRenderer.hasPrimaryProfile(sourceHandGameplay.weapon));
+    if(drawCustomHands&&handGameplayActive
+        &&(currentModelRequired||sourceModelRequired)
+        &&(!aerSourceMode||aerSourceQualified)){
+        kharvox::hands::math::Mat4 model{};
+        const bool valid=renderedSupportModel(model,
+            aerSourceQualified?aerCapturedInput.laserBodyTracking:sfsBackend&&nativeFrameValid?nativeFrame.pose.bodyTracking:laserBodyTrackingTransform(),
+            aerSourceQualified?aerSourceObservation.key.poseId:sfsBackend&&nativeFrameValid?nativeFrame.pose.source.poseId:0,
+            aerSourceQualified?aerSourceObservation.key.eye:sfsBackend&&nativeFrameValid?0:-1,
+            &currentHandGameplay.weaponJoints,&currentHandGameplay.weaponJointMask);
+        sourceHandGameplay.weaponJoints=currentHandGameplay.weaponJoints;
+        sourceHandGameplay.weaponJointMask=currentHandGameplay.weaponJointMask;
+        const auto kind=KharvoxWeaponCurrentKind();
+        if(valid&&currentHandGameplay.weapon==kind&&currentModelRequired){
+            currentHandGameplay.interaction.supportModel=model;currentHandGameplay.interaction.supportModelValid=true;
+        }
+        if(valid&&sourceHandGameplay.weapon==kind&&sourceModelRequired){
+            sourceHandGameplay.interaction.supportModel=model;sourceHandGameplay.interaction.supportModelValid=true;
+        }
+    }
+    const auto sourceHandVisibility=kharvox::hands::selectHandVisibility({
+        sourceHandGameplay.leftHanded,sourceHandGameplay.twoHanded,false,
+        s.handRenderer.availability(),drawCustomHands,handGameplayActive});
     // AER completes a stereo pair over two native frames. Hold the same
     // controller sample for both eyes so scene integration cannot reintroduce
     // near-field stereo shimmer/double vision.
@@ -4691,8 +4989,8 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
         s.integratedPairSourcePoseId=aerSourceQualified?aerSourceObservation.key.poseId:0;
         s.integratedPairLeftHand=sourceLeftHandPose;
         s.integratedPairRightHand=sourceRightHandPose;
-        s.integratedPairHandVisibility=handVisibility;
-        s.integratedPairHandGameplay=currentHandGameplay;
+        s.integratedPairHandVisibility=sourceHandVisibility;
+        s.integratedPairHandGameplay=sourceHandGameplay;
         s.integratedPairHandsValid=true;
     }
     const auto&integratedLeftHandPose=s.integratedPairLeftHand;
@@ -4710,7 +5008,9 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
     VkCommandBufferBeginInfo cbi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     cbi.flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     s.vk.beginCommandBuffer(s.commandBuffer,&cbi);
-    if(sfsBackend){
+    const bool measureSfsGpu=sfsBackend&&(kharvox::extendedDiagnosticsEnabled()
+        ||s.handPerformanceComparison.enabled());
+    if(measureSfsGpu){
         if(!s.sfsCopyTiming.pool){
             VkPhysicalDeviceProperties properties{};s.vk.getPhysicalDeviceProperties(s.physical,&properties);
             uint32_t count{};s.vk.getPhysicalDeviceQueueFamilyProperties(s.physical,&count,nullptr);
@@ -4742,6 +5042,12 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
     }
     bool sourceHasIntegratedHands=false;
     auto integrateSceneHands=[&](VkImage source,VkImageLayout oldLayout,const XrPosef& sourcePose,const XrFovf& sourceFov,uint32_t sourceLayer=0){
+        const auto visibility=freshAerHands?kharvox::hands::HandVisibilityOutput{}:integratedHandVisibility;
+        if(!kharvox::hands::handSceneHasGeometry(visibility,integratedLeftHandPose,integratedRightHandPose,sceneLaser)){
+            barrierAspect(s.commandBuffer,source,oldLayout,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                VK_ACCESS_MEMORY_WRITE_BIT,VK_ACCESS_TRANSFER_READ_BIT,VK_IMAGE_ASPECT_COLOR_BIT,sourceLayer);
+            return false;
+        }
         kharvox::hands::HandSceneTarget handSceneTarget{};
         kharvox::hands::HandSceneTarget sourceTarget{};
         const bool nativeRight=!sfsBackend&&nativeBackend&&nativeFrameValid&&source==nativeFrame.eyes[1].image;
@@ -4808,7 +5114,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
         const bool integrated=s.handRenderer.recordSceneIntegrated(
             s.commandBuffer,handSceneTarget,sourceHandView,
             integratedLeftHandPose,integratedRightHandPose,
-            freshAerHands?kharvox::hands::HandVisibilityOutput{}:integratedHandVisibility,integratedHandGameplay,sceneLaser);
+            visibility,integratedHandGameplay,sceneLaser);
         static bool laserSceneLogged=false;
         if(integrated&&sceneLaser.valid&&!laserSceneLogged){
             log("[LASER] scene-depth beam recorded with completed weapon source; compositor ribbons removed");
@@ -4825,7 +5131,8 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
             VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,VK_ACCESS_TRANSFER_READ_BIT,VK_IMAGE_ASPECT_COLOR_BIT,sourceLayer);
         return integrated&&!freshAerHands;
     };
-    const bool sceneIntegrationEligible=(!freshAerHands||sceneLaser.valid)&&handGameplayActive&&stereoNow
+    const bool sceneIntegrationEligible=(drawCustomHands||sceneLaser.valid)
+        &&(!freshAerHands||sceneLaser.valid)&&handGameplayActive&&stereoNow
         &&!nativePackedStereo&&!skipAlternatingCapture
         &&captureViewValid;
     if(sceneIntegrationEligible){
@@ -4859,7 +5166,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
                 if(!s.quadMode)rawEyeCaptureRecorded[e]=recordEyeSource(e,eyeSource,
                     e==0?VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:nativeFrame.eyes[e].layout,
                     eyeSourceExtent,nativeFrame.eyes[e].format,s.stereoCacheRevision[e]+1,sfsBackend?uint32_t(e):0);
-                if(handGameplayActive&&(s.showHands||sceneLaser.valid)){
+                if(handGameplayActive&&(drawCustomHands||sceneLaser.valid)){
                     integratedNativeHands[e]=integrateSceneHands(eyeSource,
                         e==0?VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:nativeFrame.eyes[e].layout,
                         nativeFrame.eyes[e].pose,nativeFrame.eyes[e].fov,sfsBackend?uint32_t(e):0);
@@ -4870,7 +5177,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
             barrier(s.commandBuffer,cache,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,VK_ACCESS_TRANSFER_WRITE_BIT,VK_ACCESS_TRANSFER_READ_BIT);
             s.stereoCacheInitialized[e]=true;
             s.stereoCacheHasIntegratedHands[e]=nativeBackend?integratedNativeHands[e]:sourceHasIntegratedHands;
-            if(nativeBackend&&handGameplayActive&&s.showHands){
+            if(nativeBackend&&handGameplayActive&&drawCustomHands){
                 static std::array<int,2> lastIntegration{-1,-1};
                 if(lastIntegration[e]!=int(integratedNativeHands[e])){
                     lastIntegration[e]=int(integratedNativeHands[e]);
@@ -5102,6 +5409,28 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
         if(eyeCapture.requested)eyeCaptureFsr[e]=syntheticFsr1Source;
         const bool syntheticAfwSource=false&&eyeSrc!=s.stereoCache[e];
         const bool fullSource=sourceX0==0&&sourceY0==0&&sourceX1==int32_t(sourceWidth)&&sourceY1==int32_t(sourceHeight);
+        if(kharvox::extendedDiagnosticsEnabled()&&e==0){
+            static std::uint64_t nextTextureReport{};
+            const auto tick=GetTickCount64();
+            if(tick>=nextTextureReport){
+                nextTextureReport=tick+1000;
+                std::ostringstream quality;
+                quality<<"[TEXTURE-CONTEXT] renderer="<<(sfsBackend?"SFS":"AER")
+                    <<" pid="<<GetCurrentProcessId()
+                    <<" scene_eye="<<eyeSourceExtent.width<<'x'<<eyeSourceExtent.height
+                    <<" transfer_source="<<sourceWidth<<'x'<<sourceHeight
+                    <<" target_rect="<<copyWidth<<'x'<<copyHeight
+                    <<" fsr_used="<<syntheticFsr1Source
+                    <<" aa_disable_requested="<<environmentEnabled("KHARVOX_DISABLE_AA")
+                    <<" aa_policy="<<(sfsBackend?"game-selected":"SMAA-default")
+                    <<" aa_actual=see-RENDER-CVAR"
+                    <<" final_transfer="<<(s.vk.cmdCopyImage&&!syntheticAfwSource
+                        &&!syntheticFsr1Source&&fullSource&&copyWidth==sourceWidth
+                        &&copyHeight==sourceHeight?"copy":"linear-blit");
+                log(quality.str());
+                kharvox::reportTextureQuality();
+            }
+        }
         if(eyeCapture.requested)eyeCaptureTransfer[e]=
             kharvox::shouldBlackoutCenteredQuadTransition(s.centeredQuadTransitionPending,s.quadMode)?"blackout":
             (s.vk.cmdCopyImage&&!syntheticAfwSource&&!syntheticFsr1Source&&fullSource&&copyWidth==sourceWidth&&copyHeight==sourceHeight)?"copy":"linear-blit";
@@ -5142,7 +5471,8 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
         handView.imageRectHeight=uint32_t(submittedRects[e].extent.height);
         if(freshAerHands||!s.stereoCacheHasIntegratedHands[e])
             s.handRenderer.record(s.commandBuffer,e,xi[e],handView,leftHandPose,
-                rightHandPose,handVisibility,currentHandGameplay);
+                rightHandPose,freshAerHands?handVisibility:sourceHandVisibility,
+                freshAerHands?currentHandGameplay:sourceHandGameplay);
         eye.initialized[xi[e]]=true;
     }
     if(hudImageAcquired){
@@ -5219,7 +5549,7 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
     const bool nativeWatchRecorded=!sfsBackend&&nativeFrameValid&&!nativeFrame.rightEyeBlackDiagnostic&&updateEyeSwapchains&&kharvox::native::recordPairWatch(s.device,s.commandBuffer,nativeFrame);
     if(!sfsBackend&&nativeFrameValid&&!nativeFrame.rightEyeBlackDiagnostic)kharvox::native::recordShadowHistory(s.commandBuffer,nativeFrame);
     kharvox::native::endOwnerGpuTiming(nativeOwnerGpuSpan);
-    if(sfsBackend)s.sfsCopyTiming.end(s.commandBuffer);
+    if(measureSfsGpu)s.sfsCopyTiming.end(s.commandBuffer);
     const VkResult copyRecordResult=s.vk.endCommandBuffer(s.commandBuffer);
     if(nativeFrameValid&&copyRecordResult!=VK_SUCCESS)kharvox::native::fail("Native XR copy command recording failed; resources retained");
     VkSemaphore afwSignalSemaphore{};uint64_t afwSignalValue{};const bool afwSignalPrepared=false;
@@ -5629,9 +5959,10 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
                 +" submitToCompletionMs="+std::to_string(performanceMilliseconds(nativeSubmitDone,nativeCompleteAt))
                 +" completionVerified="+std::to_string(copyLifetime.canRetireResources())+" end="+result(r));
     }
-    if(sfsBackend&&copyLifetime.canRetireResources()){
+    if(measureSfsGpu&&copyLifetime.canRetireResources()){
         double gpuMs{};
         if(s.sfsCopyTiming.completed(gpuMs)){
+            s.handPerformanceComparison.gpu(gpuMs);
             static uint64_t samples{};static double total{},maximum{};
             total+=gpuMs;maximum=std::max(maximum,gpuMs);
             if(++samples==120){
@@ -5646,6 +5977,10 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
         if(steamRuntime)s.lastSteamDisplayTime=frame.predictedDisplayTime;
     }
     s.frame++;
+    if(comparisonXrBegin.QuadPart){
+        LARGE_INTEGER completed{};QueryPerformanceCounter(&completed);
+        s.handPerformanceComparison.xr(performanceMilliseconds(comparisonXrBegin,completed));
+    }
     advanceCenteredQuadTransition();
     if(steamRuntime&&(s.frame<=8||s.frame%120==0||steamWaitFrameMs>40.0||steamCopyWaitMs>40.0||r!=XR_SUCCESS))
         log("[STEAM-PERF] frame="+std::to_string(s.frame)+" waitFrameMs="+std::to_string(steamWaitFrameMs)+" copyFenceMs="+std::to_string(steamCopyWaitMs)+" predicted="+std::to_string(frame.predictedDisplayTime)+" period="+std::to_string(frame.predictedDisplayPeriod)+" end="+result(r));
@@ -5766,10 +6101,11 @@ void KharvoxXRPresent(VkQueue q,const VkPresentInfoKHR*p,bool* consumedPresentWa
         if(s.aerPairInputPoseId!=inputPoseId){
             s.aerPairInputPoseId=inputPoseId;s.aerPairInputCenter=locatedMonoPose;
             s.aerPairInputLeft=s.leftGripController;s.aerPairInputRight=s.rightGripController;
+            s.aerPairInputHands={KharvoxWeaponCurrentKind(),s.leftHanded,s.handInteraction,s.twoHandLatched};
         }
         s.aerInputHistory.remember({inputPoseId,KharvoxCameraLevelTransitionGeneration(),s.renderEye},
             {s.programmedEyePose[s.renderEye],s.programmedEyeFov[s.renderEye],
-             s.aerPairInputLeft,s.aerPairInputRight,s.programmedEyeArtificialTurn[s.renderEye],s.programmedEyeSnapGeneration[s.renderEye],s.aerPairInputCenter,laserBodyTrackingTransform()});
+             s.aerPairInputLeft,s.aerPairInputRight,s.programmedEyeArtificialTurn[s.renderEye],s.programmedEyeSnapGeneration[s.renderEye],s.aerPairInputCenter,laserBodyTrackingTransform(),s.aerPairInputHands});
         traceEye(kharvox::pose_trace::Programmed,s.renderEye,s.programmedEyePose[s.renderEye],eyeRenderProjection(s.programmedEyeFov[s.renderEye]).symmetricFov,frame.predictedDisplayTime,0,0,0,poseTraceProgrammedIds[s.renderEye]);
     }
     if(XR_SUCCEEDED(r)&&s.submittedLayerFrames==1)log("Frame 1 submitted mode="+(s.quadMode?std::string("QUAD"):std::string("PROJECTION"))+" result="+result(r), true);

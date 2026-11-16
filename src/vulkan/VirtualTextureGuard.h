@@ -2,10 +2,15 @@
 #include "../common/DoomBuild.h"
 #include "VirtualTextureAppend.h"
 #include "VirtualTextureAppendSignature.h"
+#include "VirtualTextureDiagnostics.h"
+#include "../common/RuntimeLog.h"
+#include "../common/VulkanSfs.h"
 #include <windows.h>
 #include <atomic>
 #include <cstdio>
 #include <vector>
+#include <mutex>
+#include <sstream>
 
 namespace kharvox {
 inline void vtGuardLog(const char* text) {
@@ -19,6 +24,34 @@ inline void vtGuardLog(const char* text) {
         WriteFile(file, text, static_cast<DWORD>(strlen(text)), &written, nullptr);
         CloseHandle(file);
     }
+}
+inline void observeVtAppend(std::uintptr_t owner,const VtPageList& source,
+    std::uint64_t destinationBefore,const VtAppendResult& result) noexcept {
+    if(!extendedDiagnosticsEnabled())return;
+    try {
+        static std::mutex mutex;
+        static VtAppendDiagnostics diagnostics;
+        static std::uint64_t firstTick{},nextReport{};
+        std::lock_guard<std::mutex> guard(mutex);
+        const auto now=GetTickCount64();
+        diagnostics.observe(owner,source,destinationBefore,result,now);
+        if(now<nextReport)return;
+        if(!firstTick)firstTick=now;
+        nextReport=now+1000;
+        const auto& s=diagnostics.statistics();
+        std::ostringstream out;
+        out<<"[VT-STATS] renderer="<<(vulkanSfsEnabled()?"SFS":"AER")
+            <<" pid="<<GetCurrentProcessId()
+            <<" elapsed_ms="<<now-firstTick<<" capacity="<<vtPageCapacity
+            <<" calls="<<s.calls<<" request_observations="<<s.requests
+            <<" appended="<<s.appended<<" deferred_observations="<<s.deferred
+            <<" saturated_calls="<<s.saturatedCalls<<" destination_peak="<<s.destinationPeak
+            <<" observed_retries="<<s.observedRetries<<" retry_wait_ms_total="<<s.retryWaitMs
+            <<" retry_wait_ms_max="<<s.maxRetryWaitMs<<" tracked_pending="<<diagnostics.pendingCount()
+            <<" untracked_deferrals="<<s.untrackedDeferrals
+            <<" gpu_residency=unavailable virtual_page_mip=opaque";
+        writeRuntimeLog("VT",out.str());
+    } catch(...) { /* Optional diagnostics must not change native residency. */ }
 }
 inline void __fastcall guardedVtAppend(uint8_t* object) {
     uint32_t destinationIndex{}, sourceIndex{};
@@ -35,6 +68,8 @@ inline void __fastcall guardedVtAppend(uint8_t* object) {
         TerminateProcess(GetCurrentProcess(), 0x4B480004);
         for (;;) Sleep(INFINITE);
     }
+    observeVtAppend(reinterpret_cast<std::uintptr_t>(object),*source,
+        destination->count-result.appended,result);
     if (result.deferred) {
         static std::atomic<unsigned> reports{};
         if (reports.fetch_add(1) < 8) {

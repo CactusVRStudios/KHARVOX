@@ -10,7 +10,63 @@ class BodyStanceHeight {
     float height_{}, previousMeasured_{}, previousPhysicsUp_{};
     unsigned confirmations_{}, stationary_{};
     std::uint64_t present_{};
+    float standingHeight_{};
+    bool physicalCameraCompensation_{};
+    bool physicalStandingValid_{}, physicalCrouched_{};
+    float physicalStandingHeight_{};
+    unsigned physicalConfirmations_{};
+    std::uint64_t physicalSample_{};
 public:
+    // Metres in OpenXR LOCAL space, never world/camera height. Keep this
+    // calibration across menus, loading and tracking loss. A reference-space
+    // change explicitly resets it; menu-time head movement cannot rebase it.
+    void resetPhysicalCrouch() {
+        physicalStandingValid_=false;physicalCrouched_=false;
+        physicalConfirmations_=0;physicalSample_=0;
+    }
+    bool updatePhysicalCrouch(float trackedHeight,bool enabled,bool gameplay,
+        bool tracked,std::uint64_t sample) {
+        if(!enabled){resetPhysicalCrouch();return false;}
+        if(!gameplay||!tracked||!std::isfinite(trackedHeight)){
+            // Suspend output without losing the latched posture. Resuming
+            // tracking/menu gameplay must not briefly toggle a crouched body
+            // upright while the next two samples are being confirmed.
+            physicalConfirmations_=0;
+            physicalSample_=sample;return false;
+        }
+        if(!physicalStandingValid_){
+            physicalStandingHeight_=trackedHeight;physicalStandingValid_=true;
+            physicalSample_=sample;return false;
+        }
+        if(sample==physicalSample_)return physicalCrouched_;
+        physicalSample_=sample;
+        const float drop=physicalStandingHeight_-trackedHeight;
+        const bool next=physicalCrouched_?drop>.20f:drop>=.35f;
+        if(next==physicalCrouched_)physicalConfirmations_=0;
+        else if(++physicalConfirmations_>=2){
+            physicalCrouched_=next;physicalConfirmations_=0;
+        }
+        return physicalCrouched_;
+    }
+    bool physicalStandingHeight(float& height) const {
+        if(!physicalStandingValid_)return false;
+        height=physicalStandingHeight_;return true;
+    }
+    bool stanceHeights(float& measured,float& standing) const {
+        if(!valid_)return false;
+        measured=height_;standing=standingHeight_;return true;
+    }
+    std::uint64_t stancePresent() const { return present_; }
+    // The real engine stance still follows update(). During a physical crouch
+    // the HMD supplies the visual descent, so do not add the native descent a
+    // second time. Retain compensation through the native stand animation or
+    // a blocked stand; an explicit manual crouch takes camera ownership back.
+    float cameraHeight(bool physical,bool manual) {
+        if(manual)physicalCameraCompensation_=false;
+        else if(physical)physicalCameraCompensation_=true;
+        else if(height_>=standingHeight_-.05f)physicalCameraCompensation_=false;
+        return physicalCameraCompensation_?standingHeight_:height_;
+    }
     float update(float measured,float calibrated,bool reset,bool requested,
         std::uint64_t present,float physicsUp) {
         (void)requested; // Button level cannot distinguish toggle/blocked crouch.
@@ -18,6 +74,7 @@ public:
             return valid_?height_:calibrated;
         if(reset||!valid_){
             valid_=true;height_=calibrated;previousMeasured_=measured;
+            standingHeight_=calibrated;physicalCameraCompensation_=false;
             previousPhysicsUp_=physicsUp;confirmations_=0;stationary_=2;present_=present;
             return height_;
         }
@@ -42,6 +99,7 @@ public:
                 && std::abs(previousDelta)>1.f)height_=measured;
         }
         previousMeasured_=measured;
+        if(height_>standingHeight_)standingHeight_=height_;
         return height_;
     }
 };

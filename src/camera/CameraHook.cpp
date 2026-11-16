@@ -7,6 +7,7 @@
 #include "../common/AerEyeBasis.h"
 #include "../common/AerCinematicProjection.h"
 #include "../common/DiagnosticLogging.h"
+#include "../common/PerformanceCpuCounters.h"
 #include "BodyPoseRebase.h"
 #include "BodyStanceHeight.h"
 #include "BodyAnchorPolicy.h"
@@ -92,6 +93,7 @@ std::array<std::atomic<float>, 3> stableBodyViewOffsetLocal{};
 std::atomic<uintptr_t> stableBodyViewOffsetOwner{};
 std::atomic<bool> stableBodyViewOffsetValid{};
 std::atomic<bool> crouchRequested{};
+std::atomic<bool> physicalCrouchRequested{};
 std::mutex bodyStanceMutex;
 kharvox::BodyStanceHeight bodyStanceHeight;
 volatile unsigned long long cutsceneFovHits{};
@@ -1814,10 +1816,14 @@ extern "C" void __fastcall patchCamera(void* rawContext, void* rawReturnAddress)
         // level cannot represent toggle crouch or a geometry-blocked stand.
         // Reset on every anchor calibration, even if the player address repeats.
         const float previousUp = viewOffsetLocal[2];
-        if(mayCalibrateAnchor)viewOffsetLocal[2] = bodyStanceHeight.update(measuredViewOffsetLocal[2],
-            previousUp, !offsetValid, crouchRequested.load(std::memory_order_acquire),
-            cameraPresentSerial.load(std::memory_order_acquire),
-            physicsOrigin[0]*bodyBasis[6]+physicsOrigin[1]*bodyBasis[7]+physicsOrigin[2]*bodyBasis[8]);
+        if(mayCalibrateAnchor){
+            const bool manual=crouchRequested.load(std::memory_order_acquire);
+            bodyStanceHeight.update(measuredViewOffsetLocal[2],previousUp,!offsetValid,
+                manual,cameraPresentSerial.load(std::memory_order_acquire),
+                physicsOrigin[0]*bodyBasis[6]+physicsOrigin[1]*bodyBasis[7]+physicsOrigin[2]*bodyBasis[8]);
+            viewOffsetLocal[2]=bodyStanceHeight.cameraHeight(
+                physicalCrouchRequested.load(std::memory_order_acquire),manual);
+        }
         if (viewOffsetLocal[2] != previousUp)
             stableBodyViewOffsetLocal[2].store(viewOffsetLocal[2], std::memory_order_relaxed);
         for (int axis = 0; axis < 3; ++axis)
@@ -2090,8 +2096,26 @@ unsigned long long KharvoxCameraDiagnosticPoseId() {
     return renderHeadPose().poseId;
 }
 
-void KharvoxCameraSetCrouchState(bool active) {
+void KharvoxCameraSetCrouchState(bool active,bool physical) {
     crouchRequested.store(active, std::memory_order_release);
+    physicalCrouchRequested.store(physical, std::memory_order_release);
+}
+
+bool KharvoxCameraGetStanceHeights(float& measured,float& standing) {
+    const kharvox::PerformanceCpuTimer timer(kharvox::PerformanceCpuScope::StanceRead);
+    std::lock_guard<std::mutex> guard(bodyStanceMutex);
+    const auto present=cameraPresentSerial.load(std::memory_order_acquire);
+    const auto measuredPresent=bodyStanceHeight.stancePresent();
+    return stableBodyViewOffsetValid.load(std::memory_order_acquire)
+        &&stableBodyViewOffsetOwner.load(std::memory_order_relaxed)
+            ==playerPhysicsOwner.load(std::memory_order_acquire)
+        &&present>=measuredPresent&&present-measuredPresent<=1
+        &&bodyStanceHeight.stanceHeights(measured,standing);
+}
+
+bool KharvoxCameraIsLocalPlayer(const void* player) {
+    return player&&playerPhysicsOriginValid.load(std::memory_order_acquire)
+        &&playerPhysicsOwner.load(std::memory_order_relaxed)==reinterpret_cast<uintptr_t>(player);
 }
 
 void KharvoxCameraSetImmersiveCinematicFov(

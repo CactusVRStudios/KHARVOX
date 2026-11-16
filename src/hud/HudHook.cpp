@@ -2,6 +2,9 @@
 #include "../common/DiagnosticLogging.h"
 #include "HudHook.h"
 #include "OffhandHudPolicy.h"
+#include "ForearmHudPolicy.h"
+#include "WristHudGesturePolicy.h"
+#include "HudGpuProvenance.h"
 #include "TutorialRenderPolicy.h"
 #include "TutorialBindingText.h"
 #include "HudLayoutPolicy.h"
@@ -10,6 +13,8 @@
 
 #include "../camera/CameraHook.h"
 #include "../common/RuntimePaths.h"
+#include "../hands/WeaponSupportPolicy.h"
+#include "../weapon/WeaponHook.h"
 
 #include <windows.h>
 #include <intrin.h>
@@ -22,6 +27,7 @@
 #include <iomanip>
 #include <mutex>
 #include <map>
+#include <optional>
 #include <sstream>
 #include <vector>
 
@@ -106,10 +112,16 @@ struct PendingHudSubmission {
     bool active{};
     bool crosshair{};
     bool offhand{};
+    bool forearmPose{};
+    float forearmAlpha{1};
     bool weaponWheel{};
     int offhandSurface{-1};
     float offhandWidth{};
     std::array<float,9> offhandAxis{};
+    bool watchReading{};float armourGapCm{};
+    kharvox::OffhandHudBounds armourBounds{};
+    std::array<float,3> offhandGrip{};
+    std::array<float,9> offhandHandAxis{};
     bool offscreen{};
     uintptr_t context{};
     void* expectedFinalEntity{};
@@ -153,14 +165,27 @@ std::array<TrackedHandPose, 2> handPoses{};
 std::mutex handPoseMutex;
 std::mutex offhandRenderMutex;
 kharvox::OffhandHudRenderFrame offhandRenderFrame;
+std::array<std::array<kharvox::hands::SupportHudGeometry,2>,15> supportHudGeometries{};
+std::array<kharvox::OffhandHudBounds,2> freeHandHudBounds{};
+std::array<bool,2> freeHandHudBoundsValid{};
+unsigned hudSupportWeapon{};bool hudSupportHeld{}; // handPoseMutex
 std::mutex offhandHudMutex;
 bool offhandCanvasHookReady{};
-struct OffhandCanvasSubmission {const void* entity{};float center[3]{},axis[9]{},width{};int surface{-1};bool weaponWheel{};};
+struct OffhandCanvasSubmission {const void* entity{};float center[3]{},axis[9]{},width{},pixelFacing{};int surface{-1};bool weaponWheel{},forearmPose{};float forearmAlpha{1};};
 thread_local OffhandCanvasSubmission offhandCanvasSubmission;
 thread_local OffhandCanvasSubmission progSource;
 thread_local const void* suppressedOffhandCanvas{};
 
 kharvox::OffhandHudConfig offhandHudConfig;
+kharvox::ForearmHudConfig forearmHudConfig;
+kharvox::WristHudGestureConfig wristHudGestureConfig;
+struct WristHudFadeSource {const void* gui{};uint64_t present{},level{};float alpha{1};};
+std::array<WristHudFadeSource,2> wristHudFadeSources;
+std::mutex wristHudFadeMutex;
+std::mutex wristHudGestureMutex;
+kharvox::WristHudGestureState wristHudGestureState;
+uint64_t wristHudGesturePresent{~0ull},wristHudGestureLevel{~0ull};
+float wristHudFrameAlpha{};
 std::atomic<bool> offhandCalibrationActive{};
 std::atomic<int> offhandSelectedSurface{};
 std::atomic<unsigned long long> offhandSelectionUntil{};
@@ -171,6 +196,14 @@ void reloadOffhandHud(){
     offhandCalibrationActive.store(attributes!=INVALID_FILE_ATTRIBUTES&&!(attributes&FILE_ATTRIBUTE_DIRECTORY),std::memory_order_release);
     std::ifstream file(kharvox::runtimePathA("offhand_hud.cfg"));kharvox::OffhandHudConfig next;
     if(kharvox::readOffhandHudConfig(file,next)){std::lock_guard<std::mutex> lock(offhandHudMutex);offhandHudConfig=next;}
+    std::ifstream authored(kharvox::runtimePathA("offhand_forearm_left.cfg"));
+    kharvox::ForearmHudConfig forearm;
+    kharvox::readForearmHudConfig(authored,forearm);
+    {std::lock_guard<std::mutex> lock(offhandHudMutex);forearmHudConfig=forearm;}
+    std::ifstream gestureFile(kharvox::runtimePathA("offhand_hud_gesture.cfg"));
+    kharvox::WristHudGestureConfig gesture;
+    kharvox::readWristHudGestureConfig(gestureFile,gesture);
+    {std::lock_guard<std::mutex> lock(offhandHudMutex);wristHudGestureConfig=gesture;}
 }
 
 
@@ -360,7 +393,7 @@ constexpr unsigned long long tutorialManagerFrameHoldMilliseconds = 250;
 constexpr unsigned long long tutorialSessionMilliseconds = 300000;
 
 void log(const std::string& text) {
-    if (!kharvox::extendedDiagnosticsEnabled()) return;
+    if (!kharvox::extendedDiagnosticsEnabled()&&text.rfind("[HUD-RESTORE]",0)!=0) return;
     char temp[MAX_PATH]{};
     GetTempPathA(MAX_PATH, temp);
     std::ofstream out(std::string(temp) + "KHARVOX.log", std::ios::app);
@@ -586,6 +619,14 @@ void __fastcall offhandHudCanvasSize(void* entity,int width,int height,float ext
     const auto image=reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
     const auto caller=kharvox::game::canonicalRva(reinterpret_cast<uintptr_t>(_ReturnAddress())-image);
     auto pending=offhandCanvasSubmission;
+    if(pending.forearmPose&&pending.entity==entity&&pending.surface>=0&&pending.surface<2
+        &&caller==0xF922A7&&width==512&&height==300){
+        std::lock_guard<std::mutex> lock(wristHudFadeMutex);
+        wristHudFadeSources[pending.surface]={entity,KharvoxCameraCurrentPresentSerial(),
+            KharvoxCameraLevelTransitionGeneration(),pending.forearmAlpha};
+        KHARVOX_HUD_TRACE(ownGui(reinterpret_cast<uintptr_t>(entity),pending.surface,
+            KharvoxCameraCurrentPresentSerial(),KharvoxCameraLevelTransitionGeneration()));
+    }
     if(pending.surface==0)progSource=pending;
     offhandCanvasSubmission={};
     const bool suppressed=caller==0xF922A7&&suppressedOffhandCanvas==entity&&width==512&&height==300;
@@ -611,6 +652,14 @@ void __fastcall offhandHudCanvasSize(void* entity,int width,int height,float ext
                 show=state;
             }
         }
+        static std::atomic<unsigned> notedStates{};
+        const unsigned bit=1u<<(std::clamp(pending.surface,0,1)*2+(show?1:0));
+        if(!(notedStates.load(std::memory_order_relaxed)&bit)
+            &&!(notedStates.fetch_or(bit,std::memory_order_relaxed)&bit)){
+            log("[HUD-RESTORE] surface="+std::to_string(pending.surface)
+                +" canvas="+(show?"visible":"hidden")+" measured="+std::to_string(measured)
+                +" nearestCm="+std::to_string(nearest/hudWorldUnitsPerMeter*100.f));
+        }
         if(!show){
             originalHudCanvasSize(entity,width,height,0,0);return;
         }
@@ -625,6 +674,37 @@ void __fastcall offhandHudCanvasSize(void* entity,int width,int height,float ext
     auto bytes=static_cast<unsigned char*>(entity);
     if((bytes[0x70]&bytes[0x71])==0)std::memcpy(bytes+0xc8,origin,sizeof(origin));
     std::memcpy(bytes+0x78,origin,sizeof(origin));
+    // One bounded numeric check per owned panel/weapon/hold mode. Observe
+    // native setter results, not another replay of the export calculation.
+    // GUI SetCanvasSize (1590D60) stores pixel factors at F8/FC; native axis
+    // and origin are at 84/78. No screenshot, fitting or per-vertex work.
+    if(pending.forearmPose&&pending.forearmAlpha>.99f&&readableRange(entity,0x104)){
+        kharvox::OffhandHudRenderFrame frame;
+        {std::lock_guard<std::mutex> lock(offhandRenderMutex);frame=offhandRenderFrame;}
+        const unsigned key=(frame.supportHeld?2+frame.supportWeapon*2:0)+unsigned(pending.surface);
+        static std::atomic<uint64_t> measured{};
+        const uint64_t bit=key<64?uint64_t(1)<<key:0;
+        if(bit&&!(measured.fetch_or(bit,std::memory_order_relaxed)&bit)){
+            float native[9]{},pixel[2]{},stored[3]{};
+            std::memcpy(native,bytes+0x84,sizeof(native));
+            std::memcpy(pixel,bytes+0xf8,sizeof(pixel));std::memcpy(stored,bytes+0x78,sizeof(stored));
+            float physical[2]{},error{};
+            for(int row=0;row<2;++row){float squared{};
+                for(int i=0;i<3;++i)squared+=native[row*3+i]*native[row*3+i];
+                physical[row]=std::sqrt(squared)*pixel[row]*(row?height:width)/hudWorldUnitsPerMeter*100.f;
+            }
+            for(int i=0;i<3;++i){
+                const float actual=stored[i]+.5f*(native[i]*pixel[0]*width+native[3+i]*pixel[1]*height);
+                const float difference=actual-pending.center[i];error+=difference*difference;
+            }
+            std::ofstream report(kharvox::runtimePathA("hud-scale-runtime.log"),std::ios::app);
+            report<<std::setprecision(9)<<"panel="<<pending.surface<<" weapon="<<frame.supportWeapon
+                <<" twoHands="<<frame.supportHeld<<" worldUnitsPerMeter="<<hudWorldUnitsPerMeter
+                <<" requestedWidthCm="<<pending.width/hudWorldUnitsPerMeter*100.f
+                <<" nativeWidthCm="<<physical[0]<<" nativeHeightCm="<<physical[1]
+                <<" nativeCenterErrorCm="<<std::sqrt(error)/hudWorldUnitsPerMeter*100.f<<'\n';
+        }
+    }
     static std::atomic<bool> noted{};
     if(!noted.exchange(true))log("[OFFHAND-HUD] centered canvas pivot and metric panel size active");
 }
@@ -1871,7 +1951,10 @@ using TutorialSpriteRender = void(__fastcall*)(void*, void*, void*, void*, int, 
 TutorialSpriteRender originalTutorialSpriteRender{};
 // ProgMeter is a subtree of ws_0, not another HUD manager. Render it into an
 // independently owned native GUI/model pair; never move the shared Ammo entity.
-bool getOffhandHudFrame(float origin[3],float axis[9]);
+bool getOffhandHudFrame(float origin[3],float axis[9],kharvox::OffhandHudBounds* bounds=nullptr,
+    bool requireLockedWrist=false);
+float contextualWristHudAlpha(const kharvox::ForearmHudConfig& forearm,
+    const float grip[3],const float hand[9]);
 using ProgFrameFn=void(__fastcall*)(void*,int);
 using ProgAllocFn=void*(__fastcall*)(void*,int,void*,int,void*);
 ProgFrameFn originalProgFrame{};
@@ -1905,6 +1988,8 @@ bool __fastcall progQueue(void* queue,void* swf,void* gui,int time,const float* 
 template<class Fn> Fn progNative(uintptr_t rva){return reinterpret_cast<Fn>(reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr))+rva);}
 void* __fastcall progAllocate(void* gui,int vertices,void* indices,int indexCount,void* material){
     void* result=originalProgAlloc(gui,vertices,indices,indexCount,material);
+    if(vertices>0&&indexCount>=0)kharvox::hudtrace::nativeAllocation(gui,result,
+        static_cast<unsigned>(vertices),indices,static_cast<unsigned>(indexCount),material);
     if(progMeter.drawing&&gui==progMeter.gui&&result&&vertices>0){
         if(progMeter.count<progMeter.blocks.size()&&vertices<=65535)
             progMeter.blocks[progMeter.count++]={result,vertices};
@@ -1969,9 +2054,12 @@ bool progIsTarget(void* swf,void* sprite){
 bool renderProgMeter(void* swf,void* view,void* sprite,void* state,int time,bool flag){
     if(!progIsTarget(swf,sprite)||progMeter.drawing||!state||!readableRange(state,24)
         ||progSource.entity!=view||progSource.surface!=0)return false;
-    kharvox::OffhandHudConfig config;{std::lock_guard<std::mutex> lock(offhandHudMutex);config=offhandHudConfig;}
+    kharvox::OffhandHudConfig config;kharvox::ForearmHudConfig forearm;
+    {std::lock_guard<std::mutex> lock(offhandHudMutex);config=offhandHudConfig;forearm=forearmHudConfig;}
+    const bool authored=kharvox::forearmHudActive(forearm,offhandHudLeftMode())&&!offhandCalibrationActive.load();
     if(!config.enabled&&!offhandCalibrationActive.load())return false;
-    float grip[3]{},hand[9]{};if(!getOffhandHudFrame(grip,hand))return true;
+    auto armourBounds=config.armourBounds[offhandHudLeftMode()?1:0];
+    float grip[3]{},hand[9]{};if(!getOffhandHudFrame(grip,hand,&armourBounds,authored))return true;
     if(!progCreate())return false;
     const int handed=offhandHudLeftMode()?1:0;
     float sourceBasis[9]{},targetBasis[9]{},axis[9]{},center[3]{};
@@ -1979,7 +2067,11 @@ bool renderProgMeter(void* swf,void* view,void* sprite,void* state,int time,bool
     const auto& values=config.modes[4+handed];
     kharvox::offhandHudBasis(hand,values,targetBasis);
     kharvox::offhandHudOrigin(grip,hand,targetBasis,values,2,hudWorldUnitsPerMeter,center);
-    for(int row=0;row<3;++row)for(int local=0;local<3;++local){float dot=0;
+    if(authored){
+        float pixels[9]{};
+        if(!kharvox::forearmHudTransform(forearm,2,false,grip,hand,hudWorldUnitsPerMeter,center,pixels)
+            ||!kharvox::forearmHudPixelAxis(pixels,progSource.axis,axis))return true;
+    }else for(int row=0;row<3;++row)for(int local=0;local<3;++local){float dot=0;
         for(int j=0;j<3;++j)dot+=progSource.axis[row*3+j]*sourceBasis[local*3+j];
         for(int j=0;j<3;++j)axis[row*3+j]+=dot*targetBasis[local*3+j];}
     auto gui=static_cast<unsigned char*>(progMeter.gui);
@@ -1989,7 +2081,13 @@ bool renderProgMeter(void* swf,void* view,void* sprite,void* state,int time,bool
         *reinterpret_cast<float*>(source+0x4ecc),*reinterpret_cast<float*>(source+0x4ed0));
     // Preserve native materials/animations. Only geometry ownership changes.
     progMeter.count=0;progMeter.overflow=false;progMeter.drawing=true;
-    originalTutorialSpriteRender(swf,progMeter.gui,sprite,state,time,flag);
+    KHARVOX_HUD_TRACE(ownGui(reinterpret_cast<uintptr_t>(progMeter.gui),2,
+        KharvoxCameraCurrentPresentSerial(),KharvoxCameraLevelTransitionGeneration()));
+    {
+        kharvox::hudtrace::GuiScope trace(progMeter.gui,KharvoxCameraCurrentPresentSerial(),
+            KharvoxCameraLevelTransitionGeneration(),true);
+        originalTutorialSpriteRender(swf,progMeter.gui,sprite,state,time,flag);
+    }
     progMeter.drawing=false;
     _mm_sfence(); // Native SWF writes vertices with streaming stores.
     float minX=1e20f,minY=1e20f,maxX=-1e20f,maxY=-1e20f;
@@ -2003,10 +2101,19 @@ bool renderProgMeter(void* swf,void* view,void* sprite,void* state,int time,bool
     if(!progMeter.pivotValid){progMeter.midX=(minX+maxX)*.5f;progMeter.midY=(minY+maxY)*.5f;
         progMeter.pixelWidth=maxX-minX;progMeter.pivotValid=true;}
     float width=.20f*hudWorldUnitsPerMeter*(values.scale/.4f);
+    if(authored)width=forearm.panels[2].widthCm*.01f*hudWorldUnitsPerMeter;
     if(offhandCalibrationActive.load()&&offhandSelectedSurface.load()==2&&GetTickCount64()<offhandSelectionUntil.load())width*=1.15f;
     const float aspect=progMeter.pixelWidth/std::max(1.f,maxY-minY);
     float eye[3]{},head[9]{},nearest{};
-    if(!KharvoxCameraGetHudCenterRenderPose(eye,head)||!kharvox::offhandHudNearestDepth(center,axis,width,aspect,eye,head,nearest)
+    if(!KharvoxCameraGetHudCenterRenderPose(eye,head)){progResetGeometry();return true;}
+    // Source pixel rows already include the reading rotation. Reapply only
+    // the envelope clearance after moving the detached native ProgMeter.
+    if(!authored&&config.watchReading)kharvox::watchOffhandHud(center,axis,grip,hand,
+        armourBounds,eye,config.armourGapCm,hudWorldUnitsPerMeter,false,width,aspect);
+    if(!authored&&!config.watchReading&&config.armourGapCm>0)
+        kharvox::clearOriginalOffhandHud(center,axis,grip,hand,armourBounds,
+            progSource.pixelFacing,config.armourGapCm,hudWorldUnitsPerMeter,width,aspect);
+    if(!kharvox::offhandHudNearestDepth(center,axis,width,aspect,eye,head,nearest)
         ||nearest<.04f*hudWorldUnitsPerMeter){progResetGeometry();return true;}
     float origin[3]{},ex{},ey{};
     if(!kharvox::centeredOffhandHud(center,axis,width,512.f/300.f,origin,ex,ey)){progResetGeometry();return false;}
@@ -2155,6 +2262,32 @@ void __fastcall runeCounterUpdateHook(void* screen) {
 
 void __fastcall tutorialSpriteRenderHook(
     void* swf, void* view, void* sprite, void* state, int time, bool flag) {
+    static thread_local bool wristFadeActive{};
+    if(!wristFadeActive&&swf&&sprite&&readableRange(swf,0x1a8)
+        &&sprite==*reinterpret_cast<void**>(static_cast<unsigned char*>(swf)+0x1a0)){
+        float alpha=1;
+        {
+            std::lock_guard<std::mutex> lock(wristHudFadeMutex);
+            const auto present=KharvoxCameraCurrentPresentSerial(),level=KharvoxCameraLevelTransitionGeneration();
+            for(const auto& source:wristHudFadeSources)
+                if(source.gui==view&&source.level==level&&present>=source.present&&present-source.present<=1)
+                    alpha=source.alpha;
+        }
+        if(alpha<=0)return;
+        if(alpha<1&&state&&readableRange(state,0x58)){
+            // Steam native 1621000: alpha multiply at +24h, alpha add at
+            // +34h; native mask fields through +50h must remain intact.
+            alignas(16) std::array<float,22> copy{};std::memcpy(copy.data(),state,0x58);
+            if(kharvox::fadeWristHudNativeState(copy,alpha)){
+                struct Scope {bool& active;Scope(bool& value):active(value){active=true;}~Scope(){active=false;}} scope(wristFadeActive);
+                tutorialSpriteRenderHook(swf,view,sprite,copy.data(),time,flag);return;
+            }
+        }
+    }
+    std::optional<kharvox::hudtrace::GuiScope> trace;
+    if(kharvox::hudtrace::active())trace.emplace(view,KharvoxCameraCurrentPresentSerial(),
+        KharvoxCameraLevelTransitionGeneration(),swf&&sprite&&readableRange(swf,0x1a8)
+            &&sprite==*reinterpret_cast<void**>(static_cast<unsigned char*>(swf)+0x1a0));
     if(renderProgMeter(swf,view,sprite,state,time,flag))return;
     struct CanvasScope {void* swf;std::array<float,6> matrix;
         ~CanvasScope(){runeCanvasSwf=swf;runeCanvasMatrix=matrix;}
@@ -2470,8 +2603,11 @@ std::array<float, 3> bodyVectorToWorld(
 }
 
 bool getHandWorldPose(bool rightHand, float origin[3], float axis[9],
-    const float* renderBodyOrigin=nullptr,const float* renderBodyAxis=nullptr) {
+    const float* renderBodyOrigin=nullptr,const float* renderBodyAxis=nullptr,
+    unsigned* supportWeapon=nullptr,bool* supportHeld=nullptr) {
     std::lock_guard<std::mutex> poseGuard(handPoseMutex);
+    if(supportWeapon)*supportWeapon=hudSupportWeapon;
+    if(supportHeld)*supportHeld=hudSupportHeld;
     auto& hand = handPoses[rightHand ? 0 : 1];
     if (!hand.valid.load(std::memory_order_acquire)) return false;
     float bodyOrigin[3]{}, bodyAxis[9]{};
@@ -2504,13 +2640,60 @@ bool getHandWorldPose(bool rightHand, float origin[3], float axis[9],
     return finiteValues(origin, 3) && finiteValues(axis, 9);
 }
 
-bool getOffhandHudFrame(float origin[3],float axis[9]) {
-    std::lock_guard<std::mutex> guard(offhandRenderMutex);
-    if(!offhandRenderFrame.usable(KharvoxCameraCurrentPresentSerial(),
-        KharvoxCameraLevelTransitionGeneration()))return false;
-    std::memcpy(origin,offhandRenderFrame.origin.data(),sizeof(float)*3);
-    std::memcpy(axis,offhandRenderFrame.axis.data(),sizeof(float)*9);
+bool getOffhandHudFrame(float origin[3],float axis[9],kharvox::OffhandHudBounds* bounds,bool requireLockedWrist) {
+    kharvox::OffhandHudRenderFrame frame; kharvox::hands::SupportHudGeometry geometry;
+    {
+        std::lock_guard<std::mutex> guard(offhandRenderMutex);frame=offhandRenderFrame;
+        const auto hand=offhandHudLeftMode()?1:0;
+        if(bounds&&freeHandHudBoundsValid[hand])*bounds=freeHandHudBounds[hand];
+        if(frame.supportWeapon<supportHudGeometries.size())
+            geometry=supportHudGeometries[frame.supportWeapon][offhandHudLeftMode()?1:0];
+    }
+    if(!frame.usable(KharvoxCameraCurrentPresentSerial(),KharvoxCameraLevelTransitionGeneration()))return false;
+    std::memcpy(origin,frame.origin.data(),sizeof(float)*3);
+    std::memcpy(axis,frame.axis.data(),sizeof(float)*9);
+    if(frame.supportHeld&&requireLockedWrist&&!geometry.valid)return false;
+    if(frame.supportHeld&&geometry.valid){
+        kharvox::hands::WeaponSupportFrame support{};
+        const bool same=KharvoxWeaponGetSupportFrame(support)
+            &&kharvox::hands::supportHudSourceMatches(support,frame.present,frame.level,
+                frame.supportWeapon,frame.bodyOrigin.data(),frame.bodyAxis.data());
+        if(!same&&requireLockedWrist)return false;
+        if(same){
+            const bool mapped=kharvox::hands::supportHudFrame(support,geometry,hudWorldUnitsPerMeter,origin,axis);
+            if(!mapped&&requireLockedWrist)return false;
+            if(mapped&&bounds){
+                bounds->minimum=geometry.minimumCm;bounds->maximum=geometry.maximumCm;
+                bounds->sections=geometry.hudSections;bounds->sectionMask=geometry.hudSectionMask;
+                static std::atomic<unsigned> seen{};const unsigned bit=1u<<(frame.supportWeapon*2+(offhandHudLeftMode()?1:0));
+                if(!(seen.load(std::memory_order_relaxed)&bit)&&!(seen.fetch_or(bit,std::memory_order_relaxed)&bit))
+                    log("[OFFHAND-HUD] support wrist=matched-native-prop weapon="+std::to_string(frame.supportWeapon)
+                        +" hand="+(offhandHudLeftMode()?"right":"left")+" bounds=locked-mesh");
+            }
+        }
+    }
     return true;
+}
+
+float contextualWristHudAlpha(const kharvox::ForearmHudConfig& forearm,
+    const float grip[3],const float hand[9]){
+    kharvox::WristHudGestureConfig config;
+    {std::lock_guard<std::mutex> lock(offhandHudMutex);config=wristHudGestureConfig;}
+    if(!config.enabled)return 1.f;
+    float center[3]{},pixels[9]{},eye[3]{},head[9]{};
+    const bool tracked=kharvox::forearmHudTransform(forearm,1,false,grip,hand,
+        hudWorldUnitsPerMeter,center,pixels)&&KharvoxCameraGetHudCenterRenderPose(eye,head);
+    const float front[3]{-pixels[6],-pixels[7],-pixels[8]};
+    const auto metrics=tracked?kharvox::wristHudMetrics(center,front,eye,head,hudWorldUnitsPerMeter)
+        :kharvox::WristHudMetrics{};
+    const auto present=KharvoxCameraCurrentPresentSerial(),level=KharvoxCameraLevelTransitionGeneration();
+    std::lock_guard<std::mutex> lock(wristHudGestureMutex);
+    if(level!=wristHudGestureLevel){wristHudGestureState.reset();wristHudGesturePresent=~0ull;wristHudGestureLevel=level;}
+    if(present!=wristHudGesturePresent){
+        wristHudFrameAlpha=wristHudGestureState.update(config,metrics,GetTickCount64()*.001);
+        wristHudGesturePresent=present;
+    }
+    return wristHudFrameAlpha;
 }
 
 void pollOffhandHudHotkeys(){
@@ -2563,8 +2746,11 @@ void pollOffhandHudHotkeys(){
     }
     const auto path=kharvox::runtimePathA("offhand_hud.cfg"),temp=path+".hotkeys.tmp";
     std::ofstream output(temp,std::ios::trunc);output.imbue(std::locale::classic());
-    output<<"3 "<<int(config.enabled)<<'\n';
+    const bool envelope=config.watchReading||config.armourGapCm>0;
+    if(envelope)output<<"4 "<<int(config.enabled)<<' '<<int(config.watchReading)<<' '<<config.armourGapCm<<'\n';
+    else output<<"3 "<<int(config.enabled)<<'\n';
     for(const auto& mode:config.modes){for(float v:mode.centimeters)output<<v<<' ';for(float v:mode.degrees)output<<v<<' ';output<<mode.scale<<'\n';}
+    if(envelope)for(const auto& bounds:config.armourBounds){for(float v:bounds.minimum)output<<v<<' ';for(float v:bounds.maximum)output<<v<<' ';output<<'\n';}
     output.close();
     if(!output||!MoveFileExA(temp.c_str(),path.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)){
         log("[OFFHAND-HUD] calibration save failed; keeping previous values");nextStep=now+1000;return;
@@ -3454,18 +3640,21 @@ bool KharvoxHudPrepareOriginTransform(void* intermediateEntity, float* nativeOri
             &&kharvox::ownedWeaponWheel(kharvox::game::canonicalRva(ownerVtable-image));
         ownedHandSurface=kharvox::ownedOffhandHudSurface(ownerVtable>=image?kharvox::game::canonicalRva(ownerVtable-image):0,
             profile.callerRva,profile.width,profile.height,profile.scaleMilli);
-        bool managedOffhand=false;
+        bool managedOffhand=false,authoredOffhand=false;
         if(offhandCanvasHookReady&&ownedHandSurface>=0){
             std::lock_guard<std::mutex> guard(offhandHudMutex);
             managedOffhand=offhandHudConfig.enabled||offhandCalibrationActive.load();
+            authoredOffhand=kharvox::forearmHudActive(forearmHudConfig,offhandHudLeftMode())&&!offhandCalibrationActive.load();
         }
         float handOrigin[3]{},handAxis[9]{};
-        const bool tracked=!managedOffhand||getOffhandHudFrame(handOrigin,handAxis);
+        const bool tracked=!managedOffhand||getOffhandHudFrame(handOrigin,handAxis,nullptr,authoredOffhand);
         if(kharvox::suppressOffhandHudFallback(managedOffhand,gameplayHudActive(),cinematicSurface,
             ledgeTransitionActive,KharvoxCameraSyncAttackActive(),tracked)){
             suppressedOffhandCanvas=*reinterpret_cast<void**>(current+0x30);
             static std::atomic<unsigned> count{};const auto n=++count;
-            if(n<=4||n%240==0)log("[OFFHAND-HUD] native fallback suppressed during sequence/tracking gap count="+std::to_string(n));
+            if(n<=4)log("[HUD-RESTORE] fallback suppressed gameplay="+std::to_string(gameplayHudActive())
+                +" cinematic="+std::to_string(cinematicSurface)+" tracked="+std::to_string(tracked));
+            else if(n%240==0)log("[OFFHAND-HUD] native fallback suppressed during sequence/tracking gap count="+std::to_string(n));
             return false;
         }
         if(cinematicSurface&&!observeCinematicMenu)return false;
@@ -3552,15 +3741,30 @@ bool KharvoxHudPrepareOriginTransform(void* intermediateEntity, float* nativeOri
         calibration,profileAdjustment))return false;
 
     bool offhand=false;float offhandAxis[9]{};float offhandScale=1;
+    PendingHudSubmission pending{};
     const int handSurface=ownedHandSurface;
     if(offhandCanvasHookReady&&!crosshair&&!offscreen&&handSurface>=0){
-        kharvox::OffhandHudConfig config;{std::lock_guard<std::mutex> lock(offhandHudMutex);config=offhandHudConfig;}
+        kharvox::OffhandHudConfig config;kharvox::ForearmHudConfig forearm;
+        {std::lock_guard<std::mutex> lock(offhandHudMutex);config=offhandHudConfig;forearm=forearmHudConfig;}
+        const bool authored=kharvox::forearmHudActive(forearm,offhandHudLeftMode())&&!offhandCalibrationActive.load();
+        auto armourBounds=config.armourBounds[offhandHudLeftMode()?1:0];
         float grip[3]{},handAxis[9]{};
-        if((config.enabled||offhandCalibrationActive.load())&&getOffhandHudFrame(grip,handAxis)){
+        if((config.enabled||offhandCalibrationActive.load())&&getOffhandHudFrame(grip,handAxis,&armourBounds,authored)){
             const auto& values=config.modes[handSurface*2+(offhandHudLeftMode()?1:0)];
             kharvox::offhandHudBasis(handAxis,values,offhandAxis);
             kharvox::offhandHudOrigin(grip,handAxis,offhandAxis,values,handSurface,hudWorldUnitsPerMeter,desiredOrigin);
             offhand=true;offhandScale=values.scale;
+            if(authored){
+                if(!kharvox::forearmHudTransform(forearm,handSurface,false,grip,handAxis,
+                    hudWorldUnitsPerMeter,desiredOrigin,offhandAxis))return false;
+                pending.forearmPose=true;
+                pending.offhandWidth=forearm.panels[handSurface].widthCm*.01f*hudWorldUnitsPerMeter;
+                pending.forearmAlpha=contextualWristHudAlpha(forearm,grip,handAxis);
+            }
+            pending.watchReading=config.watchReading;pending.armourGapCm=config.armourGapCm;
+            pending.armourBounds=armourBounds;
+            std::copy_n(grip,3,pending.offhandGrip.begin());
+            std::copy_n(handAxis,9,pending.offhandHandAxis.begin());
             if(offhandCalibrationActive.load()&&offhandSelectedSurface.load()==handSurface&&GetTickCount64()<offhandSelectionUntil.load())offhandScale*=1.15f;
             profileAdjustment.yawDegrees=0;
             static std::atomic<unsigned> seen{};const auto bit=1u<<handSurface;
@@ -3573,13 +3777,12 @@ bool KharvoxHudPrepareOriginTransform(void* intermediateEntity, float* nativeOri
         restoreAllPendingHudSubmissions();
     }
 
-    PendingHudSubmission pending{};
     pending.active = true;
     pending.crosshair = crosshair;
     pending.offhand=offhand;
     pending.weaponWheel=weaponWheel&&!offscreen;
     pending.offhandSurface=handSurface;
-    pending.offhandWidth=.25f*hudWorldUnitsPerMeter*(offhandScale/.40f);
+    if(!pending.forearmPose)pending.offhandWidth=.25f*hudWorldUnitsPerMeter*(offhandScale/.40f);
     std::memcpy(pending.offhandAxis.data(),offhandAxis,sizeof(offhandAxis));
     pending.offscreen = offscreen;
     pending.context = current;
@@ -3660,21 +3863,57 @@ bool KharvoxHudCompleteFinalEntity(
         return false;
     }
 
-    const auto matchedPending = pendingHudStack[match];
+    auto matchedPending = pendingHudStack[match];
     const bool transformed = desiredOrigin && desiredAxis
         && (matchedPending.weaponWheel
             ? kharvox::flatWeaponWheelAxis(nativeAxis,matchedPending.headAxis.data(),desiredAxis)
             : buildStableHeadlockedAxis(matchedPending, nativeAxis, desiredAxis));
     offhandCanvasSubmission={};
     if(transformed&&matchedPending.offhand){
+        const float pixelFacing=kharvox::offhandHudPixelFacing(desiredAxis,matchedPending.headAxis.data());
         float rotated[9]{};
-        for(int row=0;row<3;++row)for(int local=0;local<3;++local){float value=0;
+        if(matchedPending.forearmPose){
+            if(!kharvox::forearmHudPixelAxis(matchedPending.offhandAxis.data(),desiredAxis,rotated))return false;
+        }else for(int row=0;row<3;++row)for(int local=0;local<3;++local){float value=0;
             for(int world=0;world<3;++world)value+=desiredAxis[row*3+world]*matchedPending.headAxis[local*3+world];
             for(int world=0;world<3;++world)rotated[row*3+world]+=value*matchedPending.offhandAxis[local*3+world];}
         std::memcpy(desiredAxis,rotated,sizeof(rotated));
+        if(!matchedPending.forearmPose&&(matchedPending.watchReading||matchedPending.armourGapCm>0)){
+            float eye[3]{},head[9]{};
+            if(KharvoxCameraGetHudCenterRenderPose(eye,head)){
+                const auto before=matchedPending.desiredOrigin;
+                if(matchedPending.watchReading)
+                    kharvox::watchOffhandHud(matchedPending.desiredOrigin.data(),desiredAxis,
+                        matchedPending.offhandGrip.data(),matchedPending.offhandHandAxis.data(),
+                        matchedPending.armourBounds,eye,matchedPending.armourGapCm,hudWorldUnitsPerMeter,
+                        true,matchedPending.offhandWidth);
+                else
+                    kharvox::clearOriginalOffhandHud(matchedPending.desiredOrigin.data(),desiredAxis,
+                        matchedPending.offhandGrip.data(),matchedPending.offhandHandAxis.data(),
+                        matchedPending.armourBounds,pixelFacing,matchedPending.armourGapCm,
+                        hudWorldUnitsPerMeter,matchedPending.offhandWidth);
+                const bool reversed=false;
+                static std::atomic<unsigned> noted{};
+                const unsigned bit=1u<<(std::clamp(matchedPending.offhandSurface,0,1)*4
+                    +(matchedPending.armourBounds.sectionMask?2:0)+(reversed?1:0));
+                if(!(noted.load(std::memory_order_relaxed)&bit)
+                    &&!(noted.fetch_or(bit,std::memory_order_relaxed)&bit)){
+                    float squared{};for(int i=0;i<3;++i){const float d=before[i]-matchedPending.desiredOrigin[i];squared+=d*d;}
+                    log("[HUD-RESTORE] surface="+std::to_string(matchedPending.offhandSurface)
+                        +" readingRotation="+std::to_string(matchedPending.watchReading)
+                        +" gapCm="+std::to_string(matchedPending.armourGapCm)
+                        +" liftCm="+std::to_string(std::sqrt(squared)/hudWorldUnitsPerMeter*100.f)
+                        +" sections="+std::to_string(matchedPending.armourBounds.sectionMask)
+                        +" nativePixelFacing="+std::to_string(pixelFacing)+" reverseFace="+std::to_string(reversed));
+                }
+            }
+        }
         offhandCanvasSubmission.entity=entity;
         offhandCanvasSubmission.surface=matchedPending.offhandSurface;
         offhandCanvasSubmission.width=matchedPending.offhandWidth;
+        offhandCanvasSubmission.pixelFacing=pixelFacing;
+        offhandCanvasSubmission.forearmPose=matchedPending.forearmPose;
+        offhandCanvasSubmission.forearmAlpha=matchedPending.forearmAlpha;
         std::memcpy(offhandCanvasSubmission.center,matchedPending.desiredOrigin.data(),sizeof(offhandCanvasSubmission.center));
         std::memcpy(offhandCanvasSubmission.axis,desiredAxis,sizeof(offhandCanvasSubmission.axis));
     }
@@ -4365,6 +4604,21 @@ void KharvoxHudSetHandPose(
     hand.valid.store(valid, std::memory_order_release);
 }
 
+void KharvoxHudSetFreeHandBounds(bool physicalLeft,const kharvox::OffhandHudBounds& bounds,bool valid){
+    std::lock_guard<std::mutex> guard(offhandRenderMutex);
+    freeHandHudBounds[physicalLeft?0:1]=bounds;freeHandHudBoundsValid[physicalLeft?0:1]=valid;
+}
+void KharvoxHudSetSupportGeometry(unsigned weapon,bool physicalLeft,
+    const kharvox::hands::SupportHudGeometry& geometry){
+    if(weapon>=supportHudGeometries.size())return;
+    std::lock_guard<std::mutex> guard(offhandRenderMutex);
+    supportHudGeometries[weapon][physicalLeft?0:1]=geometry;
+}
+void KharvoxHudSetSupportHeld(unsigned weapon,bool active){
+    std::lock_guard<std::mutex> guard(handPoseMutex);
+    hudSupportWeapon=weapon;hudSupportHeld=active;
+}
+
 bool KharvoxHudMovieActive(){
     const auto until=hudMovieUntil.load(std::memory_order_acquire);
     return until && GetTickCount64()<until;
@@ -4376,7 +4630,13 @@ void KharvoxHudCaptureOffhandRenderFrame(const float bodyOrigin[3],const float b
     kharvox::OffhandHudRenderFrame next;
     next.present=KharvoxCameraCurrentPresentSerial();
     next.level=KharvoxCameraLevelTransitionGeneration();
-    next.valid=getHandWorldPose(offhandHudLeftMode(),next.origin.data(),next.axis.data(),bodyOrigin,bodyAxis);
+    next.valid=getHandWorldPose(offhandHudLeftMode(),next.origin.data(),next.axis.data(),bodyOrigin,bodyAxis,
+        &next.supportWeapon,&next.supportHeld);
+    if(!next.valid||!KharvoxCameraWorldActive()||KharvoxCameraCutsceneActive()){
+        std::lock_guard<std::mutex> lock(wristHudGestureMutex);
+        wristHudGestureState.reset();wristHudGesturePresent=~0ull;wristHudFrameAlpha=0;
+    }
+    std::copy_n(bodyOrigin,3,next.bodyOrigin.begin());std::copy_n(bodyAxis,9,next.bodyAxis.begin());
     std::lock_guard<std::mutex> guard(offhandRenderMutex);
     offhandRenderFrame=next;
 }

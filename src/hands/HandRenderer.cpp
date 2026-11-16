@@ -1,7 +1,12 @@
 #include "HandRenderer.h"
 #include "../hud/HudHook.h"
+#include "../hud/OffhandHudPolicy.h"
 #include "HandSceneDepthCopy.h"
+#include "HandSceneDrawPolicy.h"
 #include "HandCalibrationPolicy.h"
+#include "WeaponSupportPolicy.h"
+#include "WeaponSupportConfig.h"
+#include "GrenadeVisualPolicy.h"
 #include "../openxr/OpenXRBootstrap.h"
 #include <windows.h>
 #include <wincodec.h>
@@ -16,13 +21,14 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <memory>
 #include <sstream>
 #include <unordered_map>
 
 namespace kharvox::hands {
 namespace {
 
-struct Mat4 { float m[16]{}; };
+using namespace math;
 struct Vertex {
     float position[3]{};
     float normal[3]{};
@@ -30,42 +36,11 @@ struct Vertex {
     float baseColor[4]{1.f,1.f,1.f,1.f};
     // x=metallic, y=roughness, z=normal texture, w=metal/rough texture.
     float material[4]{0.f,1.f,0.f,0.f};
+    float morphPosition[3][3]{};
+    float morphNormal[3][3]{};
 };
 struct DecodedImage { std::uint32_t width{},height{};std::vector<std::uint8_t> rgba; };
 
-Mat4 identity(){Mat4 r{};r.m[0]=r.m[5]=r.m[10]=r.m[15]=1.f;return r;}
-Mat4 multiply(const Mat4&a,const Mat4&b){Mat4 r{};for(int c=0;c<4;c++)for(int row=0;row<4;row++)for(int k=0;k<4;k++)r.m[c*4+row]+=a.m[k*4+row]*b.m[c*4+k];return r;}
-Mat4 translation(float x,float y,float z){auto r=identity();r.m[12]=x;r.m[13]=y;r.m[14]=z;return r;}
-Mat4 scale(float value){auto r=identity();r.m[0]=r.m[5]=r.m[10]=value;return r;}
-Mat4 scaleAxes(float x,float y,float z){auto r=identity();r.m[0]=x;r.m[5]=y;r.m[10]=z;return r;}
-Mat4 quaternion(float x,float y,float z,float w){
-    Mat4 r=identity();const float xx=x*x,yy=y*y,zz=z*z,xy=x*y,xz=x*z,yz=y*z,wx=w*x,wy=w*y,wz=w*z;
-    r.m[0]=1-2*(yy+zz);r.m[1]=2*(xy+wz);r.m[2]=2*(xz-wy);
-    r.m[4]=2*(xy-wz);r.m[5]=1-2*(xx+zz);r.m[6]=2*(yz+wx);
-    r.m[8]=2*(xz+wy);r.m[9]=2*(yz-wx);r.m[10]=1-2*(xx+yy);return r;
-}
-Mat4 rotationDegrees(const float degrees[3]){
-    constexpr float d=0.01745329251994329577f;
-    const float hx=degrees[0]*d*.5f,hy=degrees[1]*d*.5f,hz=degrees[2]*d*.5f;
-    const float sx=std::sin(hx),cx=std::cos(hx),sy=std::sin(hy),cy=std::cos(hy),sz=std::sin(hz),cz=std::cos(hz);
-    return quaternion(sx*cy*cz-cx*sy*sz,cx*sy*cz+sx*cy*sz,cx*cy*sz-sx*sy*cz,cx*cy*cz+sx*sy*sz);
-}
-Mat4 poseMatrix(const HandPose&pose){return multiply(translation(pose.position[0],pose.position[1],pose.position[2]),quaternion(pose.orientation[0],pose.orientation[1],pose.orientation[2],pose.orientation[3]));}
-Mat4 inversePose(const HandPose&pose){
-    const Mat4 inverseRotation=quaternion(-pose.orientation[0],-pose.orientation[1],-pose.orientation[2],pose.orientation[3]);
-    return multiply(inverseRotation,translation(-pose.position[0],-pose.position[1],-pose.position[2]));
-}
-Mat4 projection(const HandEyeView&view){
-    const float left=std::tan(view.angleLeft),right=std::tan(view.angleRight),down=std::tan(view.angleDown),up=std::tan(view.angleUp);
-    const float nearZ=std::clamp(view.nearZ,.001f,10.f);
-    const float farZ=std::max(view.farZ,nearZ+1.f);Mat4 r{};
-    r.m[0]=2.f/(right-left);r.m[5]=2.f/(down-up);
-    // Vulkan's positive viewport uses the OpenXR Vulkan convention where the
-    // vertical tangent span is (down-up).  Using the opposite denominator for
-    // the centre term gives the two eyes different vertical offsets.
-    r.m[8]=(right+left)/(right-left);r.m[9]=(up+down)/(down-up);
-    r.m[10]=-farZ/(farZ-nearZ);r.m[11]=-1.f;r.m[14]=-(farZ*nearZ)/(farZ-nearZ);return r;
-}
 std::string trim(std::string value){const auto first=value.find_first_not_of(" \t\r\n");if(first==std::string::npos)return {};const auto last=value.find_last_not_of(" \t\r\n");return value.substr(first,last-first+1);}
 bool readBytes(const std::filesystem::path&path,std::vector<std::uint8_t>&bytes){std::ifstream in(path,std::ios::binary);if(!in)return false;in.seekg(0,std::ios::end);const auto size=in.tellg();if(size<=0)return false;bytes.resize(static_cast<size_t>(size));in.seekg(0);return bool(in.read(reinterpret_cast<char*>(bytes.data()),size));}
 
@@ -99,9 +74,10 @@ bool embeddedTextureBytes(const cgltf_texture_view&view,const void*&bytes,size_t
 } // namespace
 
 struct HandRenderer::Impl {
-    struct Texture {VkImage image{};VkDeviceMemory memory{};VkImageView view{};};
+    struct Texture {VkImage image{};VkDeviceMemory memory{};VkImageView view{};std::uint64_t hash{};std::uint32_t width{},height{};bool srgb{};};
     struct DepthTarget {VkImage image{};VkDeviceMemory memory{};VkImageView view{};};
-    struct Asset {VkBuffer vertices{};VkDeviceMemory vertexMemory{};VkBuffer indices{};VkDeviceMemory indexMemory{};std::uint32_t indexCount{};std::array<Texture,3> textures{};VkDescriptorSet descriptor{};bool ready{};std::string filename;};
+    struct Asset {VkBuffer vertices{};VkDeviceMemory vertexMemory{};VkBuffer indices{};VkDeviceMemory indexMemory{};std::uint32_t indexCount{};std::uint64_t sourceHash{};std::array<std::shared_ptr<Texture>,3> textures{};VkDescriptorSet descriptor{};bool ready{};std::string filename;std::array<float,3> minimum{},maximum{};std::array<std::array<float,6>,8> hudSections{};unsigned hudSectionMask{};};
+    std::vector<std::weak_ptr<Texture>> textureCache;
     VkPhysicalDevice physical{};VkDevice device{};VkQueue queue{};std::uint32_t queueFamily{};KharvoxVulkanDispatch vk{};VkFormat format{};HandLog log;
     struct ScenePipeline {VkFormat colorFormat{VK_FORMAT_UNDEFINED};VkFormat depthFormat{VK_FORMAT_UNDEFINED};bool reverseDepth{};VkRenderPass renderPass{};VkPipeline pipeline{};};
     VkCommandPool uploadPool{};VkCommandBuffer uploadCommand{};VkSampler sampler{};VkDescriptorSetLayout descriptorLayout{};VkDescriptorPool descriptorPool{};VkPipelineLayout pipelineLayout{};VkPipeline pipeline{};VkRenderPass renderPass{};VkShaderModule vertexShader{},fragmentShader{};
@@ -110,7 +86,18 @@ struct HandRenderer::Impl {
     std::vector<SceneDepth> sceneDepthCopies;size_t sceneDepthCopiesUsed{};
     std::array<std::vector<VkImageView>,2> eyeViews{};std::array<std::vector<DepthTarget>,2> depthTargets{};std::array<std::vector<VkFramebuffer>,2> framebuffers{};std::array<VkExtent2D,2> extents{};
     Asset laserAsset{};
+    Asset grenadeAsset{};
+    Asset grenadeVisualHand{},grenadeVisualAsset{};
+    bool grenadeVisualReady{};
     std::array<Asset,4> assets{};std::array<bool,4> mirrorX{};HandCalibration leftCalibration{},rightCalibration{};
+    std::array<std::array<Asset,2>,static_cast<size_t>(KharvoxWeaponKind::Count)> supportAssets{};
+    std::array<WeaponSupportProfile,static_cast<size_t>(KharvoxWeaponKind::Count)> supportProfiles{};
+    std::array<Asset,static_cast<size_t>(KharvoxWeaponKind::Count)> primaryAssets{};
+    std::array<WeaponSupportProfile,static_cast<size_t>(KharvoxWeaponKind::Count)> primaryProfiles{};
+    uint32_t reviewedPrimaryLogged{};
+    uint32_t reviewedSupportLogged{};
+    struct FingerData {FingerMorphHeader header{};bool loaded{};};
+    std::array<FingerData,2> fingerData{};
     std::array<std::array<HandCalibration,2>,
         static_cast<size_t>(KharvoxWeaponKind::Count)> weaponCalibrations{}, defaultWeaponCalibrations{};
     std::filesystem::path root;bool initialized{};
@@ -124,7 +111,7 @@ struct HandRenderer::Impl {
     void say(const std::string&message)const{if(log)log("[HANDS] "+message);}
     std::uint32_t memoryType(std::uint32_t bits,VkMemoryPropertyFlags required)const{VkPhysicalDeviceMemoryProperties p{};vk.getPhysicalDeviceMemoryProperties(physical,&p);for(std::uint32_t i=0;i<p.memoryTypeCount;i++)if((bits&(1u<<i))&&(p.memoryTypes[i].propertyFlags&required)==required)return i;return UINT32_MAX;}
     bool buffer(VkDeviceSize size,VkBufferUsageFlags usage,const void*source,VkBuffer&out,VkDeviceMemory&memory){VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};bi.size=size;bi.usage=usage;bi.sharingMode=VK_SHARING_MODE_EXCLUSIVE;if(vk.createBuffer(device,&bi,nullptr,&out)!=VK_SUCCESS)return false;VkMemoryRequirements req{};vk.getBufferMemoryRequirements(device,out,&req);const auto type=memoryType(req.memoryTypeBits,VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);if(type==UINT32_MAX){vk.destroyBuffer(device,out,nullptr);out=VK_NULL_HANDLE;return false;}VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};ai.allocationSize=req.size;ai.memoryTypeIndex=type;if(vk.allocateMemory(device,&ai,nullptr,&memory)!=VK_SUCCESS||vk.bindBufferMemory(device,out,memory,0)!=VK_SUCCESS){if(memory)vk.freeMemory(device,memory,nullptr);vk.destroyBuffer(device,out,nullptr);memory=VK_NULL_HANDLE;out=VK_NULL_HANDLE;return false;}void*mapped{};if(vk.mapMemory(device,memory,0,size,0,&mapped)!=VK_SUCCESS){vk.freeMemory(device,memory,nullptr);vk.destroyBuffer(device,out,nullptr);memory=VK_NULL_HANDLE;out=VK_NULL_HANDLE;return false;}std::memcpy(mapped,source,static_cast<size_t>(size));vk.unmapMemory(device,memory);return true;}
-    bool texture(const DecodedImage&decoded,Texture&out,bool srgb);
+    bool texture(const DecodedImage&decoded,std::shared_ptr<Texture>&out,bool srgb);
     bool depthTarget(VkExtent2D extent,DepthTarget&out,VkFormat depthFormat=VK_FORMAT_D32_SFLOAT,bool transfer=false);
     void destroyDepth(DepthTarget& target){
         if(target.view)vk.destroyImageView(device,target.view,nullptr);
@@ -132,8 +119,11 @@ struct HandRenderer::Impl {
         if(target.memory)vk.freeMemory(device,target.memory,nullptr);
         target={};
     }
-    bool loadAsset(const std::filesystem::path&path,Asset&asset);
+    bool loadAsset(const std::filesystem::path&path,Asset&asset,const Asset* materialSource=nullptr);
+    void publishSupportHudTemplates();
+    void loadFingerMorphs(const std::filesystem::path&path,Asset&asset,std::vector<Vertex>&vertices);
     bool createCommonResources();
+    bool createGrenadeAsset();
     bool createGraphicsPipeline(VkRenderPass compatibleRenderPass,
         VkCompareOp depthCompare,bool encodeSrgb,VkPipeline&out);
     ScenePipeline* scenePipeline(const HandSceneTarget&target);
@@ -152,8 +142,42 @@ struct HandRenderer::Impl {
     void pollCalibration(const HandGameplayState&gameplay);
 };
 
-bool HandRenderer::Impl::texture(const DecodedImage&decoded,Texture&out,bool srgb){
+void HandRenderer::Impl::loadFingerMorphs(const std::filesystem::path&path,
+    Asset&asset,std::vector<Vertex>&vertices){
+    std::vector<std::uint8_t> raw;
+    if(!readBytes(path,raw))return;
+    asset.sourceHash=handAssetHash(raw.data(),raw.size());
+    const bool left=asset.filename=="DOOM_LEFT_HAND_FIST.glb";
+    if(!left&&asset.filename!="DOOM_RIGHT_HAND_FIST.glb")return;
+    std::vector<std::uint8_t> bytes;
+    const auto file=path.parent_path()/(left?"DOOM_LEFT_HAND_FINGERS.bin":"DOOM_RIGHT_HAND_FINGERS.bin");
+    FingerMorphHeader header{};
+    if(!readBytes(file,bytes)||!readFingerMorphHeader(bytes.data(),bytes.size(),
+            vertices.size(),asset.sourceHash,header)){
+        say(asset.filename+" finger data absent/mismatched; retaining static pose");return;
+    }
+    const size_t values=vertices.size()*18;
+    for(size_t i=0;i<values;++i){float value{};std::memcpy(&value,bytes.data()+fingerMorphHeaderBytes+i*4,4);
+        if(!std::isfinite(value)||std::abs(value)>10.f){say("invalid finger morph; retaining static pose");return;}}
+    for(size_t shape=0;shape<3;++shape)for(size_t i=0;i<vertices.size();++i){
+        const auto offset=fingerMorphHeaderBytes+(shape*vertices.size()+i)*6*sizeof(float);
+        std::memcpy(vertices[i].morphPosition[shape],bytes.data()+offset,12);
+        std::memcpy(vertices[i].morphNormal[shape],bytes.data()+offset+12,12);
+    }
+    fingerData[left?0:1]={header,true};
+    say(std::string(left?"left":"right")+" authored index/grip/thumb morphs loaded; wrist/grasp frames matched to GLB hash");
+}
+
+bool HandRenderer::Impl::texture(const DecodedImage&decoded,std::shared_ptr<Texture>&shared,bool srgb){
     if(!decoded.width||!decoded.height||decoded.rgba.empty())return false;
+    const auto hash=handAssetHash(decoded.rgba.data(),decoded.rgba.size());
+    for(const auto&entry:textureCache)if(auto cached=entry.lock()){
+        if(cached->hash==hash&&cached->width==decoded.width&&cached->height==decoded.height&&cached->srgb==srgb){
+            shared=std::move(cached);say("shared hand texture reused "+std::to_string(decoded.width)+"x"+std::to_string(decoded.height));return true;
+        }
+    }
+    shared=std::make_shared<Texture>();auto&out=*shared;
+    out.hash=hash;out.width=decoded.width;out.height=decoded.height;out.srgb=srgb;
     VkBuffer staging{};VkDeviceMemory stagingMemory{};
     if(!buffer(decoded.rgba.size(),VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
             decoded.rgba.data(),staging,stagingMemory))return false;
@@ -175,7 +199,44 @@ bool HandRenderer::Impl::texture(const DecodedImage&decoded,Texture&out,bool srg
     }
     if(staging)vk.destroyBuffer(device,staging,nullptr);if(stagingMemory)vk.freeMemory(device,stagingMemory,nullptr);
     if(ok){VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};vi.image=out.image;vi.viewType=VK_IMAGE_VIEW_TYPE_2D;vi.format=srgb?VK_FORMAT_R8G8B8A8_SRGB:VK_FORMAT_R8G8B8A8_UNORM;vi.subresourceRange.aspectMask=VK_IMAGE_ASPECT_COLOR_BIT;vi.subresourceRange.levelCount=1;vi.subresourceRange.layerCount=1;ok=vk.createImageView(device,&vi,nullptr,&out.view)==VK_SUCCESS;}
+    if(ok)textureCache.push_back(shared);
     return ok;
+}
+
+bool HandRenderer::Impl::createGrenadeAsset(){
+    // Original low-poly preview, not a copied game asset. Native equipment
+    // remains responsible for spawning and simulating the released projectile.
+    constexpr float profile[][2]{{-.052f,0},{-.046f,.018f},{-.034f,.027f},
+        {-.012f,.028f},{-.006f,.028f},{.021f,.028f},{.036f,.022f},
+        {.041f,.012f},{.052f,.012f},{.056f,0}};
+    constexpr unsigned sides=16,rings=sizeof(profile)/sizeof(profile[0]);
+    std::vector<Vertex>vertices;std::vector<std::uint32_t>indices;
+    for(unsigned ring=0;ring<rings;++ring)for(unsigned side=0;side<sides;++side){
+        const float angle=side*6.28318530718f/sides,c=std::cos(angle),s=std::sin(angle);
+        const auto before=ring?ring-1:ring,after=std::min(ring+1,rings-1);
+        const float dy=profile[after][0]-profile[before][0];
+        const float dr=profile[after][1]-profile[before][1];
+        Vertex v{};v.position[0]=profile[ring][1]*c;v.position[1]=profile[ring][0];v.position[2]=profile[ring][1]*s;
+        v.normal[0]=dy*c;v.normal[1]=-dr;v.normal[2]=dy*s;
+        const float length=std::sqrt(dy*dy+dr*dr);for(float&n:v.normal)n/=length;
+        const bool band=ring==3||ring==4,cap=ring>=7;
+        const float shade=side%4==0?.7f:1.f;
+        v.baseColor[0]=(band?.8f:cap?.24f:.12f)*shade;
+        v.baseColor[1]=(band?.22f:cap?.24f:.17f)*shade;
+        v.baseColor[2]=(band?.025f:cap?.25f:.12f)*shade;
+        v.material[0]=.45f;v.material[1]=.55f;v.material[3]=-1.f;
+        vertices.push_back(v);
+    }
+    for(unsigned ring=0;ring+1<rings;++ring)for(unsigned side=0;side<sides;++side){
+        const auto a=ring*sides+side,b=ring*sides+(side+1)%sides;
+        for(auto i:{a,b,a+sides,b,b+sides,a+sides})indices.push_back(i);
+    }
+    grenadeAsset.ready=buffer(vertices.size()*sizeof(Vertex),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+        vertices.data(),grenadeAsset.vertices,grenadeAsset.vertexMemory)
+        &&buffer(indices.size()*sizeof(std::uint32_t),VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+            indices.data(),grenadeAsset.indices,grenadeAsset.indexMemory);
+    grenadeAsset.indexCount=static_cast<std::uint32_t>(indices.size());
+    return grenadeAsset.ready;
 }
 
 bool HandRenderer::Impl::depthTarget(VkExtent2D extent,DepthTarget&out,VkFormat depthFormat,bool transfer){
@@ -203,7 +264,7 @@ bool HandRenderer::Impl::depthTarget(VkExtent2D extent,DepthTarget&out,VkFormat 
     return vk.createImageView(device,&view,nullptr,&out.view)==VK_SUCCESS;
 }
 
-bool HandRenderer::Impl::loadAsset(const std::filesystem::path&path,Asset&asset){
+bool HandRenderer::Impl::loadAsset(const std::filesystem::path&path,Asset&asset,const Asset* materialSource){
     asset.filename=path.filename().u8string();cgltf_options options{};cgltf_data*data{};
     const auto utf8=path.u8string();if(cgltf_parse_file(&options,utf8.c_str(),&data)!=cgltf_result_success){say("cannot parse "+asset.filename+"; model disabled");return false;}
     const auto freeData=[&]{cgltf_free(data);};
@@ -251,16 +312,60 @@ bool HandRenderer::Impl::loadAsset(const std::filesystem::path&path,Asset&asset)
     baseFactor[3]=1.f;
     std::vector<Vertex>vertices(positions->count);for(cgltf_size i=0;i<positions->count;i++){auto&v=vertices[i];cgltf_accessor_read_float(positions,i,v.position,3);cgltf_accessor_read_float(normals,i,v.normal,3);cgltf_accessor_read_float(uvs,i,v.uv,2);if(skinned){cgltf_uint jointIndices[4]{};cgltf_float jointWeights[4]{};if(!cgltf_accessor_read_uint(joints,i,jointIndices,4)||!cgltf_accessor_read_float(weights,i,jointWeights,4)){say(asset.filename+" has unreadable skin weights");freeData();return false;}const std::array<float,3>sourcePosition{{v.position[0],v.position[1],v.position[2]}};const std::array<float,3>sourceNormal{{v.normal[0],v.normal[1],v.normal[2]}};v.position[0]=v.position[1]=v.position[2]=0.f;v.normal[0]=v.normal[1]=v.normal[2]=0.f;float totalWeight=0.f;for(size_t influence=0;influence<4;influence++){const float weight=jointWeights[influence];const auto joint=jointIndices[influence];if(weight<=0.f||joint>=jointTransforms.size())continue;float posedPosition[3]{sourcePosition[0],sourcePosition[1],sourcePosition[2]};float posedNormal[3]{sourceNormal[0],sourceNormal[1],sourceNormal[2]};transformPosition(jointTransforms[joint].m,posedPosition);transformNormal(jointTransforms[joint].m,posedNormal);for(int component=0;component<3;component++){v.position[component]+=posedPosition[component]*weight;v.normal[component]+=posedNormal[component]*weight;}totalWeight+=weight;}if(totalWeight<=.0001f){v.position[0]=sourcePosition[0];v.position[1]=sourcePosition[1];v.position[2]=sourcePosition[2];v.normal[0]=sourceNormal[0];v.normal[1]=sourceNormal[1];v.normal[2]=sourceNormal[2];transformPosition(nodeTransform,v.position);transformNormal(nodeTransform,v.normal);}else{const float inverseWeight=1.f/totalWeight;for(int component=0;component<3;component++){v.position[component]*=inverseWeight;v.normal[component]*=inverseWeight;}const float normalLength=std::sqrt(v.normal[0]*v.normal[0]+v.normal[1]*v.normal[1]+v.normal[2]*v.normal[2]);if(normalLength>.000001f){v.normal[0]/=normalLength;v.normal[1]/=normalLength;v.normal[2]/=normalLength;}}}else{transformPosition(nodeTransform,v.position);transformNormal(nodeTransform,v.normal);}for(int j=0;j<4;j++)v.baseColor[j]=baseFactor[j];v.material[0]=metallic;v.material[1]=roughness;v.material[2]=hasNormal?1.f:0.f;v.material[3]=hasMr?1.f:0.f;}
     std::vector<std::uint32_t>indices(primitive->indices->count);for(cgltf_size i=0;i<primitive->indices->count;i++)indices[i]=static_cast<std::uint32_t>(cgltf_accessor_read_index(primitive->indices,i));
+    loadFingerMorphs(path,asset,vertices);
+    if(!vertices.empty()){
+        std::copy_n(vertices.front().position,3,asset.minimum.begin());asset.maximum=asset.minimum;
+        std::vector<std::array<float,6>> ranges(vertices.size());
+        for(size_t v=0;v<vertices.size();++v)for(int i=0;i<3;++i){
+            const auto& vertex=vertices[v];
+            float minimum=vertex.position[i],maximum=minimum;
+            for(int shape=0;shape<3;++shape){
+                minimum+=std::min(0.f,vertex.morphPosition[shape][i]);
+                maximum+=std::max(0.f,vertex.morphPosition[shape][i]);
+            }
+            asset.minimum[i]=std::min(asset.minimum[i],minimum);
+            asset.maximum[i]=std::max(asset.maximum[i],maximum);
+            ranges[v][i]=minimum;ranges[v][3+i]=maximum;
+        }
+        int longest=0;for(int i=1;i<3;++i)
+            if(asset.maximum[i]-asset.minimum[i]>asset.maximum[longest]-asset.minimum[longest])longest=i;
+        const float span=asset.maximum[longest]-asset.minimum[longest];
+        // Partition triangle envelopes, not individual vertices: long forearm
+        // triangles and every finger-morph state remain conservatively covered.
+        if(span>1e-6f)for(size_t t=0;t+2<indices.size();t+=3){
+            std::array<float,6> triangle{};
+            for(int corner=0;corner<3;++corner){
+                if(indices[t+corner]>=ranges.size()){freeData();return false;}
+                const auto& range=ranges[indices[t+corner]];
+                for(int i=0;i<3;++i){
+                    triangle[i]=corner?std::min(triangle[i],range[i]):range[i];
+                    triangle[3+i]=corner?std::max(triangle[3+i],range[3+i]):range[3+i];
+                }
+            }
+            for(unsigned section=0;section<8;++section){
+                const float lo=asset.minimum[longest]+span*section/8.f;
+                const float hi=asset.minimum[longest]+span*(section+1)/8.f;
+                if(triangle[longest]>hi||triangle[3+longest]<lo)continue;
+                auto part=triangle;part[longest]=std::max(part[longest],lo);
+                part[3+longest]=std::min(part[3+longest],hi);
+                auto& target=asset.hudSections[section];const unsigned bit=1u<<section;
+                if(!(asset.hudSectionMask&bit))target=part;
+                else for(int i=0;i<3;++i){target[i]=std::min(target[i],part[i]);target[3+i]=std::max(target[3+i],part[3+i]);}
+                asset.hudSectionMask|=bit;
+            }
+        }
+    }
     bool ok=buffer(vertices.size()*sizeof(Vertex),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,vertices.data(),asset.vertices,asset.vertexMemory)&&buffer(indices.size()*sizeof(std::uint32_t),VK_BUFFER_USAGE_INDEX_BUFFER_BIT,indices.data(),asset.indices,asset.indexMemory);asset.indexCount=static_cast<std::uint32_t>(indices.size());
     std::array<DecodedImage,3>decoded{};decoded[0]={1,1,{255,255,255,255}};decoded[1]={1,1,{128,128,255,255}};decoded[2]={1,1,{255,255,255,255}};
     auto decodeView=[&](const cgltf_texture_view&view,DecodedImage&target,const char*label){const void*bytes{};size_t size{};if(!embeddedTextureBytes(view,bytes,size)||!decodePng(bytes,size,target)){say(asset.filename+" "+label+" texture unavailable; using neutral fallback");return false;}return true;};
-    if(material&&material->has_pbr_metallic_roughness){decodeView(material->pbr_metallic_roughness.base_color_texture,decoded[0],"base-color");if(hasMr)decodeView(material->pbr_metallic_roughness.metallic_roughness_texture,decoded[2],"metallic/roughness");if(hasNormal)decodeView(material->normal_texture,decoded[1],"normal");}
+    if(!materialSource&&material&&material->has_pbr_metallic_roughness){decodeView(material->pbr_metallic_roughness.base_color_texture,decoded[0],"base-color");if(hasMr)decodeView(material->pbr_metallic_roughness.metallic_roughness_texture,decoded[2],"metallic/roughness");if(hasNormal)decodeView(material->normal_texture,decoded[1],"normal");}
     for(size_t alpha=3;alpha<decoded[0].rgba.size();alpha+=4)
         decoded[0].rgba[alpha]=255;
-    for(size_t i=0;i<asset.textures.size()&&ok;i++)
+    if(materialSource&&materialSource->ready)asset.textures=materialSource->textures;
+    else for(size_t i=0;i<asset.textures.size()&&ok;i++)
         ok=texture(decoded[i],asset.textures[i],i==0);
     if(ok){VkDescriptorSetAllocateInfo allocation{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};allocation.descriptorPool=descriptorPool;allocation.descriptorSetCount=1;allocation.pSetLayouts=&descriptorLayout;ok=vk.allocateDescriptorSets(device,&allocation,&asset.descriptor)==VK_SUCCESS;}
-    if(ok){std::array<VkDescriptorImageInfo,3>infos{};std::array<VkWriteDescriptorSet,3>writes{};for(std::uint32_t i=0;i<3;i++){infos[i].sampler=sampler;infos[i].imageView=asset.textures[i].view;infos[i].imageLayout=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;writes[i]={VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};writes[i].dstSet=asset.descriptor;writes[i].dstBinding=i;writes[i].descriptorCount=1;writes[i].descriptorType=VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;writes[i].pImageInfo=&infos[i];}vk.updateDescriptorSets(device,3,writes.data(),0,nullptr);}
+    if(ok){std::array<VkDescriptorImageInfo,3>infos{};std::array<VkWriteDescriptorSet,3>writes{};for(std::uint32_t i=0;i<3;i++){infos[i].sampler=sampler;infos[i].imageView=asset.textures[i]->view;infos[i].imageLayout=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;writes[i]={VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};writes[i].dstSet=asset.descriptor;writes[i].dstBinding=i;writes[i].descriptorCount=1;writes[i].descriptorType=VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;writes[i].pImageInfo=&infos[i];}vk.updateDescriptorSets(device,3,writes.data(),0,nullptr);}
     freeData();asset.ready=ok;if(ok)say("loaded "+asset.filename+" vertices="+std::to_string(vertices.size())+" indices="+std::to_string(indices.size())+(skinned?" static-pose=baked":"")+" PBR=base-color"+(hasNormal?"+normal":"")+(hasMr?"+metallic-roughness":""));else say("GPU resources failed for "+asset.filename+"; model disabled");return ok;
 }
 
@@ -282,12 +387,18 @@ bool HandRenderer::Impl::createGraphicsPipeline(
         sizeof(outputTransfer),&outputTransfer};
     stages[1].pSpecializationInfo=&transferInfo;
     VkVertexInputBindingDescription vertexBinding{0,sizeof(Vertex),VK_VERTEX_INPUT_RATE_VERTEX};
-    std::array<VkVertexInputAttributeDescription,5>attributes{{
+    std::array<VkVertexInputAttributeDescription,11>attributes{{
         {0,0,VK_FORMAT_R32G32B32_SFLOAT,offsetof(Vertex,position)},
         {1,0,VK_FORMAT_R32G32B32_SFLOAT,offsetof(Vertex,normal)},
         {2,0,VK_FORMAT_R32G32_SFLOAT,offsetof(Vertex,uv)},
         {3,0,VK_FORMAT_R32G32B32A32_SFLOAT,offsetof(Vertex,baseColor)},
-        {4,0,VK_FORMAT_R32G32B32A32_SFLOAT,offsetof(Vertex,material)}}};
+        {4,0,VK_FORMAT_R32G32B32A32_SFLOAT,offsetof(Vertex,material)},
+        {5,0,VK_FORMAT_R32G32B32_SFLOAT,offsetof(Vertex,morphPosition)},
+        {6,0,VK_FORMAT_R32G32B32_SFLOAT,offsetof(Vertex,morphPosition)+12},
+        {7,0,VK_FORMAT_R32G32B32_SFLOAT,offsetof(Vertex,morphPosition)+24},
+        {8,0,VK_FORMAT_R32G32B32_SFLOAT,offsetof(Vertex,morphNormal)},
+        {9,0,VK_FORMAT_R32G32B32_SFLOAT,offsetof(Vertex,morphNormal)+12},
+        {10,0,VK_FORMAT_R32G32B32_SFLOAT,offsetof(Vertex,morphNormal)+24}}};
     VkPipelineVertexInputStateCreateInfo vertexInput{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
     vertexInput.vertexBindingDescriptionCount=1;vertexInput.pVertexBindingDescriptions=&vertexBinding;
     vertexInput.vertexAttributeDescriptionCount=static_cast<std::uint32_t>(attributes.size());vertexInput.pVertexAttributeDescriptions=attributes.data();
@@ -314,7 +425,8 @@ bool HandRenderer::Impl::createCommonResources(){
     VkCommandBufferAllocateInfo commandInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};commandInfo.commandPool=uploadPool;commandInfo.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY;commandInfo.commandBufferCount=1;if(vk.allocateCommandBuffers(device,&commandInfo,&uploadCommand)!=VK_SUCCESS)return false;
     VkSamplerCreateInfo samplerInfo{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};samplerInfo.magFilter=VK_FILTER_LINEAR;samplerInfo.minFilter=VK_FILTER_LINEAR;samplerInfo.mipmapMode=VK_SAMPLER_MIPMAP_MODE_LINEAR;samplerInfo.addressModeU=VK_SAMPLER_ADDRESS_MODE_REPEAT;samplerInfo.addressModeV=VK_SAMPLER_ADDRESS_MODE_REPEAT;samplerInfo.addressModeW=VK_SAMPLER_ADDRESS_MODE_REPEAT;samplerInfo.maxLod=0.f;if(vk.createSampler(device,&samplerInfo,nullptr,&sampler)!=VK_SUCCESS)return false;
     std::array<VkDescriptorSetLayoutBinding,3>bindings{};for(std::uint32_t i=0;i<bindings.size();i++){bindings[i].binding=i;bindings[i].descriptorType=VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;bindings[i].descriptorCount=1;bindings[i].stageFlags=VK_SHADER_STAGE_FRAGMENT_BIT;}VkDescriptorSetLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};layoutInfo.bindingCount=static_cast<std::uint32_t>(bindings.size());layoutInfo.pBindings=bindings.data();if(vk.createDescriptorSetLayout(device,&layoutInfo,nullptr,&descriptorLayout)!=VK_SUCCESS)return false;
-    VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,12};VkDescriptorPoolCreateInfo descriptorPoolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};descriptorPoolInfo.maxSets=4;descriptorPoolInfo.poolSizeCount=1;descriptorPoolInfo.pPoolSizes=&poolSize;if(vk.createDescriptorPool(device,&descriptorPoolInfo,nullptr,&descriptorPool)!=VK_SUCCESS)return false;
+    constexpr uint32_t handDescriptorSets=6+2*static_cast<uint32_t>(KharvoxWeaponKind::Count);
+    VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,3*handDescriptorSets};VkDescriptorPoolCreateInfo descriptorPoolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};descriptorPoolInfo.maxSets=handDescriptorSets;descriptorPoolInfo.poolSizeCount=1;descriptorPoolInfo.pPoolSizes=&poolSize;if(vk.createDescriptorPool(device,&descriptorPoolInfo,nullptr,&descriptorPool)!=VK_SUCCESS)return false;
     VkAttachmentDescription color{};
     color.format = format;
     color.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -439,14 +551,73 @@ void HandRenderer::Impl::drawGeometry(VkCommandBuffer commandBuffer,
     if(reverse)for(int column=0;column<4;column++)
         viewProjection.m[column*4+2]=viewProjection.m[column*4+3]-viewProjection.m[column*4+2];
     auto draw=[&](bool left,HandModelKind kind,const HandPose&pose){
+        const bool grenadeHand=grenadeVisualEligible(grenadeVisualReady,gameplay.leftHanded,
+            gameplay.interaction.grenadeHeld,gameplay.twoHanded,left,kind==HandModelKind::Fist);
         const size_t index=left?(kind==HandModelKind::GunHolding?2:0)
                                :(kind==HandModelKind::GunHolding?3:1);
-        auto&asset=assets[index];if(!asset.ready)return;
+        Asset* selectedAsset=&assets[index];
+        const auto weaponIndex=static_cast<size_t>(gameplay.weapon);
+        bool reviewed=weaponIndex<supportAssets.size()
+            &&weaponSupportEligible(left,gameplay.leftHanded,kind==HandModelKind::GunHolding,gameplay.twoHanded)
+            &&gameplay.interaction.supportModelValid&&supportAssets[weaponIndex][left?0:1].ready;
+        auto reviewedModel=gameplay.interaction.supportModel;
+        auto jointModel=[&](const WeaponSupportProfile& profile,unsigned hand,Mat4& model){
+            model=gameplay.interaction.supportModel;
+            const int slot=profile.jointSlot[hand];
+            return slot<0||((gameplay.weaponJointMask&(1u<<slot))
+                &&weaponJointModel(model,gameplay.weaponJoints[slot],profile.jointBindInverse[hand],model));
+        };
+        if(reviewed){
+            const auto&profile=supportProfiles[weaponIndex];
+            if(profile.metersPerAssetUnit>0){
+                const auto hand=left?0:1;
+                const float handScale=(left?leftCalibration:rightCalibration).scale;
+                reviewed=jointModel(profile,hand,reviewedModel)&&fixedSizeSupportMatrix(reviewedModel,
+                    left?profile.point:profile.rightPoint,
+                    profile.metersPerAssetUnit*handScale/profile.referenceHandScales[hand],reviewedModel);
+            }
+        }
+        bool primary=weaponIndex<primaryAssets.size()
+            &&weaponPrimaryEligible(left,gameplay.leftHanded,kind==HandModelKind::GunHolding,
+                gameplay.twoHanded,primaryProfiles[weaponIndex].valid)
+            &&gameplay.interaction.supportModelValid&&primaryAssets[weaponIndex].ready;
+        if(primary){
+            const auto&profile=primaryProfiles[weaponIndex];
+            primary=jointModel(profile,1,reviewedModel)&&fixedSizeSupportMatrix(reviewedModel,profile.rightPoint,
+                profile.metersPerAssetUnit*rightCalibration.scale/profile.referenceHandScales[1],reviewedModel);
+            if(primary){
+                selectedAsset=&primaryAssets[weaponIndex];reviewed=true;
+                const uint32_t bit=1u<<weaponIndex;
+                if(!(reviewedPrimaryLogged&bit)){
+                    reviewedPrimaryLogged|=bit;
+                    say(std::string("manual primary active weapon=")+KharvoxWeaponKindKey(gameplay.weapon)
+                        +" hand=right source=completed-native-weapon-model");
+                }
+            }
+        }
+        if(reviewed&&!primary)selectedAsset=&supportAssets[weaponIndex][left?0:1];
+        if(reviewed&&!primary){
+            const uint32_t bit=1u<<(weaponIndex*2+(left?0:1));
+            if(!(reviewedSupportLogged&bit)){
+                reviewedSupportLogged|=bit;
+                say(std::string("reviewed support active weapon=")+KharvoxWeaponKindKey(gameplay.weapon)
+                    +" hand="+(left?"left":"right")+" source=completed-native-weapon-model");
+            }
+        }
+        if(grenadeHand){selectedAsset=&grenadeVisualHand;reviewed=false;}
+        auto&asset=*selectedAsset;if(!asset.ready)return;
         const auto&calibration=renderCalibration(left,kind,gameplay.weapon,
             gameplay.leftHanded);
-        const float xScale=mirrorX[index]?-calibration.scale:calibration.scale;
-        const Mat4 local=multiply(translation(calibration.position[0],calibration.position[1],calibration.position[2]),multiply(rotationDegrees(calibration.rotationDegrees),scaleAxes(xScale,calibration.scale,calibration.scale)));
-        struct Push{Mat4 model;Mat4 viewProjection;}push{multiply(poseMatrix(pose),local),viewProjection};
+        const auto&fingers=fingerData[left?0:1];
+        const bool attached=left!=gameplay.leftHanded&&kind==HandModelKind::GunHolding
+            &&gameplay.interaction.support.valid&&fingers.loaded
+            &&fingers.header.gunHash==asset.sourceHash;
+        const auto model=grenadeHand?poseMatrix(pose):reviewed?reviewedModel:attached?attachedHandMatrix(gameplay.interaction.support,
+            calibration,mirrorX[index],fingers.header.fistWrist,
+            fingers.header.gunWrist,fingers.header.graspCentre)
+            :calibratedHandMatrix(pose,calibration,mirrorX[index]);
+        const auto push=handDrawPush(model,viewProjection,
+            gameplay.interaction.fingers[left?0:1],!grenadeHand&&kind==HandModelKind::Fist&&fingers.loaded);
         vk.cmdPushConstants(commandBuffer,pipelineLayout,VK_SHADER_STAGE_VERTEX_BIT,0,sizeof(push),&push);
         vk.cmdBindDescriptorSets(commandBuffer,VK_PIPELINE_BIND_POINT_GRAPHICS,pipelineLayout,0,1,&asset.descriptor,0,nullptr);
         VkDeviceSize offset{};vk.cmdBindVertexBuffers(commandBuffer,0,1,&asset.vertices,&offset);
@@ -455,10 +626,51 @@ void HandRenderer::Impl::drawGeometry(VkCommandBuffer commandBuffer,
     };
     if(drawLeft)draw(true,visibility.left,leftGrip);
     if(drawRight)draw(false,visibility.right,rightGrip);
+    const bool leftSupport=!gameplay.leftHanded;
+    const size_t support=leftSupport?0:1;
+    if(grenadeVisualEligible(grenadeVisualReady,gameplay.leftHanded,
+        gameplay.interaction.grenadeHeld,gameplay.twoHanded,true,
+        drawLeft&&visibility.left==HandModelKind::Fist)){
+        // Both assets are baked in physical Grip XR metres. Applying the
+        // legacy hand calibration again would distort the validated pose.
+        const auto push=handDrawPush(poseMatrix(leftGrip),viewProjection);
+        vk.cmdPushConstants(commandBuffer,pipelineLayout,VK_SHADER_STAGE_VERTEX_BIT,0,sizeof(push),&push);
+        vk.cmdBindDescriptorSets(commandBuffer,VK_PIPELINE_BIND_POINT_GRAPHICS,pipelineLayout,0,1,&grenadeVisualAsset.descriptor,0,nullptr);
+        VkDeviceSize offset{};vk.cmdBindVertexBuffers(commandBuffer,0,1,&grenadeVisualAsset.vertices,&offset);
+        vk.cmdBindIndexBuffer(commandBuffer,grenadeVisualAsset.indices,0,VK_INDEX_TYPE_UINT32);
+        vk.cmdDrawIndexed(commandBuffer,grenadeVisualAsset.indexCount,1,0,0,0);
+    }
+    if(!grenadeVisualReady&&gameplay.interaction.grenadeHeld&&grenadeAsset.ready&&fingerData[support].loaded
+        &&(leftSupport?drawLeft:drawRight)
+        &&(leftSupport?visibility.left:visibility.right)==HandModelKind::Fist){
+        const auto&pose=leftSupport?leftGrip:rightGrip;
+        const auto&calibration=renderCalibration(leftSupport,HandModelKind::Fist,
+            gameplay.weapon,gameplay.leftHanded);
+        const auto fist=calibratedHandMatrix(pose,calibration,mirrorX[support]);
+        const auto&header=fingerData[support].header;
+        const auto weights=handDrawPush(fist,viewProjection,gameplay.interaction.fingers[support],true);
+        auto centre=header.fistGraspCentre;
+        for(int shape=0;shape<3;++shape)for(int c=0;c<3;++c)
+            centre[c]+=header.graspDeltas[shape][c]*weights.openness[shape];
+        auto model=multiply(fist,header.fistWrist);
+        for(int c=0;c<3;++c){
+            float length{};for(int row=0;row<3;++row)length+=model.m[c*4+row]*model.m[c*4+row];
+            length=std::sqrt(std::max(length,1e-8f));
+            for(int row=0;row<3;++row)model.m[c*4+row]/=length;
+        }
+        for(int row=0;row<3;++row)model.m[12+row]=fist.m[12+row]
+            +fist.m[row]*centre[0]+fist.m[4+row]*centre[1]+fist.m[8+row]*centre[2];
+        const auto push=handDrawPush(model,viewProjection);
+        vk.cmdPushConstants(commandBuffer,pipelineLayout,VK_SHADER_STAGE_VERTEX_BIT,0,sizeof(push),&push);
+        vk.cmdBindDescriptorSets(commandBuffer,VK_PIPELINE_BIND_POINT_GRAPHICS,pipelineLayout,0,1,&assets[support].descriptor,0,nullptr);
+        VkDeviceSize offset{};vk.cmdBindVertexBuffers(commandBuffer,0,1,&grenadeAsset.vertices,&offset);
+        vk.cmdBindIndexBuffer(commandBuffer,grenadeAsset.indices,0,VK_INDEX_TYPE_UINT32);
+        vk.cmdDrawIndexed(commandBuffer,grenadeAsset.indexCount,1,0,0,0);
+    }
     if(laser.valid&&laserAsset.ready){
         const auto descriptor=std::find_if(assets.begin(),assets.end(),[](const Asset& a){return a.ready;});
         if(descriptor!=assets.end()){
-            struct Push{Mat4 model;Mat4 viewProjection;}push{poseMatrix(laser),viewProjection};
+            const auto push=handDrawPush(poseMatrix(laser),viewProjection);
             vk.cmdPushConstants(commandBuffer,pipelineLayout,VK_SHADER_STAGE_VERTEX_BIT,0,sizeof(push),&push);
             vk.cmdBindDescriptorSets(commandBuffer,VK_PIPELINE_BIND_POINT_GRAPHICS,pipelineLayout,0,1,&descriptor->descriptor,0,nullptr);
             VkDeviceSize offset{};vk.cmdBindVertexBuffers(commandBuffer,0,1,&laserAsset.vertices,&offset);
@@ -468,7 +680,17 @@ void HandRenderer::Impl::drawGeometry(VkCommandBuffer commandBuffer,
     }
 }
 
-void HandRenderer::Impl::destroyAsset(Asset&asset){for(auto&texture:asset.textures){if(texture.view)vk.destroyImageView(device,texture.view,nullptr);if(texture.image)vk.destroyImage(device,texture.image,nullptr);if(texture.memory)vk.freeMemory(device,texture.memory,nullptr);}if(asset.indices)vk.destroyBuffer(device,asset.indices,nullptr);if(asset.indexMemory)vk.freeMemory(device,asset.indexMemory,nullptr);if(asset.vertices)vk.destroyBuffer(device,asset.vertices,nullptr);if(asset.vertexMemory)vk.freeMemory(device,asset.vertexMemory,nullptr);asset={};}
+void HandRenderer::Impl::destroyAsset(Asset&asset){
+    for(auto&texture:asset.textures){
+        if(texture&&texture.use_count()==1){
+            if(texture->view)vk.destroyImageView(device,texture->view,nullptr);
+            if(texture->image)vk.destroyImage(device,texture->image,nullptr);
+            if(texture->memory)vk.freeMemory(device,texture->memory,nullptr);
+        }
+        texture.reset();
+    }
+    if(asset.indices)vk.destroyBuffer(device,asset.indices,nullptr);if(asset.indexMemory)vk.freeMemory(device,asset.indexMemory,nullptr);if(asset.vertices)vk.destroyBuffer(device,asset.vertices,nullptr);if(asset.vertexMemory)vk.freeMemory(device,asset.vertexMemory,nullptr);asset={};
+}
 
 const HandCalibration&HandRenderer::Impl::renderCalibration(bool left,
     HandModelKind kind,KharvoxWeaponKind weapon,bool leftHanded)const{
@@ -547,7 +769,67 @@ void HandRenderer::Impl::writeCalibrationStatus(const char*message)const{
     if(message&&*message)output<<" | "<<message;
 }
 
+void HandRenderer::Impl::publishSupportHudTemplates(){
+    auto doomToXr=math::identity();
+    doomToXr.m[0]=doomToXr.m[5]=doomToXr.m[10]=0;
+    doomToXr.m[2]=-1;doomToXr.m[4]=-1;doomToXr.m[9]=1;
+    HandPose origin{};origin.valid=true;
+    auto xrToDoom=math::identity();
+    for(int row=0;row<3;++row)for(int column=0;column<3;++column)xrToDoom.m[column*4+row]=doomToXr.m[row*4+column];
+    const auto envelope=[](const Asset& asset,const math::Mat4& matrix){
+        kharvox::OffhandHudBounds bounds;bounds.sectionMask=asset.hudSectionMask;
+        for(int part=0;part<=8;++part){
+            if(part&&!(asset.hudSectionMask&(1u<<(part-1))))continue;
+            for(int corner=0;corner<8;++corner){
+                float point[3]{};for(int i=0;i<3;++i)point[i]=part
+                    ?asset.hudSections[part-1][i+((corner&(1<<i))?3:0)]
+                    :((corner&(1<<i))?asset.maximum[i]:asset.minimum[i]);
+                transformPosition(matrix.m,point);
+                for(int i=0;i<3;++i){point[i]*=100.f;
+                    if(part){auto& section=bounds.sections[part-1];
+                        section[i]=corner?std::min(section[i],point[i]):point[i];
+                        section[3+i]=corner?std::max(section[3+i],point[i]):point[i];
+                    }else{
+                        bounds.minimum[i]=corner?std::min(bounds.minimum[i],point[i]):point[i];
+                        bounds.maximum[i]=corner?std::max(bounds.maximum[i],point[i]):point[i];
+                    }
+                }
+            }
+        }
+        return bounds;
+    };
+    for(size_t hand=0;hand<2;++hand){
+        const auto&asset=assets[hand];
+        const auto matrix=multiply(xrToDoom,calibratedHandMatrix(origin,
+            hand?rightCalibration:leftCalibration,mirrorX[hand]));
+        const auto bounds=envelope(asset,matrix);
+        KharvoxHudSetFreeHandBounds(hand==0,bounds,asset.ready);
+    }
+    for(size_t weapon=1;weapon<supportProfiles.size();++weapon)for(size_t hand=0;hand<2;++hand){
+        SupportHudGeometry geometry{};const auto&profile=supportProfiles[weapon];
+        const auto&asset=supportAssets[weapon][hand];
+        const auto&calibration=hand?rightCalibration:leftCalibration;
+        math::Mat4 inverseCalibration{},assetToGrip{};
+        if(profile.hasHudFrame&&asset.ready&&inverseSupportSimilarity(
+            calibratedHandMatrix(origin,calibration,mirrorX[hand]),inverseCalibration)){
+            geometry.gripToAsset=multiply(profile.fistToAsset[hand],multiply(inverseCalibration,doomToXr));
+            geometry.anchor=hand?profile.rightPoint:profile.point;
+            geometry.jointSlot=profile.jointSlot[hand];
+            geometry.jointBindInverse=profile.jointBindInverse[hand];
+            geometry.metersPerAssetUnit=profile.metersPerAssetUnit*calibration.scale/profile.referenceHandScales[hand];
+            if(inverseSupportSimilarity(geometry.gripToAsset,assetToGrip)){
+                const auto bounds=envelope(asset,assetToGrip);
+                geometry.minimumCm=bounds.minimum;geometry.maximumCm=bounds.maximum;
+                geometry.hudSections=bounds.sections;geometry.hudSectionMask=bounds.sectionMask;
+                geometry.valid=true;
+            }
+        }
+        KharvoxHudSetSupportGeometry(static_cast<unsigned>(weapon),hand==0,geometry);
+    }
+}
+
 void HandRenderer::Impl::saveCalibration(){
+    publishSupportHudTemplates();
     const auto target=root/L"hand_models_calibration_saved.cfg";
     const auto temporary=root/L"hand_models_calibration_saved.tmp";
     {
@@ -653,6 +935,7 @@ bool HandRenderer::initialize(VkPhysicalDevice physicalDevice,VkDevice device,
     const std::array<std::vector<VkImage>,2>&eyeImages,
     const std::wstring&runtimeDirectory,HandLog logger){
     shutdown();impl_->physical=physicalDevice;impl_->device=device;impl_->queue=queue;impl_->queueFamily=queueFamily;impl_->vk=dispatch;impl_->format=colorFormat;impl_->extents=eyeExtents;impl_->root=runtimeDirectory;impl_->log=std::move(logger);
+    impl_->fingerData={};
     std::unordered_map<std::string,std::string>config;std::ifstream input(impl_->root/L"hand_models.cfg");std::string line;while(std::getline(input,line)){line=trim(line);if(line.empty()||line[0]=='#')continue;const auto equals=line.find('=');if(equals!=std::string::npos)config[trim(line.substr(0,equals))]=trim(line.substr(equals+1));}
     if(!input&&!std::filesystem::exists(impl_->root/L"hand_models.cfg")){impl_->say("hand_models.cfg missing; static hands disabled");return false;}
     auto vector3=[&](const char*key,float value[3]){std::istringstream stream(config[key]);return bool(stream>>value[0]>>value[1]>>value[2]);};vector3("left_position",impl_->leftCalibration.position);vector3("left_rotation",impl_->leftCalibration.rotationDegrees);vector3("right_position",impl_->rightCalibration.position);vector3("right_rotation",impl_->rightCalibration.rotationDegrees);try{if(config.count("left_scale"))impl_->leftCalibration.scale=std::clamp(std::stof(config["left_scale"]),.05f,2.f);if(config.count("right_scale"))impl_->rightCalibration.scale=std::clamp(std::stof(config["right_scale"]),.05f,2.f);}catch(...){impl_->say("invalid hand scale; using safe defaults");}impl_->mirrorX[0]=config["left_fist_mirror_x"]=="1";impl_->mirrorX[1]=config["right_fist_mirror_x"]=="1";impl_->mirrorX[2]=config["left_gun_mirror_x"]=="1";impl_->mirrorX[3]=config["right_gun_mirror_x"]=="1";
@@ -667,6 +950,47 @@ bool HandRenderer::initialize(VkPhysicalDevice physicalDevice,VkDevice device,
     }
     if(!impl_->createCommonResources()){impl_->say("Vulkan setup failed; native game rendering continues");shutdown();return false;}
     const std::array<const char*,4>keys{{"left_fist","right_fist","left_gun","right_gun"}};for(size_t i=0;i<keys.size();i++){const auto found=config.find(keys[i]);if(found==config.end()||found->second.empty()){impl_->say(std::string(keys[i])+" not configured; that hand pose is disabled");continue;}const auto path=impl_->root/std::filesystem::u8path(found->second);if(!std::filesystem::exists(path)){impl_->say(path.filename().u8string()+" missing; model disabled");continue;}impl_->loadAsset(path,impl_->assets[i]);}
+    std::array<WeaponSupportProfile,15> supportProfiles{};
+    std::ifstream supportConfig(impl_->root/L"support_hands.cfg");
+    const auto supportCount=readWeaponSupportProfiles(supportConfig,supportProfiles);
+    for(size_t weapon=1;weapon<supportProfiles.size();++weapon){
+        const auto&profile=supportProfiles[weapon];if(!profile.valid)continue;
+        for(size_t hand=0;hand<2;++hand){
+            if(!profile.hashes[hand])continue; // explicitly retain a previously calibrated hand
+            if(!impl_->assets[hand].ready)continue;
+            if(profile.metersPerAssetUnit>0&&profile.fistHashes[hand]!=impl_->assets[hand].sourceHash){
+                impl_->say("support physical-scale reference mismatch; retaining calibrated hand fallback");continue;
+            }
+            auto&asset=impl_->supportAssets[weapon][hand];
+            if(!impl_->loadAsset(impl_->root/std::filesystem::u8path(profile.assetPaths[hand]),asset,&impl_->assets[hand])
+                ||asset.sourceHash!=profile.hashes[hand]){
+                impl_->say("support profile missing or hash mismatch; retaining calibrated hand fallback");
+                impl_->destroyAsset(asset);
+            }
+        }
+        impl_->supportProfiles[weapon]=profile;
+    }
+    // Reuse the existing fixed-size profile schema and physical-right atlas.
+    // These optional meshes are uploaded once; no per-frame posing or I/O.
+    std::array<WeaponSupportProfile,15> primaryProfiles{};
+    std::ifstream primaryConfig(impl_->root/L"primary_hands.cfg");
+    const auto primaryCount=readWeaponSupportProfiles(primaryConfig,primaryProfiles);
+    for(size_t weapon=1;weapon<primaryProfiles.size();++weapon){
+        const auto&profile=primaryProfiles[weapon];
+        if(!profile.valid||!profile.hashes[1]||profile.metersPerAssetUnit<=0
+            ||!impl_->assets[1].ready||profile.fistHashes[1]!=impl_->assets[1].sourceHash)continue;
+        auto&asset=impl_->primaryAssets[weapon];
+        if(!impl_->loadAsset(impl_->root/std::filesystem::u8path(profile.assetPaths[1]),asset,&impl_->assets[1])
+            ||asset.sourceHash!=profile.hashes[1]){
+            impl_->say("primary profile missing or hash mismatch; retaining calibrated hand fallback");
+            impl_->destroyAsset(asset);continue;
+        }
+        impl_->primaryProfiles[weapon]=profile;
+    }
+    if(primaryCount)impl_->say("manual weapon-local primary profiles="+std::to_string(primaryCount)
+        +"; right hand only, existing atlas shared");
+    impl_->publishSupportHudTemplates();
+    if(supportCount)impl_->say("reviewed weapon-local support profiles="+std::to_string(supportCount)+"; existing atlas shared, no runtime skinning");
     // One closed beam mesh: no crossed compositor ribbons or orientation singularity.
     std::vector<Vertex> beamVertices;
     std::vector<uint32_t> beamIndices;
@@ -685,6 +1009,23 @@ bool HandRenderer::initialize(VkPhysicalDevice physicalDevice,VkDevice device,
         &&impl_->buffer(beamIndices.size()*sizeof(uint32_t),VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
         beamIndices.data(),impl_->laserAsset.indices,impl_->laserAsset.indexMemory);
     impl_->laserAsset.indexCount=static_cast<uint32_t>(beamIndices.size());
+    if(!impl_->createGrenadeAsset())impl_->say("held grenade preview unavailable; native throw remains active");
+    GrenadeVisualConfig grenadeConfig;
+    std::ifstream grenadeInput(impl_->root/L"grenade_visual_test.cfg");
+    if(readGrenadeVisualConfig(grenadeInput,grenadeConfig)&&grenadeConfig.enabled){
+        const auto handPath=impl_->root/L"assets/3D/PRAETOR_GRENADE_LEFT.glb";
+        const auto grenadePath=impl_->root/L"assets/3D/GRENADE_FRAG.glb";
+        std::vector<std::uint8_t> handBytes,grenadeBytes;
+        const bool hashes=readBytes(handPath,handBytes)&&readBytes(grenadePath,grenadeBytes)
+            &&handAssetHash(handBytes.data(),handBytes.size())==grenadeConfig.handHash
+            &&handAssetHash(grenadeBytes.data(),grenadeBytes.size())==grenadeConfig.grenadeHash;
+        impl_->grenadeVisualReady=hashes&&impl_->loadAsset(handPath,impl_->grenadeVisualHand,&impl_->assets[0])
+            &&impl_->loadAsset(grenadePath,impl_->grenadeVisualAsset);
+        if(!impl_->grenadeVisualReady){impl_->destroyAsset(impl_->grenadeVisualHand);impl_->destroyAsset(impl_->grenadeVisualAsset);}
+        impl_->say(impl_->grenadeVisualReady
+            ?"authored frag visual test ready; left hand only, no native throw changes"
+            :"authored frag visual test disabled: assets missing, changed or invalid");
+    }
     for (size_t eye = 0; eye < 2; eye++) {
       impl_->eyeViews[eye].resize(eyeImages[eye].size());
       impl_->depthTargets[eye].resize(eyeImages[eye].size());
@@ -747,8 +1088,17 @@ void HandRenderer::shutdown() {
     if(depth.memory)impl_->vk.freeMemory(impl_->device,depth.memory,nullptr);
   }
   impl_->destroyAsset(impl_->laserAsset);
+  impl_->destroyAsset(impl_->grenadeAsset);
+  impl_->destroyAsset(impl_->grenadeVisualHand);
+  impl_->destroyAsset(impl_->grenadeVisualAsset);
+  impl_->grenadeVisualReady=false;
   for (auto &asset : impl_->assets)
     impl_->destroyAsset(asset);
+  for(auto& weapon:impl_->supportAssets)for(auto& asset:weapon)
+    impl_->destroyAsset(asset);
+  for(auto& asset:impl_->primaryAssets)impl_->destroyAsset(asset);
+  impl_->publishSupportHudTemplates();
+  impl_->textureCache.clear();
   if (impl_->pipeline)
     impl_->vk.destroyPipeline(impl_->device, impl_->pipeline, nullptr);
   if(impl_->fragmentShader)
@@ -778,8 +1128,30 @@ void HandRenderer::shutdown() {
 }
 
 HandAssetAvailability HandRenderer::availability()const{return {impl_->assets[0].ready,impl_->assets[1].ready,impl_->assets[2].ready,impl_->assets[3].ready};}
+bool HandRenderer::hasGrenadeVisualPose()const{return impl_->initialized&&impl_->grenadeVisualReady;}
+bool HandRenderer::hasSupportProfile(KharvoxWeaponKind weapon,bool leftHanded)const{
+    const auto index=static_cast<size_t>(weapon);
+    return index<impl_->supportAssets.size()&&impl_->supportAssets[index][leftHanded?1:0].ready;
+}
+bool HandRenderer::hasPrimaryProfile(KharvoxWeaponKind weapon)const{
+    const auto index=static_cast<size_t>(weapon);
+    return index<impl_->primaryAssets.size()&&impl_->primaryProfiles[index].valid
+        &&impl_->primaryAssets[index].ready;
+}
 const HandCalibration&HandRenderer::leftCalibration()const{return impl_->leftCalibration;}
 const HandCalibration&HandRenderer::rightCalibration()const{return impl_->rightCalibration;}
+
+bool HandRenderer::authoredSupportGrip(KharvoxWeaponKind weapon,bool leftHanded,
+    const math::Mat4& jointModel,std::array<float,3>& point)const{
+    const auto index=static_cast<size_t>(weapon);const unsigned hand=leftHanded?1:0;
+    if(index>=impl_->supportProfiles.size()||!hasSupportProfile(weapon,leftHanded))return false;
+    const auto& profile=impl_->supportProfiles[index];
+    const auto& calibration=hand?impl_->rightCalibration:impl_->leftCalibration;
+    if(!profile.valid||!profile.hasHudFrame||profile.referenceHandScales[hand]<=0)return false;
+    return authoredSupportGripPoint(jointModel,hand?profile.rightPoint:profile.point,
+        profile.metersPerAssetUnit*calibration.scale/profile.referenceHandScales[hand],
+        profile.fistToAsset[hand],calibration,impl_->mirrorX[hand],point);
+}
 
 void HandRenderer::record(VkCommandBuffer commandBuffer,std::uint32_t eye,
     std::uint32_t imageIndex,const HandEyeView&view,const HandPose&leftGrip,
@@ -817,9 +1189,7 @@ bool HandRenderer::recordSceneIntegrated(VkCommandBuffer commandBuffer,
         ||target.colorFormat==VK_FORMAT_UNDEFINED
         ||!handSceneDepthFormat(target.depthFormat)
         ||target.samples!=VK_SAMPLE_COUNT_1_BIT)return false;
-    const bool drawLeft=visibility.left!=HandModelKind::None&&leftGrip.valid;
-    const bool drawRight=visibility.right!=HandModelKind::None&&rightGrip.valid;
-    if(!drawLeft&&!drawRight&&!laser.valid)return false;
+    if(!handSceneHasGeometry(visibility,leftGrip,rightGrip,laser))return false;
     impl_->pollCalibration(gameplay);
     auto*scene=impl_->scenePipeline(target);if(!scene)return false;
     Impl::SceneDepth* privateDepth=nullptr;

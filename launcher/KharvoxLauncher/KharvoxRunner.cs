@@ -39,6 +39,8 @@ internal sealed class KharvoxLaunchOptions
     public bool DisableAa { get; }
     public bool HandsJump { get; }
     public bool SwapJumpCrouch { get; }
+    public bool PhysicalCrouch { get; }
+    public bool PhysicalGrenadeThrow { get; }
     public bool ShowHands { get; }
     public bool DisableVrIntro { get; }
     public string HandCalibrationMode { get; }
@@ -61,7 +63,7 @@ internal sealed class KharvoxLaunchOptions
         string handCalibrationMode,
         bool enableBhaptics,
         bool usePsvr2Toolkit,
-        string backWeapon, bool handsJump = false, bool disableAa = false, bool captureEyes = false, bool disableVrIntro = false, bool swapJumpCrouch = false)
+        string backWeapon, bool handsJump = false, bool disableAa = false, bool captureEyes = false, bool disableVrIntro = false, bool swapJumpCrouch = false, bool physicalCrouch = false, bool physicalGrenadeThrow = false)
     {
         ImmersiveMode = immersiveMode; CinematicFreelook = cinematicFreelook;
         OtherCinematicsInQuad = otherCinematicsInQuad;
@@ -91,6 +93,8 @@ internal sealed class KharvoxLaunchOptions
         };
         HandsJump = handsJump;
         SwapJumpCrouch = swapJumpCrouch;
+        PhysicalCrouch = physicalCrouch;
+        PhysicalGrenadeThrow = physicalGrenadeThrow;
         DisableAa = disableAa;
         CaptureEyes = captureEyes;
         DisableVrIntro = disableVrIntro;
@@ -513,6 +517,8 @@ internal static class KharvoxRunner
             psi.EnvironmentVariables["KHARVOX_LEFT_HANDED"] = options.LeftHanded ? "1" : "0";
             psi.EnvironmentVariables["KHARVOX_LEFT_HAND_SWAP"] = options.LeftHandSwapMode;
             psi.EnvironmentVariables["KHARVOX_SWAP_JUMP_CROUCH"] = options.SwapJumpCrouch ? "1" : "0";
+            psi.EnvironmentVariables["KHARVOX_PHYSICAL_CROUCH"] = options.PhysicalCrouch ? "1" : "0";
+            psi.EnvironmentVariables["KHARVOX_PHYSICAL_GRENADE_THROW"] = options.PhysicalGrenadeThrow ? "1" : "0";
             psi.EnvironmentVariables["KHARVOX_BACK_WEAPON"] = options.BackWeapon;
             psi.EnvironmentVariables["KHARVOX_MOTION_WEAPON_WHEEL"] = "1";
             psi.EnvironmentVariables["KHARVOX_LASER_SIGHT"] = options.LaserSight ? "1" : "0";
@@ -566,6 +572,8 @@ internal static class KharvoxRunner
                 " extendedLogging=" + (options.ExtendedLogging ? "enabled" : "disabled") +
                 " handsJump=" + (options.HandsJump ? "enabled" : "disabled") +
                 " swapJumpCrouch=" + (options.SwapJumpCrouch ? "enabled" : "disabled") +
+                " physicalCrouch=" + (options.PhysicalCrouch ? "enabled" : "disabled") +
+                " physicalGrenadeThrow=" + (options.PhysicalGrenadeThrow ? "enabled" : "disabled") +
                 " showHands=" + (options.ShowHands ? "enabled" : "disabled") +
                 " handCalibration=" + options.HandCalibrationMode +
                 " immersiveMode=" + (options.ImmersiveMode ? "enabled" : "disabled") +

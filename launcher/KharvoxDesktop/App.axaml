@@ -1,0 +1,30 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="KharvoxDesktop.App" RequestedThemeVariant="Dark">
+  <Application.Resources>
+    <Color x:Key="SystemAccentColor">#FF7028</Color>
+    <SolidColorBrush x:Key="Accent">#FF7028</SolidColorBrush>
+    <SolidColorBrush x:Key="Muted">#939BAE</SolidColorBrush>
+    <SolidColorBrush x:Key="Line">#2B303D</SolidColorBrush>
+  </Application.Resources>
+  <Application.Styles>
+    <FluentTheme />
+    <Style Selector="Window"><Setter Property="FontFamily" Value="Segoe UI" /><Setter Property="FontSize" Value="13" /><Setter Property="Background" Value="#101218" /><Setter Property="Foreground" Value="#F2F3F6" /></Style>
+    <Style Selector="TextBlock.caption"><Setter Property="Foreground" Value="{StaticResource Muted}" /><Setter Property="FontSize" Value="12" /><Setter Property="TextWrapping" Value="Wrap" /></Style>
+    <Style Selector="TextBlock.section"><Setter Property="FontSize" Value="17" /><Setter Property="FontWeight" Value="SemiBold" /><Setter Property="Margin" Value="0,0,0,5" /></Style>
+    <Style Selector="Border.card"><Setter Property="Background" Value="#191C25" /><Setter Property="BorderBrush" Value="{StaticResource Line}" /><Setter Property="BorderThickness" Value="1" /><Setter Property="CornerRadius" Value="14" /><Setter Property="Padding" Value="22" /></Style>
+    <Style Selector="Button"><Setter Property="CornerRadius" Value="8" /><Setter Property="Padding" Value="16,10" /><Setter Property="MinHeight" Value="38" /><Setter Property="Cursor" Value="Hand" /></Style>
+    <Style Selector="Button.primary"><Setter Property="Background" Value="{StaticResource Accent}" /><Setter Property="Foreground" Value="#130C08" /><Setter Property="FontWeight" Value="Bold" /><Setter Property="BorderThickness" Value="0" /></Style>
+    <Style Selector="Button.primary:pointerover /template/ ContentPresenter"><Setter Property="Background" Value="#FF8F55" /></Style>
+    <Style Selector="Button.quiet"><Setter Property="Background" Value="Transparent" /><Setter Property="BorderBrush" Value="#383D4A" /><Setter Property="BorderThickness" Value="1" /></Style>
+    <Style Selector="Button.captionButton"><Setter Property="Background" Value="Transparent" /><Setter Property="MinHeight" Value="34" /><Setter Property="Width" Value="42" /><Setter Property="Padding" Value="0" /><Setter Property="CornerRadius" Value="4" /></Style>
+    <Style Selector="ComboBox"><Setter Property="MinHeight" Value="38" /><Setter Property="CornerRadius" Value="7" /><Setter Property="HorizontalAlignment" Value="Stretch" /></Style>
+    <Style Selector="TextBox"><Setter Property="MinHeight" Value="38" /><Setter Property="CornerRadius" Value="7" /></Style>
+    <Style Selector="NumericUpDown"><Setter Property="MinHeight" Value="38" /><Setter Property="CornerRadius" Value="7" /></Style>
+    <Style Selector="CheckBox"><Setter Property="Margin" Value="0,5" /></Style>
+    <Style Selector="ToggleSwitch"><Setter Property="OnContent" Value="" /><Setter Property="OffContent" Value="" /><Setter Property="MinWidth" Value="48" /></Style>
+    <Style Selector="ListBox.nav"><Setter Property="Background" Value="Transparent" /><Setter Property="BorderThickness" Value="0" /><Setter Property="Padding" Value="0" /></Style>
+    <Style Selector="ListBox.nav ListBoxItem"><Setter Property="Margin" Value="0,3" /><Setter Property="Padding" Value="15,13" /><Setter Property="CornerRadius" Value="8" /><Setter Property="Foreground" Value="#A6AEBF" /></Style>
+    <Style Selector="ListBox.nav ListBoxItem:selected"><Setter Property="Background" Value="#322218" /><Setter Property="Foreground" Value="#FF925C" /></Style>
+  </Application.Styles>
+</Application>

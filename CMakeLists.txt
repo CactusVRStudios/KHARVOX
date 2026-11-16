@@ -3,6 +3,7 @@ project(KHARVOX VERSION 1.4.1 LANGUAGES C CXX)
 
 include(CTest)
 option(KHARVOX_BUILD_SFS_COMPILER "Build the native SFS shader transformer" OFF)
+set(KHARVOX_PRAETOR_TEST_RUNTIME "" CACHE PATH "Optional local runtime containing native Praetor hand exports")
 if(KHARVOX_BUILD_SFS_COMPILER)
   add_subdirectory(src/sfs)
 endif()
@@ -73,6 +74,23 @@ if(BUILD_TESTING)
   add_executable(KharvoxLaserSourceTests tests/laser_source_tests.cpp)
   target_compile_features(KharvoxLaserSourceTests PRIVATE cxx_std_17)
   add_test(NAME laser-source COMMAND KharvoxLaserSourceTests)
+  add_executable(KharvoxTextureDiagnosticsTests tests/texture_diagnostics_tests.cpp)
+  target_compile_features(KharvoxTextureDiagnosticsTests PRIVATE cxx_std_17)
+  target_include_directories(KharvoxTextureDiagnosticsTests PRIVATE third-party/vulkan-headers/include)
+  add_test(NAME texture-diagnostics COMMAND KharvoxTextureDiagnosticsTests)
+  find_package(Python3 COMPONENTS Interpreter QUIET)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME texture-diagnostics-comparison COMMAND "${Python3_EXECUTABLE}"
+      -B "${CMAKE_CURRENT_SOURCE_DIR}/tests/compare_texture_diagnostics_tests.py")
+    set_tests_properties(texture-diagnostics-comparison PROPERTIES
+      ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+    execute_process(COMMAND "${Python3_EXECUTABLE}" -c "import numpy"
+      RESULT_VARIABLE KHARVOX_HAVE_NUMPY OUTPUT_QUIET ERROR_QUIET)
+    if(KHARVOX_HAVE_NUMPY EQUAL 0)
+      add_test(NAME praetor-materials COMMAND "${Python3_EXECUTABLE}"
+        -B "${CMAKE_CURRENT_SOURCE_DIR}/tests/praetor_material_tests.py")
+    endif()
+  endif()
   if(WIN32)
     add_executable(KharvoxVirtualTextureGuardTests tests/virtual_texture_guard_tests.cpp)
     target_compile_features(KharvoxVirtualTextureGuardTests PRIVATE cxx_std_17)
@@ -164,7 +182,7 @@ if(KHARVOX_BUILD_LAYER)
   endif()
   target_compile_definitions(KharvoxNativeStereo PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX VK_NO_PROTOTYPES VK_USE_PLATFORM_WIN32_KHR DOOMVR_RESEARCH_TOOLS=1)
   target_include_directories(KharvoxNativeStereo PRIVATE src/native/upstream/include third-party/minhook/include third-party/vulkan-headers/include third-party/openxr-sdk/include)
-  add_library(KharvoxLayer SHARED $<TARGET_OBJECTS:KharvoxNativeStereo> src/vulkan/KharvoxLayer.cpp src/openxr/OpenXRBootstrap.cpp src/bhaptics/BhapticsIpcClient.cpp src/psvr2/Psvr2IpcClient.cpp src/fsr/Fsr1Upscaler.cpp src/hands/HandRenderer.cpp src/hands/HandSceneDepthTracker.cpp src/camera/CameraHook.cpp src/hud/HudHook.cpp src/hud/HudGpuDiagnostic.cpp src/weapon/WeaponHook.cpp src/debug/CameraScanner.cpp src/vulkan/KharvoxLayer.def src/common/Version.rc)
+  add_library(KharvoxLayer SHARED $<TARGET_OBJECTS:KharvoxNativeStereo> src/vulkan/KharvoxLayer.cpp src/openxr/OpenXRBootstrap.cpp src/bhaptics/BhapticsIpcClient.cpp src/psvr2/Psvr2IpcClient.cpp src/fsr/Fsr1Upscaler.cpp src/hands/HandRenderer.cpp src/hands/HandSceneDepthTracker.cpp src/camera/CameraHook.cpp src/hud/HudHook.cpp src/hud/HudGpuDiagnostic.cpp src/hud/HudGpuProvenance.cpp src/weapon/WeaponHook.cpp src/debug/CameraScanner.cpp src/vulkan/KharvoxLayer.def src/common/Version.rc)
   target_compile_features(KharvoxLayer PRIVATE cxx_std_17)
   if(KHARVOX_BUILD_SFS_COMPILER)
     target_sources(KharvoxLayer PRIVATE src/sfs/NativeSfs.cpp)
@@ -251,6 +269,11 @@ if(KHARVOX_BUILD_LAYER)
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
       "${CMAKE_CURRENT_SOURCE_DIR}/assets/3D/DOOM_RIGHT_HAND_GUN.glb"
       "$<TARGET_FILE_DIR:KharvoxLayer>/assets/3D/DOOM_RIGHT_HAND_GUN.glb")
+  add_custom_command(TARGET KharvoxLayer POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${CMAKE_CURRENT_SOURCE_DIR}/assets/3D/DOOM_LEFT_HAND_FINGERS.bin"
+      "${CMAKE_CURRENT_SOURCE_DIR}/assets/3D/DOOM_RIGHT_HAND_FINGERS.bin"
+      "$<TARGET_FILE_DIR:KharvoxLayer>/assets/3D")
   add_custom_command(TARGET KharvoxLayer POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
       "${CMAKE_CURRENT_SOURCE_DIR}/third-party/openxr-sdk/bin/x64/openxr_loader.dll"
@@ -344,6 +367,25 @@ if(BUILD_TESTING)
   target_compile_features(KharvoxHudLayoutPolicyTests PRIVATE cxx_std_17)
   add_test(NAME hud-layout-policy COMMAND KharvoxHudLayoutPolicyTests)
 
+  add_executable(KharvoxForearmHudTests tests/forearm_hud_tests.cpp)
+  target_compile_features(KharvoxForearmHudTests PRIVATE cxx_std_17)
+  add_test(NAME forearm-hud COMMAND KharvoxForearmHudTests)
+
+  add_executable(KharvoxHudScaleChainTests tests/hud_scale_chain_tests.cpp)
+  target_compile_features(KharvoxHudScaleChainTests PRIVATE cxx_std_17)
+  add_test(NAME hud-scale-chain COMMAND KharvoxHudScaleChainTests)
+
+  if(WIN32)
+    add_executable(KharvoxHudGpuProvenanceTests tests/hud_gpu_provenance_tests.cpp src/hud/HudGpuProvenance.cpp)
+    target_compile_features(KharvoxHudGpuProvenanceTests PRIVATE cxx_std_17)
+    target_include_directories(KharvoxHudGpuProvenanceTests PRIVATE third-party/vulkan-headers/include)
+    add_test(NAME hud-gpu-provenance COMMAND KharvoxHudGpuProvenanceTests)
+  endif()
+
+  add_executable(KharvoxWristHudGestureTests tests/wrist_hud_gesture_tests.cpp)
+  target_compile_features(KharvoxWristHudGestureTests PRIVATE cxx_std_17)
+  add_test(NAME wrist-hud-gesture COMMAND KharvoxWristHudGestureTests)
+
   add_executable(KharvoxHudMenuPolicyTests tests/hud_menu_policy_tests.cpp)
   target_compile_features(KharvoxHudMenuPolicyTests PRIVATE cxx_std_17)
   add_test(NAME hud-menu-policy COMMAND KharvoxHudMenuPolicyTests)
@@ -354,6 +396,18 @@ if(BUILD_TESTING)
   add_executable(KharvoxBodyStanceHeightTests tests/body_stance_height_tests.cpp)
   target_compile_features(KharvoxBodyStanceHeightTests PRIVATE cxx_std_17)
   add_test(NAME body-stance-height COMMAND KharvoxBodyStanceHeightTests)
+  add_executable(KharvoxPhysicalCrouchTests tests/physical_crouch_tests.cpp)
+  target_compile_features(KharvoxPhysicalCrouchTests PRIVATE cxx_std_17)
+  add_test(NAME physical-crouch COMMAND KharvoxPhysicalCrouchTests)
+  add_executable(KharvoxStickRecenterTests tests/stick_recenter_policy_tests.cpp)
+  target_compile_features(KharvoxStickRecenterTests PRIVATE cxx_std_17)
+  add_test(NAME stick-recenter COMMAND KharvoxStickRecenterTests)
+  add_executable(KharvoxGrenadeThrowTests tests/grenade_throw_tests.cpp)
+  target_compile_features(KharvoxGrenadeThrowTests PRIVATE cxx_std_17)
+  add_test(NAME grenade-throw COMMAND KharvoxGrenadeThrowTests)
+  add_executable(KharvoxGrenadeVisualTests tests/grenade_visual_tests.cpp)
+  target_compile_features(KharvoxGrenadeVisualTests PRIVATE cxx_std_17)
+  add_test(NAME grenade-visual COMMAND KharvoxGrenadeVisualTests)
   add_executable(KharvoxTutorialRenderTests tests/tutorial_render_tests.cpp)
   target_compile_features(KharvoxTutorialRenderTests PRIVATE cxx_std_17)
   add_test(NAME tutorial-render COMMAND KharvoxTutorialRenderTests)
@@ -409,6 +463,32 @@ if(BUILD_TESTING)
   target_compile_features(KharvoxHandVisibilityPolicyTests PRIVATE cxx_std_17)
   add_test(NAME hand-visibility-policy COMMAND KharvoxHandVisibilityPolicyTests)
 
+  add_executable(KharvoxHandTransformTests tests/hand_transform_tests.cpp)
+  add_executable(KharvoxWeaponSupportPolicyTests tests/weapon_support_policy_tests.cpp)
+  target_compile_features(KharvoxWeaponSupportPolicyTests PRIVATE cxx_std_17)
+  add_test(NAME weapon-support-policy COMMAND KharvoxWeaponSupportPolicyTests)
+  add_executable(KharvoxWeaponSupportConfigTests tests/weapon_support_config_tests.cpp)
+  target_compile_features(KharvoxWeaponSupportConfigTests PRIVATE cxx_std_17)
+  add_test(NAME weapon-support-config COMMAND KharvoxWeaponSupportConfigTests)
+  target_compile_features(KharvoxHandTransformTests PRIVATE cxx_std_17)
+  add_test(NAME hand-transforms COMMAND KharvoxHandTransformTests
+    "${CMAKE_CURRENT_SOURCE_DIR}/config/two_hand_weapon_profiles_default.cfg")
+
+  add_executable(KharvoxHandInteractionTests tests/hand_interaction_tests.cpp)
+  add_executable(KharvoxNativeHandsDiagnosticTests tests/native_hands_diagnostic_tests.cpp)
+  target_compile_features(KharvoxNativeHandsDiagnosticTests PRIVATE cxx_std_17)
+  add_test(NAME native-hands-diagnostic COMMAND KharvoxNativeHandsDiagnosticTests)
+  add_executable(KharvoxRoomscaleLocomotionTests tests/roomscale_locomotion_tests.cpp)
+  target_compile_features(KharvoxRoomscaleLocomotionTests PRIVATE cxx_std_17)
+  add_test(NAME roomscale-locomotion COMMAND KharvoxRoomscaleLocomotionTests)
+  add_executable(KharvoxHandPerformanceComparisonTests tests/hand_performance_comparison_tests.cpp)
+  target_compile_features(KharvoxHandPerformanceComparisonTests PRIVATE cxx_std_17)
+  add_test(NAME hand-performance-comparison COMMAND KharvoxHandPerformanceComparisonTests)
+  target_compile_features(KharvoxHandInteractionTests PRIVATE cxx_std_17)
+  add_test(NAME hand-interaction COMMAND KharvoxHandInteractionTests
+    "${CMAKE_CURRENT_SOURCE_DIR}/config/two_hand_weapon_profiles_default.cfg"
+    "${CMAKE_CURRENT_SOURCE_DIR}/assets/3D")
+
   add_executable(KharvoxHandDepthPolicyTests
     tests/hand_depth_policy_tests.cpp)
   target_compile_features(KharvoxHandDepthPolicyTests PRIVATE cxx_std_17)
@@ -425,6 +505,54 @@ if(BUILD_TESTING)
     "${CMAKE_CURRENT_SOURCE_DIR}/third-party/cgltf")
   add_test(NAME hand-assets COMMAND KharvoxHandAssetTests
     "${CMAKE_CURRENT_SOURCE_DIR}/assets/3D")
+
+  if(WIN32 AND TARGET KharvoxLayer)
+    add_executable(KharvoxPerformanceCpuCountersTests tests/performance_cpu_counters_tests.cpp)
+    target_compile_features(KharvoxPerformanceCpuCountersTests PRIVATE cxx_std_17)
+    target_compile_definitions(KharvoxPerformanceCpuCountersTests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+    add_test(NAME performance-cpu-enabled COMMAND KharvoxPerformanceCpuCountersTests --enabled)
+    add_test(NAME performance-cpu-disabled COMMAND KharvoxPerformanceCpuCountersTests --disabled)
+    add_executable(KharvoxHandRenderGpuTests tests/hand_render_gpu_tests.cpp
+      src/hands/HandRenderer.cpp src/hands/HandSceneDepthTracker.cpp)
+    target_compile_features(KharvoxHandRenderGpuTests PRIVATE cxx_std_17)
+    target_compile_definitions(KharvoxHandRenderGpuTests PRIVATE VK_NO_PROTOTYPES
+      VK_USE_PLATFORM_WIN32_KHR WIN32_LEAN_AND_MEAN NOMINMAX)
+    target_include_directories(KharvoxHandRenderGpuTests PRIVATE third-party/vulkan-headers/include
+      third-party/openxr-sdk/include third-party/cgltf)
+    target_link_libraries(KharvoxHandRenderGpuTests PRIVATE user32 ole32 windowscodecs)
+    add_dependencies(KharvoxHandRenderGpuTests KharvoxLayer)
+    add_test(NAME hand-render-gpu COMMAND KharvoxHandRenderGpuTests "$<TARGET_FILE_DIR:KharvoxLayer>")
+    set_tests_properties(hand-render-gpu PROPERTIES TIMEOUT 60)
+    set(KHARVOX_PRAETOR_SUPPORT_TEST_RUNTIME "" CACHE PATH "Reviewed support poses test runtime")
+    if(KHARVOX_PRAETOR_SUPPORT_TEST_RUNTIME)
+      add_test(NAME reviewed-support-config COMMAND KharvoxWeaponSupportConfigTests
+        "${KHARVOX_PRAETOR_SUPPORT_TEST_RUNTIME}/support_hands.cfg")
+      add_test(NAME reviewed-support-render-gpu COMMAND KharvoxHandRenderGpuTests
+        "${KHARVOX_PRAETOR_SUPPORT_TEST_RUNTIME}" --expect-shared-atlas --expect-support-profiles)
+      set_tests_properties(reviewed-support-render-gpu PROPERTIES TIMEOUT 120 LABELS "native-assets")
+    endif()
+    set(KHARVOX_PUMP_SUPPORT_TEST_RUNTIME "" CACHE PATH "Two accepted pump support poses test fixture")
+    if(KHARVOX_PUMP_SUPPORT_TEST_RUNTIME)
+      add_test(NAME pump-support-config COMMAND KharvoxWeaponSupportConfigTests
+        "${KHARVOX_PUMP_SUPPORT_TEST_RUNTIME}/support_hands.cfg" 2)
+      add_test(NAME pump-hud-config COMMAND KharvoxHudLayoutPolicyTests
+        "${KHARVOX_PUMP_SUPPORT_TEST_RUNTIME}/offhand_hud.cfg")
+      add_test(NAME pump-support-render-gpu COMMAND KharvoxHandRenderGpuTests
+        "${KHARVOX_PUMP_SUPPORT_TEST_RUNTIME}" --expect-shared-atlas --expect-two-pump-profiles)
+      set_tests_properties(pump-support-render-gpu PROPERTIES TIMEOUT 120 LABELS "native-assets")
+    endif()
+    if(KHARVOX_PRAETOR_TEST_RUNTIME)
+      add_test(NAME praetor-hand-assets COMMAND KharvoxHandAssetTests
+        "${KHARVOX_PRAETOR_TEST_RUNTIME}/assets/3D")
+      add_test(NAME praetor-hand-interaction COMMAND KharvoxHandInteractionTests
+        "${CMAKE_CURRENT_SOURCE_DIR}/config/two_hand_weapon_profiles_default.cfg"
+        "${KHARVOX_PRAETOR_TEST_RUNTIME}/assets/3D")
+      add_test(NAME praetor-hand-render-gpu COMMAND KharvoxHandRenderGpuTests
+        "${KHARVOX_PRAETOR_TEST_RUNTIME}" --expect-shared-atlas)
+      set_tests_properties(praetor-hand-assets praetor-hand-interaction praetor-hand-render-gpu
+        PROPERTIES LABELS "native-assets" TIMEOUT 120)
+    endif()
+  endif()
 
   add_executable(KharvoxBhapticsProtocolTests tests/bhaptics_protocol_tests.cpp)
   target_compile_features(KharvoxBhapticsProtocolTests PRIVATE cxx_std_17)

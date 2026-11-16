@@ -1,6 +1,8 @@
 #pragma once
 
 #include "HandVisibilityPolicy.h"
+#include "HandPoseMath.h"
+#include "HandInteractionPolicy.h"
 #include "HandSceneDepthTracker.h"
 #include "../weapon/WeaponHook.h"
 #include <vulkan/vulkan.h>
@@ -13,40 +15,13 @@ struct KharvoxVulkanDispatch;
 
 namespace kharvox::hands {
 
-struct HandPose {
-    float position[3]{};
-    float orientation[4]{0.f, 0.f, 0.f, 1.f};
-    bool valid{};
-};
-
-struct HandEyeView {
-    HandPose pose{};
-    float angleLeft{};
-    float angleRight{};
-    float angleUp{};
-    float angleDown{};
-    // The projection layer may submit only a centered sub-rectangle of the
-    // OpenXR swapchain.  Rendering into the full image would shift and scale
-    // the hand differently in each eye when that rectangle is sampled.
-    std::int32_t imageRectX{};
-    std::int32_t imageRectY{};
-    std::uint32_t imageRectWidth{};
-    std::uint32_t imageRectHeight{};
-    // Projection range in metres. The normal OpenXR overlay uses these
-    // defaults; the DOOM scene-depth path supplies the native scene range.
-    float nearZ{0.02f};
-    float farZ{100.0f};
-};
-
-struct HandCalibration {
-    float position[3]{};
-    float rotationDegrees[3]{};
-    float scale{0.4f};
-};
-
 struct HandGameplayState {
     KharvoxWeaponKind weapon{KharvoxWeaponKind::Unknown};
     bool leftHanded{};
+    HandInteractionState interaction{};
+    bool twoHanded{};
+    std::array<math::Mat4,2> weaponJoints{};
+    unsigned weaponJointMask{};
 };
 
 using HandLog = std::function<void(const std::string&)>;
@@ -67,6 +42,11 @@ public:
     void shutdown();
 
     HandAssetAvailability availability() const;
+    bool hasSupportProfile(KharvoxWeaponKind weapon,bool leftHanded) const;
+    bool hasPrimaryProfile(KharvoxWeaponKind weapon) const;
+    bool hasGrenadeVisualPose() const;
+    bool authoredSupportGrip(KharvoxWeaponKind weapon,bool leftHanded,
+        const math::Mat4& jointModel,std::array<float,3>& point) const;
     const HandCalibration& leftCalibration() const;
     const HandCalibration& rightCalibration() const;
 

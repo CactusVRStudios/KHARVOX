@@ -57,6 +57,8 @@ public sealed class MainForm : Form
     private readonly CheckBox laserSight = MakeCheck("Laser sight", false);
     private readonly CheckBox leftHanded = MakeCheck("Left Hand mode", false);
     private readonly CheckBox swapJumpCrouch = MakeCheck("Swap Jump/Crouch", false);
+    private readonly CheckBox physicalCrouch = MakeCheck("Physical Crouch", false);
+    private readonly CheckBox physicalGrenadeThrow = MakeCheck("Physical Grenade Throw", false);
     private readonly CheckBox hudDebugging = MakeCheck("Enable HUD debugging / calibration", false);
     private readonly CheckBox extendedLogging = MakeCheck("Extended Logging", false);
     private readonly CheckBox captureEyes = MakeCheck("Eye capture: Ctrl+Shift+P (next launch)", false);
@@ -110,7 +112,7 @@ public sealed class MainForm : Form
         Text = "KHARVOX Launcher";
         var applicationIcon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath);
         if (applicationIcon is not null) Icon = applicationIcon;
-        ClientSize = new Size(548, 820);
+        ClientSize = new Size(548, 848);
         MinimumSize = new Size(280, 240);
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Color.FromArgb(0, 0, 0);
@@ -121,8 +123,8 @@ public sealed class MainForm : Form
         var root = new TableLayoutPanel
         {
             Location = Point.Empty,
-            Size = new Size(548, 820),
-            MinimumSize = new Size(548, 820),
+            Size = new Size(548, 848),
+            MinimumSize = new Size(548, 848),
             Padding = new Padding(18, 6, 18, 6),
             RowCount = 7,
             ColumnCount = 1
@@ -131,7 +133,7 @@ public sealed class MainForm : Form
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 46));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 330));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 172));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 200));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
         launcherContent = root;
@@ -318,10 +320,10 @@ public sealed class MainForm : Form
         root.Controls.Add(options);
 
         var tuning = MakeGroup("MOVEMENT");
-        var grid = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(18, 8, 18, 7), RowCount = 5, ColumnCount = 2 };
+        var grid = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(18, 8, 18, 7), RowCount = 6, ColumnCount = 2 };
         grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 187));
         grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        for (var i = 0; i < 5; i++) grid.RowStyles.Add(new RowStyle(SizeType.Percent, 20));
+        for (var i = 0; i < 6; i++) grid.RowStyles.Add(new RowStyle(SizeType.Percent, 100f / 6));
         turnMode.Items.AddRange(["Smooth", "Snap", "Off"]);
         movementDirection.Items.AddRange(["Head direction", "Off hand direction"]);
         movementDirection.SelectedIndexChanged += OptionChanged;
@@ -353,7 +355,15 @@ public sealed class MainForm : Form
         swapJumpCrouch.CheckedChanged += OptionChanged;
         statusToolTip.SetToolTip(swapJumpCrouch, "Swap the gameplay Jump and Crouch actions on the A/B face buttons. Menu controls stay the same.");
         grid.Controls.Add(swapJumpCrouch, 0, 4);
-        grid.SetColumnSpan(swapJumpCrouch, 2);
+        physicalCrouch.Dock = DockStyle.Fill;
+        physicalCrouch.CheckedChanged += OptionChanged;
+        statusToolTip.SetToolTip(physicalCrouch, "Stand upright when gameplay starts to calibrate. Lower your headset 35 cm to crouch; rise to within 20 cm to stand. Crouch buttons remain available.");
+        grid.Controls.Add(physicalCrouch, 1, 4);
+        physicalGrenadeThrow.Dock = DockStyle.Fill;
+        physicalGrenadeThrow.CheckedChanged += OptionChanged;
+        statusToolTip.SetToolTip(physicalGrenadeThrow, "Experimental (Steam): hold the support trigger, then release with a throwing motion. Brief taps keep the normal throw. Native launch speed and origin are preserved.");
+        grid.Controls.Add(physicalGrenadeThrow, 0, 5);
+        grid.SetColumnSpan(physicalGrenadeThrow, 2);
         foreach (Control c in new Control[] { turnMode, snapAngle })
         {
             if (c is ComboBox cb) cb.SelectedIndexChanged += OptionChanged;
@@ -760,6 +770,8 @@ public sealed class MainForm : Form
         {
             showHands.Checked = LauncherPresetPolicy.DefaultEnableHands;
             handsJump.Checked = true;
+            physicalCrouch.Checked = false;
+            physicalGrenadeThrow.Checked = false;
             disableAa.Checked = false;
             captureEyes.Checked = false;
 
@@ -973,7 +985,7 @@ public sealed class MainForm : Form
         calibrateHands.Checked ? "rotation" : "off",
         enableBhaptics.Checked,
         usePsvr2Toolkit.Checked,
-        SelectedBackWeaponKey(), handsJump.Checked, disableAa.Checked, captureEyes.Checked, disableVrIntro.Checked, swapJumpCrouch.Checked);
+        SelectedBackWeaponKey(), handsJump.Checked, disableAa.Checked, captureEyes.Checked, disableVrIntro.Checked, swapJumpCrouch.Checked, physicalCrouch.Checked, physicalGrenadeThrow.Checked);
 
     private void SetRunningState(bool running)
     {
@@ -1054,6 +1066,8 @@ public sealed class MainForm : Form
                 ? ClampInt(s.LeftHandSwapMode, 0, 1) : 0;
             leftHanded.Checked = s.SettingsVersion >= 13 && s.LeftHanded;
             swapJumpCrouch.Checked = s.SettingsVersion >= 34 && s.SwapJumpCrouch;
+            physicalCrouch.Checked = s.SettingsVersion >= 35 && s.PhysicalCrouch;
+            physicalGrenadeThrow.Checked = s.SettingsVersion >= 35 && s.PhysicalGrenadeThrow;
             laserSight.Checked = s.SettingsVersion >= 14 && s.LaserSight;
             hudDebugging.Checked = s.SettingsVersion >= 9 && s.HudDebugging;
             extendedLogging.Checked = s.SettingsVersion >= 25 && s.ExtendedLogging;
@@ -1088,6 +1102,8 @@ public sealed class MainForm : Form
             leftHandSwapMode.SelectedIndex = 0;
             leftHanded.Checked = false;
             swapJumpCrouch.Checked = false;
+            physicalCrouch.Checked = false;
+            physicalGrenadeThrow.Checked = false;
             laserSight.Checked = false;
             hudDebugging.Checked = false;
             extendedLogging.Checked = false;
@@ -1142,7 +1158,7 @@ public sealed class MainForm : Form
                 showHands.Checked,
                 calibrateHands.Checked ? 1 : 0,
                 enableBhaptics.Checked,
-                usePsvr2Toolkit.Checked, handsJump.Checked, disableAa.Checked, captureEyes.Checked, swapJumpCrouch.Checked);
+                usePsvr2Toolkit.Checked, handsJump.Checked, disableAa.Checked, captureEyes.Checked, swapJumpCrouch.Checked, physicalCrouch.Checked, physicalGrenadeThrow.Checked);
             s.DisableVrIntro = disableVrIntro.Checked;
             LauncherSettingsStore.Save(SettingsPath, s);
         }

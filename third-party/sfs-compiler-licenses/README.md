@@ -9,7 +9,7 @@ Full license collections are retained in `third-party/sfs-compiler-licenses`
 and must accompany binary builds with this option enabled.
 
 The local experimental build uses glslang headers reporting 16.5.0 from the
-user's installed `D:/DoomVR/build/shader-tools/glslang-main` SDK. Its exact
+locally installed glslang SDK. Its exact
 upstream build revision and the bundled SPIRV-Tools revision are not recorded
 in that installation; do not represent this as a reproducibly pinned toolchain.
 License texts for those libraries were obtained from their official upstream

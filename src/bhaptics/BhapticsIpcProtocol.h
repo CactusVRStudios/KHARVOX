@@ -19,6 +19,7 @@ enum class IpcMessageType : std::uint16_t {
     RumbleState = 2,
     RumbleStop = 3,
     Shutdown = 4,
+    WeaponSleeve = 5,
 };
 
 #pragma pack(push, 1)
@@ -34,6 +35,10 @@ struct IpcMessageHeader {
 struct RumbleStatePayload {
     std::uint16_t lowMotor{};
     std::uint16_t highMotor{};
+};
+struct WeaponSleevePayload {
+    std::uint8_t hand{}; // 0 left, 1 right.
+    std::uint8_t intensity{}; // Weapon intensity in percent; zero stops this arm.
 };
 #pragma pack(pop)
 
@@ -63,6 +68,7 @@ struct DecodedIpcMessage {
 
 inline bool isKnownMessageType(std::uint16_t value) {
     switch (static_cast<IpcMessageType>(value)) {
+    case IpcMessageType::WeaponSleeve:
     case IpcMessageType::Hello:
     case IpcMessageType::RumbleState:
     case IpcMessageType::RumbleStop:
@@ -103,6 +109,11 @@ inline IpcValidationResult validateIpcMessage(
             return IpcValidationResult::InvalidPayload;
         break;
     }
+    case IpcMessageType::WeaponSleeve:
+        if (header.payloadBytes != sizeof(WeaponSleevePayload)
+            || payload[0] > 1 || payload[1] > 100)
+            return IpcValidationResult::InvalidPayload;
+        break;
     case IpcMessageType::RumbleState:
         if (header.payloadBytes != sizeof(RumbleStatePayload))
             return IpcValidationResult::InvalidPayload;
@@ -167,6 +178,12 @@ inline EncodedIpcMessage encodeRumbleState(
         monotonicMilliseconds, &payload, sizeof(payload));
 }
 
+inline EncodedIpcMessage encodeWeaponSleeve(
+    std::uint32_t sequence, std::uint64_t now, WeaponSleevePayload payload) {
+    return encodeIpcMessage(IpcMessageType::WeaponSleeve, sequence, now,
+        &payload, sizeof(payload));
+}
+
 inline EncodedIpcMessage encodeEmptyMessage(
     IpcMessageType type, std::uint32_t sequence,
     std::uint64_t monotonicMilliseconds) {
@@ -201,6 +218,7 @@ enum class ServerSessionAction {
     None,
     Authorized,
     Rumble,
+    WeaponSleeve,
     Stop,
     Shutdown,
     Reject,
@@ -226,6 +244,7 @@ inline ServerSessionAction handleServerMessage(
         return ServerSessionAction::Authorized;
     }
     switch (type) {
+    case IpcMessageType::WeaponSleeve: return ServerSessionAction::WeaponSleeve;
     case IpcMessageType::RumbleState: return ServerSessionAction::Rumble;
     case IpcMessageType::RumbleStop: return ServerSessionAction::Stop;
     case IpcMessageType::Shutdown: return ServerSessionAction::Shutdown;

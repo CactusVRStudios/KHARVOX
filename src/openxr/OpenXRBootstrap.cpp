@@ -745,6 +745,7 @@ bool isPhysicalCommand(const char*n){return n&&(!strncmp(n,"vkGetPhysicalDevice"
 VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL bridgeGipa(VkInstance i,const char*n){if(bridgeSessionTrace)log(std::string("[VD-BRIDGE] ENTER GIPA(instance=")+std::to_string(reinterpret_cast<uintptr_t>(i))+", name="+(n?n:"NULL")+")");PFN_vkVoidFunction p{};if(n&&!strcmp(n,"vkCreateDevice")&&reentryCreateDevice)p=reinterpret_cast<PFN_vkVoidFunction>(bridgeCreateDevice);else if(isDeviceCommand(n)&&s.vk.getDeviceProcAddr&&s.device)p=s.vk.getDeviceProcAddr(s.device,n);else if(isPhysicalCommand(n)){auto loader=GetModuleHandleW(L"vulkan-1.dll");auto loaderGipa=reinterpret_cast<PFN_vkGetInstanceProcAddr>(loader?GetProcAddress(loader,"vkGetInstanceProcAddr"):nullptr);if(loaderGipa)p=loaderGipa(i,n);}else if(bridgeNextGipa)p=bridgeNextGipa(i,n);PFN_vkVoidFunction returned=p;if(bridgeSessionTrace&&n&&!strcmp(n,"vkGetPhysicalDeviceProperties2")){bridgeGetPhysicalDeviceProperties2Downstream=reinterpret_cast<PFN_vkGetPhysicalDeviceProperties2>(p);returned=reinterpret_cast<PFN_vkVoidFunction>(bridgeGetPhysicalDeviceProperties2);}else if(bridgeSessionTrace&&n&&!strcmp(n,"vkGetPhysicalDeviceMemoryProperties")){bridgeGetPhysicalDeviceMemoryPropertiesDownstream=reinterpret_cast<PFN_vkGetPhysicalDeviceMemoryProperties>(p);returned=reinterpret_cast<PFN_vkVoidFunction>(bridgeGetPhysicalDeviceMemoryProperties);}if(bridgeSessionTrace)log(std::string("[VD-BRIDGE] EXIT GIPA name=")+(n?n:"NULL")+" downstream="+std::to_string(reinterpret_cast<uintptr_t>(p))+" module="+pointerOwner(p)+" returned="+std::to_string(reinterpret_cast<uintptr_t>(returned)));return returned;}
 std::string result(XrResult r){char b[XR_MAX_RESULT_STRING_SIZE]{};using Fn=XrResult(XRAPI_PTR*)(XrInstance,XrResult,char[XR_MAX_RESULT_STRING_SIZE]);Fn f=nullptr;if(s.instance&&s.getProc)s.getProc(s.instance,"xrResultToString",reinterpret_cast<PFN_xrVoidFunction*>(&f));if(f&&XR_SUCCEEDED(f(s.instance,r,b)))return b;return std::to_string(r);}
 void clearCapturedXInputRumble(){
+    KharvoxBhapticsSubmitSleeves(0,0);
     nativeXInputRumble.store(0,std::memory_order_release);
     pendingXInputRumblePeaks.store(0,std::memory_order_release);
     kharvox::resetXInputRumbleFrameAccumulator(s.hapticFrameAccumulator);
@@ -832,6 +833,7 @@ void updateXInputHaptics(){
         pendingXInputRumblePeaks.store(0,std::memory_order_release);
         kharvox::resetXInputRumbleFrameAccumulator(s.hapticFrameAccumulator);
         KharvoxBhapticsSubmitRumble(0,0);
+        KharvoxBhapticsSubmitSleeves(0,0);
         return;
     }
 
@@ -852,9 +854,6 @@ void updateXInputHaptics(){
         kharvox::xinputRumbleLowMotor(fanout.bhapticsRumble),
         kharvox::xinputRumbleHighMotor(fanout.bhapticsRumble));
 
-    if(!s.actionsReady||!s.hapticActionsReady||!s.hapticBindingsSuggested
-        ||!s.applyHapticFeedback||!s.stopHapticFeedback)return;
-
     const bool weaponRumble=fanout.controllerSignal.active
         &&weaponFireFallbackActive;
     // Explicit fire input identifies weapon rumble, unlike XInput's motor
@@ -863,6 +862,11 @@ void updateXInputHaptics(){
     const auto nativeDesired=kharvox::routeXInputHapticSignal(
         fanout.controllerSignal,weaponRumble,s.leftHanded,s.twoHandLatched);
 
+    const auto sleeves=kharvox::weaponSleeveIntensities(nativeDesired,weaponRumble);
+    KharvoxBhapticsSubmitSleeves(sleeves[0],sleeves[1]);
+
+    if(!s.actionsReady||!s.hapticActionsReady||!s.hapticBindingsSuggested
+        ||!s.applyHapticFeedback||!s.stopHapticFeedback)return;
     const std::array<XrAction,2> actions{s.leftHaptic,s.rightHaptic};
     for(size_t hand=0;hand<actions.size();++hand){
         const auto desired=kharvox::mixControllerClick(nativeDesired[hand],s.wheelClicks[hand],now);

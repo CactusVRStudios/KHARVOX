@@ -23,7 +23,7 @@ public:
     virtual std::string deviceInfoJson() = 0;
     virtual bool deviceConnected(int position) = 0;
     virtual int playDot(int position, int durationMilliseconds,
-        const std::array<int, tactSuitMotorCount>& motors) = 0;
+        int* motors, int motorCount) = 0;
     virtual bool stop(int requestId) = 0;
     virtual void stopAll() noexcept = 0;
 };
@@ -106,7 +106,7 @@ public:
             nextDeviceCheckMilliseconds_ = nowMilliseconds + deviceRecheckMilliseconds;
         }
 
-        const auto desired = mapRumbleToTactSuit(low_, high_, intensityScale_);
+        auto desired = mapRumbleToTactSuit(low_, high_, intensityScale_);
         const auto command = selectRumbleCommand(dispatch_, desired, nowMilliseconds);
         if (command == RumbleCommand::None)
             return;
@@ -118,14 +118,35 @@ public:
         if (requestId_ > 0)
             backend_.stop(requestId_);
         requestId_ = backend_.playDot(tactSuitPosition,
-            dotDurationMilliseconds, desired.motors);
+            dotDurationMilliseconds, desired.motors.data(), static_cast<int>(desired.motors.size()));
         if (requestId_ > 0)
             noteRumblePlayed(dispatch_, desired, nowMilliseconds);
         else
             noteRumbleStopped(dispatch_, nowMilliseconds);
     }
 
+    void setWeaponSleeve(std::size_t hand, int percent) {
+        if (hand >= sleeveRequestIds_.size())
+            return;
+        auto& request = sleeveRequestIds_[hand];
+        if (request > 0)
+            backend_.stop(request);
+        request = 0;
+        const int intensity = static_cast<int>(std::lround(std::clamp(
+            percent * intensityScale_, 0.0f, static_cast<float>(maximumMotorIntensity))));
+        if (!intensity)
+            return;
+
+        // bHaptics SDK2 ForearmL/ForearmR each take three motor values.
+        constexpr std::array<int, 2> positions{1, 2};
+        std::array<int, 3> motors{intensity, intensity, intensity};
+        request = backend_.playDot(positions[hand], dotDurationMilliseconds,
+            motors.data(), static_cast<int>(motors.size()));
+    }
+
     void disconnected(std::uint64_t nowMilliseconds) {
+        for (std::size_t hand = 0; hand < sleeveRequestIds_.size(); ++hand)
+            setWeaponSleeve(hand, 0);
         low_ = 0;
         high_ = 0;
         stopCurrentRequest(nowMilliseconds);
@@ -141,6 +162,7 @@ public:
         }
         requestId_ = 0;
         dispatch_ = {};
+        sleeveRequestIds_ = {};
     }
 
     bool deviceConnected() const { return deviceConnected_; }
@@ -163,6 +185,7 @@ private:
     bool deviceConnected_{};
     bool inventoryRecognized_{};
     int requestId_{};
+    std::array<int, 2> sleeveRequestIds_{};
     std::uint64_t nextDeviceCheckMilliseconds_{};
     RumbleDispatchState dispatch_{};
 };

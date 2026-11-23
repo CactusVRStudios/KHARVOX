@@ -389,6 +389,16 @@ int wmain() {
                     }
                     break;
                 }
+                case ServerSessionAction::WeaponSleeve: {
+                    if (backendReady) {
+                        WeaponSleevePayload sleeve{};
+                        std::memcpy(&sleeve, decoded.payload, sizeof(sleeve));
+                        const auto age = GetTickCount64() - decoded.header.monotonicMilliseconds;
+                        engine.setWeaponSleeve(sleeve.hand,
+                            age < dotDurationMilliseconds ? sleeve.intensity : 0);
+                    }
+                    break;
+                }
                 case ServerSessionAction::Stop:
                     if (backendReady) {
                         engine.setRawRumble(0, 0);

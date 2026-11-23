@@ -2,16 +2,20 @@ param(
     [Parameter(Mandatory=$true)][string]$BaselineArchive,
     [Parameter(Mandatory=$true)][string]$NativeOutput,
     [Parameter(Mandatory=$true)][string]$LauncherOutput,
-    [Parameter(Mandatory=$true)][string]$OutputRoot
+    [Parameter(Mandatory=$true)][string]$OutputRoot,
+    [ValidateSet('1.4a','1.4b')][string]$Version = '1.4a'
 )
 $ErrorActionPreference='Stop'
 $source=Split-Path $PSScriptRoot -Parent
-$package=Join-Path $OutputRoot 'KHARVOX-v1.4a'
+$package=Join-Path $OutputRoot "KHARVOX-v$Version"
+$fileVersion=if($Version -eq '1.4b'){'1.4.2.1420'}else{'1.4.1.1410'}
 $archive=$package+'.zip'
 if((Test-Path -LiteralPath $package) -or (Test-Path -LiteralPath $archive)){throw 'Output already exists'}
 Expand-Archive -LiteralPath $BaselineArchive -DestinationPath $package
 & "$PSScriptRoot/verify_package_integrations.ps1" -Package $package
-foreach($name in @('KharvoxLayer.dll','native_sfs_build.txt')){
+$nativeFiles=@('KharvoxLayer.dll','native_sfs_build.txt')
+if($Version -eq '1.4b'){$nativeFiles+=@('KharvoxBhapticsBridge.exe','bhaptics_library.dll')}
+foreach($name in $nativeFiles){
     Copy-Item -LiteralPath (Join-Path $NativeOutput $name) -Destination $package
 }
 foreach($name in @('KharvoxLauncher.exe','KharvoxLauncher.exe.config')){
@@ -19,7 +23,7 @@ foreach($name in @('KharvoxLauncher.exe','KharvoxLauncher.exe.config')){
 }
 Copy-Item -LiteralPath "$source/src/vulkan/KharvoxLayer.json" -Destination $package
 foreach($name in @('KharvoxLayer.dll','KharvoxLauncher.exe')){
-    if((Get-Item -LiteralPath "$package/$name").VersionInfo.FileVersion -ne '1.4.1.1410'){throw "Wrong version: $name"}
+    if((Get-Item -LiteralPath "$package/$name").VersionInfo.FileVersion -ne $fileVersion){throw "Wrong version: $name"}
 }
 $stamp=Get-Content -LiteralPath "$package/native_sfs_build.txt"
 if($stamp.Count -ne 2 -or $stamp[0] -ne 'KHARVOX_NATIVE_SFS_1' -or

@@ -174,6 +174,8 @@ Every KHARVOX launch disables DOOM's native Motion Blur, automatic Glory Kill Mo
 
 bHaptics feedback requires compatible gear and the [bHaptics Player for Windows](https://www.bhaptics.com/support/downloads/?type=bhaptics_player). Pair and verify the devices in the Player before starting the game.
 
+With **Enable bHaptics** selected, TactSleeves mirror weapon rumble on the controller hand holding the weapon. A two-handed grip activates both sleeves. Sleeve strength comes from the dedicated weapon-fire effect, so taking damage while firing does not add arm vibration. You can use the sleeves without a vest.
+
 **Enable bHaptics** may remain selected without connected hardware. Missing equipment, an unavailable Player or a local bridge error does not block DOOM; normal controller rumble remains independent.
 
 ### PSVR2 Toolkit

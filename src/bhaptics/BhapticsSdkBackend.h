@@ -34,7 +34,7 @@ public:
     std::string deviceInfoJson() override;
     bool deviceConnected(int position) override;
     int playDot(int position, int durationMilliseconds,
-        const std::array<int, tactSuitMotorCount>& motors) override;
+        int* motors, int motorCount) override;
     bool stop(int requestId) override;
     void stopAll() noexcept override;
 

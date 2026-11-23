@@ -1,6 +1,7 @@
 #include "../src/bhaptics/BhapticsSdkBackend.h"
 
 #include <array>
+#include <vector>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -38,12 +39,18 @@ public:
     bool launchPlayer() override { ++launchCalls; return launchResult; }
     std::string deviceInfoJson() override { ++deviceInfoCalls; return json; }
     bool deviceConnected(int) override { ++deviceConnectedCalls; return device; }
-    int playDot(int, int,
-        const std::array<int, kharvox::bhaptics::tactSuitMotorCount>&) override {
+    int lastPosition{};
+    int lastDuration{};
+    int lastStopped{};
+    std::vector<int> lastMotors;
+    int playDot(int position, int duration, int* motors, int count) override {
+        lastPosition = position;
+        lastDuration = duration;
+        lastMotors.assign(motors, motors + count);
         ++playCalls;
         return nextRequest++;
     }
-    bool stop(int) override { ++stopCalls; return true; }
+    bool stop(int id) override { lastStopped = id; ++stopCalls; return true; }
     void stopAll() noexcept override { ++stopAllCalls; }
 };
 
@@ -143,6 +150,28 @@ int main(int argc, char** argv) {
         || playbackProbeEngine.currentRequestId() > 0)
         return 30;
     playbackProbeEngine.shutdown();
+
+    FakeBackend sleeves;
+    sleeves.device = false; // Sleeve-only setup with no vest.
+    BhapticsRumbleEngine sleeveEngine(sleeves);
+    sleeveEngine.setWeaponSleeve(1, 45);
+    const int rightId = sleeves.nextRequest - 1;
+    if (sleeves.lastPosition != 2 || sleeves.lastMotors != std::vector<int>(3, 45)
+        || sleeves.lastDuration != dotDurationMilliseconds) return 32;
+    sleeveEngine.setWeaponSleeve(0, 75);
+    const int leftId = sleeves.nextRequest - 1;
+    if (sleeves.lastPosition != 1 || sleeves.lastMotors != std::vector<int>(3, 75)
+        || sleeves.stopCalls != 0) return 33;
+    sleeveEngine.setRawRumble(65535, 0);
+    sleeveEngine.tick(0);
+    if (sleeves.lastPosition != 0 || sleeves.lastMotors.size() != tactSuitMotorCount
+        || sleeves.stopCalls != 0) return 34;
+    sleeveEngine.setWeaponSleeve(1, 0);
+    if (sleeves.lastStopped != rightId || sleeves.playCalls != 3) return 35;
+    sleeveEngine.setRawRumble(0, 0);
+    sleeveEngine.tick(100);
+    sleeveEngine.disconnected(101);
+    if (sleeves.lastStopped != leftId || sleeves.stopCalls != 3) return 36;
 
     DynamicBhapticsBackend missingDll;
     std::string reason;

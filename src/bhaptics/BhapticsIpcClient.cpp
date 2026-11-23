@@ -16,6 +16,9 @@ std::atomic<bool> workerStarted{};
 std::atomic<bool> stopRequested{};
 std::atomic<std::uint32_t> currentRumble{};
 std::atomic<std::uint32_t> pendingRumblePeak{};
+// Both hands and the XR sample time travel together. A stalled render loop
+// must never leave the worker replaying an old firing state.
+std::atomic<std::uint64_t> sleeveSample{};
 std::atomic<HANDLE> stopEvent{};
 HANDLE workerHandle{};
 std::wstring pipePath;
@@ -113,25 +116,49 @@ DWORD WINAPI workerMain(void*) {
 
         std::uint32_t lastSent = 0xffffffffu;
         std::uint64_t refreshAt{};
+        std::uint64_t nextVestPoll{};
+        std::array<std::uint8_t, 2> lastSleeves{};
+        std::array<std::uint64_t, 2> refreshSleevesAt{};
         while (!stopRequested.load(std::memory_order_acquire)) {
             const auto now = GetTickCount64();
-            const auto current = currentRumble.load(std::memory_order_acquire);
-            const auto peak = pendingRumblePeak.exchange(0, std::memory_order_acq_rel);
-            const auto latest = mergeRumblePeaks(current, peak);
-            if (latest != lastSent || now >= refreshAt) {
-                const auto message = latest == 0
-                    ? encodeEmptyMessage(IpcMessageType::RumbleStop,
-                        ++sequence, now)
-                    : encodeRumbleState(++sequence, now,
-                        lowMotor(latest), highMotor(latest));
-                if (!writeMessage(pipe, message))
+            const auto sample = sleeveSample.load(std::memory_order_acquire);
+            const bool fresh = now < (sample >> 16) + dotDurationMilliseconds;
+            bool pipeReady = true;
+            for (std::uint8_t hand = 0; hand < lastSleeves.size(); ++hand) {
+                const auto intensity = static_cast<std::uint8_t>(
+                    fresh ? sample >> (8 * hand) : 0);
+                if (intensity == lastSleeves[hand]
+                    && (!intensity || now < refreshSleevesAt[hand]))
+                    continue;
+                if (!writeMessage(pipe, encodeWeaponSleeve(++sequence, now, {hand, intensity}))) {
+                    pipeReady = false;
                     break;
-                lastSent = latest;
-                refreshAt = now + (latest == 0
-                    ? stoppedRumbleRefreshMilliseconds
-                    : sustainedRumbleRefreshMilliseconds);
+                }
+                lastSleeves[hand] = intensity;
+                refreshSleevesAt[hand] = now + maximumUpdateRateMilliseconds;
             }
-            if (WaitForSingleObject(stopEvent.load(std::memory_order_acquire), maximumUpdateRateMilliseconds)
+            if (!pipeReady)
+                break;
+            if (now >= nextVestPoll) {
+                nextVestPoll = now + maximumUpdateRateMilliseconds;
+                const auto current = currentRumble.load(std::memory_order_acquire);
+                const auto peak = pendingRumblePeak.exchange(0, std::memory_order_acq_rel);
+                const auto latest = mergeRumblePeaks(current, peak);
+                if (latest != lastSent || now >= refreshAt) {
+                    const auto message = latest == 0
+                        ? encodeEmptyMessage(IpcMessageType::RumbleStop,
+                            ++sequence, now)
+                        : encodeRumbleState(++sequence, now,
+                            lowMotor(latest), highMotor(latest));
+                    if (!writeMessage(pipe, message))
+                        break;
+                    lastSent = latest;
+                    refreshAt = now + (latest == 0
+                        ? stoppedRumbleRefreshMilliseconds
+                        : sustainedRumbleRefreshMilliseconds);
+                }
+            }
+            if (WaitForSingleObject(stopEvent.load(std::memory_order_acquire), 10)
                 == WAIT_OBJECT_0)
                 break;
         }
@@ -142,6 +169,7 @@ DWORD WINAPI workerMain(void*) {
         CloseHandle(pipe);
     }
 
+    sleeveSample.store(0, std::memory_order_release);
     currentRumble.store(0, std::memory_order_release);
     pendingRumblePeak.store(0, std::memory_order_release);
     workerStarted.store(false, std::memory_order_release);
@@ -216,6 +244,14 @@ void KharvoxBhapticsSubmitRumble(
                 std::memory_order_release, std::memory_order_relaxed))
             break;
     }
+}
+
+void KharvoxBhapticsSubmitSleeves(std::uint8_t left, std::uint8_t right) {
+    if (!workerStarted.load(std::memory_order_relaxed))
+        return;
+    const auto sample = (GetTickCount64() << 16)
+        | (static_cast<std::uint64_t>(right) << 8) | left;
+    sleeveSample.store(sample, std::memory_order_release);
 }
 
 void KharvoxBhapticsIpcRequestStop() {

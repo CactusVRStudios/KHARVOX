@@ -139,6 +139,19 @@ inline std::array<XInputHapticSignal, 2> routeXInputHapticSignal(
     return desired;
 }
 
+inline std::array<std::uint8_t, 2> weaponSleeveIntensities(
+    const std::array<XInputHapticSignal, 2>& routed, bool weaponRumble) {
+    std::array<std::uint8_t, 2> intensities{};
+    for (std::size_t hand = 0; hand < routed.size(); ++hand) {
+        // Native XInput amplitude can include simultaneous damage or environment
+        // rumble. Share the routed hand mask, using the isolated fire amplitude.
+        if (weaponRumble && routed[hand].active)
+            intensities[hand] = static_cast<std::uint8_t>(std::lround(
+                weaponFireHapticFallbackAmplitude * 100));
+    }
+    return intensities;
+}
+
 inline float filterXInputHapticMotor(std::uint16_t motorSpeed) {
     const float normalized = static_cast<float>(motorSpeed)
         / xinputHapticMotorMaximum;

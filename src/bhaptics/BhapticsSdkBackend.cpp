@@ -109,12 +109,10 @@ bool DynamicBhapticsBackend::deviceConnected(int position) {
 
 int DynamicBhapticsBackend::playDot(
     int position, int durationMilliseconds,
-    const std::array<int, tactSuitMotorCount>& motors) {
+    int* motors, int motorCount) {
     if (!playDot_)
         return -1;
-    auto mutableMotors = motors;
-    return playDot_(position, durationMilliseconds,
-        mutableMotors.data(), static_cast<int>(mutableMotors.size()));
+    return playDot_(position, durationMilliseconds, motors, motorCount);
 }
 
 bool DynamicBhapticsBackend::stop(int requestId) {

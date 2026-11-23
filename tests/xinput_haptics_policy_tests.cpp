@@ -215,5 +215,16 @@ int main() {
     // refreshed at 25ms, not treated as a still-running 100ms native pulse.
     if (selectXInputHapticCommand(clickOutput, clickOnly, 125)
         != XInputHapticCommand::Apply) return 42;
+    const auto sleeveOutput = [&](bool firing, bool leftHanded, bool twoHanded) {
+        const auto hands = routeXInputHapticSignal(fallback, firing, leftHanded, twoHanded);
+        return weaponSleeveIntensities(hands, firing);
+    };
+    using Arms = std::array<std::uint8_t, 2>;
+    if (sleeveOutput(true, false, false) != Arms{0,45}
+        || sleeveOutput(true, true, false) != Arms{45,0}
+        || sleeveOutput(true, false, true) != Arms{45,45}
+        || sleeveOutput(true, true, true) != Arms{45,45}
+        || sleeveOutput(false, true, true) != Arms{0,0}
+        || weaponSleeveIntensities({strong,weak}, true) != Arms{45,45}) return 43;
     return 0;
 }

@@ -7,4 +7,5 @@
 // network I/O. All IPC is owned by a separate worker.
 void KharvoxBhapticsIpcStart();
 void KharvoxBhapticsSubmitRumble(std::uint16_t lowMotor, std::uint16_t highMotor);
+void KharvoxBhapticsSubmitSleeves(std::uint8_t left, std::uint8_t right);
 void KharvoxBhapticsIpcRequestStop();

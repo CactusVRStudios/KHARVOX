@@ -98,5 +98,14 @@ int main() {
     if (handleServerMessage(reconnected, decoded, token)
         != ServerSessionAction::Authorized)
         return 16;
+    auto sleeve = encodeWeaponSleeve(5, 104, {1, 45});
+    if (validateIpcMessage(sleeve.bytes.data(), sleeve.size, &decoded) != IpcValidationResult::Valid
+        || handleServerMessage(reconnected, decoded, token) != ServerSessionAction::WeaponSleeve
+        || decoded.payload[0] != 1 || decoded.payload[1] != 45) return 17;
+    for (auto invalid : {WeaponSleevePayload{2, 45}, WeaponSleevePayload{0, 101}}) {
+        sleeve = encodeWeaponSleeve(6, 105, invalid);
+        if (validateIpcMessage(sleeve.bytes.data(), sleeve.size) != IpcValidationResult::InvalidPayload)
+            return 18;
+    }
     return 0;
 }

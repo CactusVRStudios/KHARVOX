@@ -83,7 +83,8 @@ int wmain(int argc, wchar_t** argv) {
         return 5;
     }
     if (!writeMessage(first, encodeHello(1, 10, tokenAscii))
-        || !writeMessage(first, encodeRumbleState(2, 20, 1000, 2000))) {
+        || !writeMessage(first, encodeRumbleState(2, 20, 1000, 2000))
+        || !writeMessage(first, encodeWeaponSleeve(3, GetTickCount64(), {1, 45}))) {
         CloseHandle(first);
         TerminateProcess(process.hProcess, 9);
         CloseHandle(process.hProcess);

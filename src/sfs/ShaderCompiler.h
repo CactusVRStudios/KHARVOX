@@ -31,6 +31,8 @@ struct CompiledShader {
 // Throws on unsupported transformations or compilation failure; no mono fallback.
 CompiledShader compileStereoShader(const std::vector<uint32_t>& original,
                                   const ShaderCompileOptions& options={});
+CompiledShader compileUnblurredSceneColor(bool monoView);
+CompiledShader compileSceneColorWithoutVelocity(bool monoView);
 bool hasStereoStorageOutput(const std::vector<uint32_t>& original);
 bool needsStereoProjection(const std::vector<uint32_t>& original,bool profileReplacement);
 bool needsHeadsetProjection(const std::vector<uint32_t>& words,bool profileReplacement,bool shadowPass);

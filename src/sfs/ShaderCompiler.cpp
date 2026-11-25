@@ -102,14 +102,82 @@ protected:
 public:
     StereoCompiler(const std::vector<uint32_t>& words,bool compute):CompilerGLSL(words),compute_(compute),computeStage_(get_execution_model()==spv::ExecutionModelGLCompute){}
 };
+
+std::vector<uint32_t> compileGlsl(const std::string& source, spv::ExecutionModel model){
+    static std::once_flag initialization;
+    std::call_once(initialization,[]{if(!glslang_initialize_process())throw std::runtime_error("glslang initialization failed");});
+    glslang_input_t input{};input.language=GLSLANG_SOURCE_GLSL;
+    input.stage=model==spv::ExecutionModelVertex?GLSLANG_STAGE_VERTEX:model==spv::ExecutionModelFragment?GLSLANG_STAGE_FRAGMENT:GLSLANG_STAGE_COMPUTE;
+    input.client=GLSLANG_CLIENT_VULKAN;input.client_version=GLSLANG_TARGET_VULKAN_1_1;
+    input.target_language=GLSLANG_TARGET_SPV;input.target_language_version=GLSLANG_TARGET_SPV_1_3;
+    input.code=source.c_str();input.default_version=450;input.default_profile=GLSLANG_NO_PROFILE;
+    input.messages=static_cast<glslang_messages_t>(GLSLANG_MSG_SPV_RULES_BIT|GLSLANG_MSG_VULKAN_RULES_BIT);input.resource=glslang_default_resource();
+    std::unique_ptr<glslang_shader_t,decltype(&glslang_shader_delete)> shader(glslang_shader_create(&input),glslang_shader_delete);
+    if(!shader)throw std::runtime_error("SFS: shader allocation failed");
+    if(!glslang_shader_preprocess(shader.get(),&input)||!glslang_shader_parse(shader.get(),&input))
+        throw std::runtime_error(std::string("SFS shader compile: ")+glslang_shader_get_info_log(shader.get())+"\n"+source);
+    std::unique_ptr<glslang_program_t,decltype(&glslang_program_delete)> program(glslang_program_create(),glslang_program_delete);
+    if(!program)throw std::runtime_error("SFS: program allocation failed");
+    glslang_program_add_shader(program.get(),shader.get());
+    if(!glslang_program_link(program.get(),input.messages))throw std::runtime_error(glslang_program_get_info_log(program.get()));
+    glslang_program_SPIRV_generate(program.get(),input.stage);
+    const auto size=glslang_program_SPIRV_get_size(program.get());if(!size)throw std::runtime_error("SFS: SPIR-V generation failed");
+    std::vector<uint32_t> words(size);glslang_program_SPIRV_get(program.get(),words.data());
+    return words;
+}
+}
+
+// KHARVOX disables DOOM motion blur. The original no-blur branch copies
+// binding 2 with this UV transform, but still samples the velocity buffer.
+CompiledShader compileUnblurredSceneColor(bool monoView){
+    CompiledShader result;
+    result.glsl="#version 450\n";
+    if(!monoView)result.glsl+="#extension GL_EXT_multiview : require\n";
+    result.glsl+=R"(
+layout(set=0,binding=0,std140) uniform BlurParams { vec4 biasScale; } params;
+layout(set=0,binding=2) uniform sampler2DArray sceneColor;
+layout(location=0) out vec4 color;
+void main(){
+    vec2 uv=gl_FragCoord.xy * params.biasScale.zw + params.biasScale.xy;
+    float layer=)";
+    result.glsl+=monoView?"0.0":"float(gl_ViewIndex)";
+    result.glsl+=R"(;
+    color=textureLod(sceneColor,vec3(uv,layer),0.0);
+}
+)";
+    result.words=compileGlsl(result.glsl,spv::ExecutionModelFragment);
+    return result;
+}
+
+CompiledShader compileSceneColorWithoutVelocity(bool monoView){
+    CompiledShader result;
+    result.glsl = "#version 450\n";
+    if(!monoView) result.glsl += "#extension GL_EXT_multiview : require\n";
+    result.glsl += R"(
+layout(set=0, binding=4) uniform sampler2DArray sceneColor;
+layout(location=0) out vec4 color;
+layout(location=1) out vec4 velocityDepth;
+void main(){
+    ivec3 extent = textureSize(sceneColor, 0);
+    ivec2 pixel = clamp(ivec2(gl_FragCoord.xy), ivec2(0), extent.xy - 1);
+    int layer = )";
+    result.glsl += monoView ? "0" : "min(int(gl_ViewIndex), extent.z - 1)";
+    result.glsl += R"(;
+    color = vec4(max(texelFetch(sceneColor, ivec3(pixel, layer), 0).rgb, vec3(0.0)), 1.0);
+    // DOOM stores reciprocal blur length and linear depth in R/G. Motion
+    // blur is disabled here. Encode zero blur with a finite half-float
+    // maximum and use a fixed depth without touching the depth buffer.
+    velocityDepth = vec4(65504.0, 1.0, 0.0, 0.0);
+}
+)";
+    result.words = compileGlsl(result.glsl, spv::ExecutionModelFragment);
+    return result;
 }
 
 CompiledShader compileStereoShader(const std::vector<uint32_t>& original,const ShaderCompileOptions& request){
     if(request.indirectEye < -1 || request.indirectEye > 1 ||
        (request.indirectEye>=0&&(!request.computeStereo||request.profileReplacement)))
         throw std::runtime_error("SFS: unsupported indirect eye compilation policy");
-    static std::once_flag initialization;
-    std::call_once(initialization,[]{if(!glslang_initialize_process())throw std::runtime_error("glslang initialization failed");});
     StereoCompiler compiler(original,request.computeStereo);
     auto options=compiler.get_common_options();options.version=450;options.vulkan_semantics=true;
     compiler.set_common_options(options);
@@ -235,23 +303,7 @@ CompiledShader compileStereoShader(const std::vector<uint32_t>& original,const S
         source+="}\n";
     }
     result.glsl=source;
-    glslang_input_t input{};input.language=GLSLANG_SOURCE_GLSL;
-    input.stage=model==spv::ExecutionModelVertex?GLSLANG_STAGE_VERTEX:model==spv::ExecutionModelFragment?GLSLANG_STAGE_FRAGMENT:GLSLANG_STAGE_COMPUTE;
-    input.client=GLSLANG_CLIENT_VULKAN;input.client_version=GLSLANG_TARGET_VULKAN_1_1;
-    input.target_language=GLSLANG_TARGET_SPV;input.target_language_version=GLSLANG_TARGET_SPV_1_3;
-    input.code=source.c_str();input.default_version=450;input.default_profile=GLSLANG_NO_PROFILE;
-    input.messages=static_cast<glslang_messages_t>(GLSLANG_MSG_SPV_RULES_BIT|GLSLANG_MSG_VULKAN_RULES_BIT);input.resource=glslang_default_resource();
-    std::unique_ptr<glslang_shader_t,decltype(&glslang_shader_delete)> shader(glslang_shader_create(&input),glslang_shader_delete);
-    if(!shader)throw std::runtime_error("SFS: shader allocation failed");
-    if(!glslang_shader_preprocess(shader.get(),&input)||!glslang_shader_parse(shader.get(),&input))
-        throw std::runtime_error(std::string("SFS shader compile: ")+glslang_shader_get_info_log(shader.get())+"\n"+source);
-    std::unique_ptr<glslang_program_t,decltype(&glslang_program_delete)> program(glslang_program_create(),glslang_program_delete);
-    if(!program)throw std::runtime_error("SFS: program allocation failed");
-    glslang_program_add_shader(program.get(),shader.get());
-    if(!glslang_program_link(program.get(),input.messages))throw std::runtime_error(glslang_program_get_info_log(program.get()));
-    glslang_program_SPIRV_generate(program.get(),input.stage);
-    const auto size=glslang_program_SPIRV_get_size(program.get());if(!size)throw std::runtime_error("SFS: SPIR-V generation failed");
-    result.words.resize(size);glslang_program_SPIRV_get(program.get(),result.words.data());
+    result.words=compileGlsl(source,model);
     return result;
 }
 bool hasStereoStorageOutput(const std::vector<uint32_t>& original){

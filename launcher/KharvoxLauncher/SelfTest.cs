@@ -640,9 +640,13 @@ internal static class SelfTest
             Require(controllerMapping is not null && controllerMapping.Length > 0,
                 "embedded transparent Quest controller mapping");
 
-            Require(Assembly.GetExecutingAssembly().GetManifestResourceNames()
-                .Count(name => name.StartsWith("Kharvox.Licenses.", StringComparison.Ordinal)) == 11,
-                "all distribution notices are embedded");
+            foreach (var name in new[] { "KHARVOX", "Notices", "ThirdParty", "SFSCompiler", "SPIRV-Cross",
+                "glslang", "SPIRV-Tools", "Pocketmod", "OpenXR", "Vulkan", "FSR1", "cgltf",
+                "PSVR2Toolkit", "MinHook", "NativeStereo", "RenderDoc" })
+            {
+                using var notice = Assembly.GetExecutingAssembly().GetManifestResourceStream("Kharvox.Licenses." + name);
+                Require(notice != null && notice.Length > 0, "embedded notice for " + name);
+            }
             var notices = InfoForm.LicenseNotices();
             Require(notices.Contains("Apache License") && notices.Contains("Advanced Micro Devices")
                 && notices.Contains("Baldur Karlsson") && notices.Contains("dbkni")
@@ -1016,6 +1020,10 @@ internal static class SelfTest
                 "+r_shadowMaxStaleFrames","0,0,0,0,0","+r_shadowParallelMaxStaleFrames","0,0,0,0" }),
                 "private native freshness diagnostic changes only permitted stale ages");
             const string startupMarker = "runtimeDir=D:\\release\\.";
+            foreach (var wait in new[] { "fence", "queue" })
+                Require(KharvoxRunner.AnalyzeStartupLog(startupMarker + "\n[KHARVOX][XR] copy "
+                        + wait + " wait failed -4", startupMarker) == KharvoxRunner.StartupState.DeviceLost,
+                    "detect GPU loss at XR copy " + wait + " wait without a later submit");
             Require(KharvoxRunner.AnalyzeStartupLog(
                     "[KHARVOX] " + startupMarker + "\n[KHARVOX][XR] Frame 120 stable mode=PROJECTION result=0",
                     startupMarker) == KharvoxRunner.StartupState.Healthy,
@@ -1161,10 +1169,6 @@ internal static class SelfTest
         using var sha = System.Security.Cryptography.SHA256.Create();
         File.WriteAllLines(Path.Combine(runtime, "native_sfs_build.txt"), new[] {
             "KHARVOX_NATIVE_SFS_1", BitConverter.ToString(sha.ComputeHash(File.ReadAllBytes(layer))).Replace("-", "") });
-        var licenses = Path.Combine(runtime, "sfs-compiler-licenses");
-        Directory.CreateDirectory(licenses);
-        foreach (var name in new[] { "SPIRV-Cross.txt", "glslang.txt", "SPIRV-Tools.txt" })
-            File.WriteAllText(Path.Combine(licenses, name), "Test fixture");
         bool rejected = false;
         try { VulkanSfs.EnsureAvailable(runtime); } catch (InvalidOperationException) { rejected = true; }
         Require(rejected, "SFS package without local profile rejected");

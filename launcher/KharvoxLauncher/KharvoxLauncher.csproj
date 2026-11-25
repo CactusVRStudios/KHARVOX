@@ -16,9 +16,9 @@
     <AssemblyProduct>KHARVOX</AssemblyProduct>
     <AssemblyDescription>An independent VR compatibility framework</AssemblyDescription>
     <Description>An independent VR compatibility framework</Description>
-    <Version>1.4.2</Version>
-    <FileVersion>1.4.2.1420</FileVersion>
-    <InformationalVersion>1.4b</InformationalVersion>
+    <Version>1.5.0</Version>
+    <FileVersion>1.5.0.1510</FileVersion>
+    <InformationalVersion>1.5</InformationalVersion>
     <ApplicationIcon>..\..\assets\branding\kharvox.ico</ApplicationIcon>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
@@ -63,6 +63,9 @@
     <EmbeddedResource Include="..\..\third-party\pocketmod\LICENSE.txt"><LogicalName>Kharvox.Licenses.Pocketmod</LogicalName></EmbeddedResource>
     <EmbeddedResource Include="..\..\LICENSE.txt"><LogicalName>Kharvox.Licenses.KHARVOX</LogicalName></EmbeddedResource>
     <EmbeddedResource Include="..\..\Docs\THIRD_PARTY_NOTICES.txt"><LogicalName>Kharvox.Licenses.Notices</LogicalName></EmbeddedResource>
+    <EmbeddedResource Include="..\..\THIRD_PARTY_NOTICES.md"><LogicalName>Kharvox.Licenses.ThirdParty</LogicalName></EmbeddedResource>
+    <EmbeddedResource Include="..\..\third-party\sfs-compiler-licenses\README.md"><LogicalName>Kharvox.Licenses.SFSCompiler</LogicalName></EmbeddedResource>
+    <EmbeddedResource Include="..\..\third-party\sfs-compiler-licenses\*.txt"><LogicalName>Kharvox.Licenses.%(Filename)</LogicalName></EmbeddedResource>
     <EmbeddedResource Include="..\..\third-party\openxr-sdk\LICENSE"><LogicalName>Kharvox.Licenses.OpenXR</LogicalName></EmbeddedResource>
     <EmbeddedResource Include="..\..\third-party\vulkan-headers\LICENSE.txt"><LogicalName>Kharvox.Licenses.Vulkan</LogicalName></EmbeddedResource>
     <EmbeddedResource Include="..\..\third-party\fsr1\LICENSE"><LogicalName>Kharvox.Licenses.FSR1</LogicalName></EmbeddedResource>

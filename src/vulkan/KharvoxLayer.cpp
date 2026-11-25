@@ -22,6 +22,7 @@
 #include "../fsr/Fsr1Policy.h"
 #include "DispatchMemberLookup.h"
 #include "IndependentSurface.h"
+#include "StartupQueueFence.h"
 #include "IndependentEngineSize.h"
 #include "CoreSurfaceWindow.h"
 #include "../openxr/RuntimeVulkanDispatch.h"
@@ -74,6 +75,7 @@ float configuredRenderScale() {
 }
 
 struct InstanceDispatch {
+    bool hasProperties2{};
     VkInstance instance{};
     PFN_vkGetInstanceProcAddr gipa{};
     PFN_vkDestroyInstance destroy{};
@@ -92,6 +94,8 @@ struct InstanceDispatch {
     bool runtimeAuxiliary{};
 };
 struct DeviceDispatch {
+    VkFence startupQueueFence{};
+    PFN_vkGetQueueCheckpointDataNV getCheckpoints{};
     VkDevice device{};
     VkPhysicalDevice physical{};
     bool independentSurface{};
@@ -209,6 +213,20 @@ std::vector<RankedBaseline> rankedBaselines;
 
 void logLine(const std::string& text, bool operational = false) {
     kharvox::writeRuntimeLog("[KHARVOX]", text, operational);
+}
+
+void reportLostQueue(const DeviceDispatch& device,VkQueue queue){
+    if(!device.getCheckpoints)return;
+    std::lock_guard<std::recursive_mutex> lock(queueAccessMutex);
+    uint32_t count{};
+    device.getCheckpoints(queue,&count,nullptr);
+    std::vector<VkCheckpointDataNV> data(count,{VK_STRUCTURE_TYPE_CHECKPOINT_DATA_NV});
+    if(count)device.getCheckpoints(queue,&count,data.data());
+    logLine("[RTX50-GPU] lost queue checkpoints="+std::to_string(count),true);
+    for(uint32_t i=0;i<count;++i){
+        logLine("[RTX50-GPU] reached stage="+std::to_string(data[i].stage)
+            +" marker="+std::to_string(reinterpret_cast<uintptr_t>(data[i].pCheckpointMarker)),true);
+    }
 }
 
 bool extendedLoggingEnabled() {
@@ -754,7 +772,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkNegotiateLoaderLayerInterfaceVersion(VkNegotiat
         return VK_ERROR_INITIALIZATION_FAILED;
     }
     KharvoxCameraInstallDiagnosticHook();
-    logLine("Layer loaded build=2026.09.04-native-frame-inputs-r139 runtimeDir=" + kharvox::runtimePathA("."), true);
+    logLine("Layer loaded build=1.5.0.1510 runtimeDir=" + kharvox::runtimePathA("."), true);
     logLine("Loader negotiation successful"); return VK_SUCCESS;
 }
 
@@ -957,7 +975,10 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateInstance(const VkInstanceCreateInfo* ci,c
         logLine("[INDEPENDENT-SURFACE] headset recommendation="+std::to_string(eyeWidth)+"x"+std::to_string(eyeHeight)+" source="+std::to_string(sourceExtent.width)+"x"+std::to_string(sourceExtent.height)+" scale="+std::to_string(configuredRenderScale())+" desktopIndependent="+(coreSurface?"no; real window matches source":"yes"));
     }
     VkInstanceCreateInfo modified=*ci;    modified.enabledExtensionCount=uint32_t(enabled.size());modified.ppEnabledExtensionNames=enabled.data();VkResult r=VK_ERROR_INITIALIZATION_FAILED;VkResult mediatedVk=VK_ERROR_INITIALIZATION_FAILED;if(KharvoxXRCreateVulkanInstance(nextGipa,&modified,a,out,&mediatedVk))r=mediatedVk;else r=fn?fn(&modified,a,out):VK_ERROR_INITIALIZATION_FAILED;
-    if(r==VK_SUCCESS){InstanceDispatch d{};d.independentSurface=independent;d.coreSurface=coreSurface;d.sourceExtent=sourceExtent;d.surfaceCaps=reinterpret_cast<PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR>(nextGipa(*out,"vkGetPhysicalDeviceSurfaceCapabilitiesKHR"));d.surfaceCaps2=reinterpret_cast<PFN_vkGetPhysicalDeviceSurfaceCapabilities2KHR>(nextGipa(*out,"vkGetPhysicalDeviceSurfaceCapabilities2KHR"));
+    if(r==VK_SUCCESS){InstanceDispatch d{};
+        d.hasProperties2=(ci->pApplicationInfo && ci->pApplicationInfo->apiVersion>=VK_API_VERSION_1_1) ||
+            std::any_of(enabled.begin(),enabled.end(),[](const char* ext){return !std::strcmp(ext,VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);});
+        d.independentSurface=independent;d.coreSurface=coreSurface;d.sourceExtent=sourceExtent;d.surfaceCaps=reinterpret_cast<PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR>(nextGipa(*out,"vkGetPhysicalDeviceSurfaceCapabilitiesKHR"));d.surfaceCaps2=reinterpret_cast<PFN_vkGetPhysicalDeviceSurfaceCapabilities2KHR>(nextGipa(*out,"vkGetPhysicalDeviceSurfaceCapabilities2KHR"));
         d.destroySurface=reinterpret_cast<PFN_vkDestroySurfaceKHR>(nextGipa(*out,"vkDestroySurfaceKHR"));
         d.instance=*out;d.gipa=nextGipa;d.destroy=reinterpret_cast<PFN_vkDestroyInstance>(nextGipa(*out,"vkDestroyInstance"));d.createDevice=reinterpret_cast<PFN_vkCreateDevice>(nextGipa(*out,"vkCreateDevice"));d.createWin32Surface=reinterpret_cast<PFN_vkCreateWin32SurfaceKHR>(nextGipa(*out,"vkCreateWin32SurfaceKHR"));d.getPhysicalDeviceProperties=reinterpret_cast<PFN_vkGetPhysicalDeviceProperties>(nextGipa(*out,"vkGetPhysicalDeviceProperties"));d.enumerateDeviceExtensionProperties=reinterpret_cast<PFN_vkEnumerateDeviceExtensionProperties>(nextGipa(*out,"vkEnumerateDeviceExtensionProperties"));d.getPhysicalDeviceFeatures2=reinterpret_cast<PFN_vkGetPhysicalDeviceFeatures2>(nextGipa(*out,"vkGetPhysicalDeviceFeatures2"));d.getPhysicalDeviceQueueFamilyProperties=reinterpret_cast<PFN_vkGetPhysicalDeviceQueueFamilyProperties>(nextGipa(*out,"vkGetPhysicalDeviceQueueFamilyProperties"));{std::lock_guard<std::mutex>l(stateMutex);instances[key(*out)]=d;}logLine("[VK-STARTUP] instance created handle="+std::to_string(reinterpret_cast<uintptr_t>(*out))+" nextGIPA="+std::to_string(reinterpret_cast<uintptr_t>(nextGipa)),true);logLine("Instance created");KharvoxXRInitialize(*out);}else {logLine("[VK-STARTUP] instance creation failed result="+std::to_string(r),true);stopVulkanStartup("Vulkan/OpenXR instance initialization failed. See the KHARVOX log in %TEMP%.");} return r;
 }
@@ -1066,6 +1087,8 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateDevice(VkPhysicalDevice p,const VkDeviceC
        physicalDispatch.sourceExtent.height>startupProperties.limits.maxImageDimension2D)
         stopVulkanStartup("Render Scale is too high for this GPU's maximum image size.");
     VkPhysicalDeviceMultiviewFeatures sfsMultiview{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTIVIEW_FEATURES};
+    const bool rtx50=startupProperties.vendorID==0x10de && std::strstr(startupProperties.deviceName,"GeForce RTX 50");
+    bool enableCheckpoints=false;
     VkPhysicalDeviceMultiviewFeatures runtimeSfsMultiview{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTIVIEW_FEATURES};
     if(kharvox::sfs::nativeProbeEnabled()){
         auto query=physicalDispatch.getPhysicalDeviceFeatures2;
@@ -1077,6 +1100,18 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateDevice(VkPhysicalDevice p,const VkDeviceC
         runtimeSfsMultiview=sfsMultiview;sfsMultiview.pNext=const_cast<void*>(modified.pNext);runtimeSfsMultiview.pNext=const_cast<void*>(runtimeModified.pNext);
         modified.pNext=&sfsMultiview;runtimeModified.pNext=&runtimeSfsMultiview;
         addExtension(VK_KHR_MULTIVIEW_EXTENSION_NAME,"SFS");
+        if(rtx50 && extendedLoggingEnabled() && physicalDispatch.hasProperties2 && physicalDispatch.enumerateDeviceExtensionProperties){
+            uint32_t count{};
+            auto enumerate=physicalDispatch.enumerateDeviceExtensionProperties;
+            if(enumerate(p,nullptr,&count,nullptr)==VK_SUCCESS && count){
+                std::vector<VkExtensionProperties> available(count);
+                if(enumerate(p,nullptr,&count,available.data())==VK_SUCCESS)
+                    enableCheckpoints=std::any_of(available.begin(),available.begin()+count,[](const auto& e){
+                        return !std::strcmp(e.extensionName,VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME);
+                    });
+            }
+            if(enableCheckpoints)addExtension(VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME,"RTX 50 startup diagnostics");
+        }
         modified.enabledExtensionCount=runtimeModified.enabledExtensionCount=uint32_t(enabled.size());modified.ppEnabledExtensionNames=runtimeModified.ppEnabledExtensionNames=enabled.data();
     }
     KharvoxXRPreparePhysicalDeviceBinding(p);logLine("Preserving layered physical device for downstream vkCreateDevice; XR binding keeps runtime physical");
@@ -1091,6 +1126,20 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateDevice(VkPhysicalDevice p,const VkDeviceC
       LOAD(xr.createImageView,vkCreateImageView);LOAD(xr.destroyImageView,vkDestroyImageView);LOAD(xr.createSampler,vkCreateSampler);LOAD(xr.destroySampler,vkDestroySampler);LOAD(xr.createShaderModule,vkCreateShaderModule);LOAD(xr.destroyShaderModule,vkDestroyShaderModule);LOAD(xr.createDescriptorSetLayout,vkCreateDescriptorSetLayout);LOAD(xr.destroyDescriptorSetLayout,vkDestroyDescriptorSetLayout);LOAD(xr.createDescriptorPool,vkCreateDescriptorPool);LOAD(xr.destroyDescriptorPool,vkDestroyDescriptorPool);LOAD(xr.allocateDescriptorSets,vkAllocateDescriptorSets);LOAD(xr.updateDescriptorSets,vkUpdateDescriptorSets);LOAD(xr.createPipelineLayout,vkCreatePipelineLayout);LOAD(xr.destroyPipelineLayout,vkDestroyPipelineLayout);LOAD(xr.createComputePipelines,vkCreateComputePipelines);LOAD(xr.createGraphicsPipelines,vkCreateGraphicsPipelines);LOAD(xr.destroyPipeline,vkDestroyPipeline);LOAD(xr.cmdBindPipeline,vkCmdBindPipeline);LOAD(xr.cmdBindDescriptorSets,vkCmdBindDescriptorSets);LOAD(xr.cmdPushConstants,vkCmdPushConstants);LOAD(xr.cmdDispatch,vkCmdDispatch);LOAD(xr.createRenderPass,vkCreateRenderPass);LOAD(xr.destroyRenderPass,vkDestroyRenderPass);LOAD(xr.createFramebuffer,vkCreateFramebuffer);LOAD(xr.destroyFramebuffer,vkDestroyFramebuffer);LOAD(xr.cmdBeginRenderPass,vkCmdBeginRenderPass);LOAD(xr.cmdEndRenderPass,vkCmdEndRenderPass);LOAD(xr.cmdBindVertexBuffers,vkCmdBindVertexBuffers);LOAD(xr.cmdBindIndexBuffer,vkCmdBindIndexBuffer);LOAD(xr.cmdDrawIndexed,vkCmdDrawIndexed);LOAD(xr.cmdSetViewport,vkCmdSetViewport);LOAD(xr.cmdSetScissor,vkCmdSetScissor);LOAD(xr.createSemaphore,vkCreateSemaphore);LOAD(xr.destroySemaphore,vkDestroySemaphore);LOAD(xr.createFence,vkCreateFence);LOAD(xr.destroyFence,vkDestroyFence);LOAD(xr.resetFences,vkResetFences);LOAD(xr.waitForFences,vkWaitForFences);LOAD(xr.queueSubmit,vkQueueSubmit);LOAD(xr.queueWaitIdle,vkQueueWaitIdle);
       {auto vulkan=GetModuleHandleW(L"vulkan-1.dll");d.xr.getPhysicalDeviceMemoryProperties=reinterpret_cast<PFN_vkGetPhysicalDeviceMemoryProperties>(vulkan?GetProcAddress(vulkan,"vkGetPhysicalDeviceMemoryProperties"):nullptr);d.xr.getPhysicalDeviceProperties=reinterpret_cast<PFN_vkGetPhysicalDeviceProperties>(vulkan?GetProcAddress(vulkan,"vkGetPhysicalDeviceProperties"):nullptr);d.xr.getPhysicalDeviceQueueFamilyProperties=reinterpret_cast<PFN_vkGetPhysicalDeviceQueueFamilyProperties>(vulkan?GetProcAddress(vulkan,"vkGetPhysicalDeviceQueueFamilyProperties"):nullptr);}
 #undef LOAD
+      PFN_vkCmdSetCheckpointNV setCheckpoint{};
+      if(enableCheckpoints){
+          d.getCheckpoints=reinterpret_cast<PFN_vkGetQueueCheckpointDataNV>(nextGdpa(*out,"vkGetQueueCheckpointDataNV"));
+          if(d.getCheckpoints)setCheckpoint=reinterpret_cast<PFN_vkCmdSetCheckpointNV>(nextGdpa(*out,"vkCmdSetCheckpointNV"));
+      }
+      if(rtx50
+          && d.xr.createFence && d.xr.destroyFence && d.submit && d.xr.waitForFences && d.xr.resetFences){
+          VkFenceCreateInfo info{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+          info.flags=VK_FENCE_CREATE_SIGNALED_BIT;
+          VkFence fence{};
+          const auto created=d.xr.createFence(*out,&info,nullptr,&fence);
+          if(created==VK_SUCCESS)d.startupQueueFence=fence;
+          logLine("[RTX50-QUEUE] startup fence create result="+std::to_string(created),true);
+      }
       {std::lock_guard<std::mutex>l(stateMutex);devices[key(*out)]=d;}logLine("Device created");
       if(kharvox::sfs::nativeProbeEnabled()){
           logLine("[SFS] querying downstream memory properties");
@@ -1100,7 +1149,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateDevice(VkPhysicalDevice p,const VkDeviceC
           memoryProperties(p,&memory);logLine("[SFS] initializing native resource state");
           // Keep HUD, hand-depth and resource-lifetime observers in the chain.
           // deviceProcBase forwards to the driver without re-entering SFS.
-          if(!kharvox::sfs::initialize(*out,p,deviceProcBase,memory))stopVulkanStartup("Native SFS probe initialization failed");
+          if(!kharvox::sfs::initialize(*out,startupProperties,deviceProcBase,memory,setCheckpoint))stopVulkanStartup("Native SFS probe initialization failed");
           if(kharvox::sfs::sourceRingRequested()){
               VkPhysicalDeviceProperties properties{};physicalDispatch.getPhysicalDeviceProperties(p,&properties);
               if(properties.limits.maxImageArrayLayers<2)stopVulkanStartup("SFS source ring requires two-layer Vulkan images.");
@@ -1116,9 +1165,9 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateDevice(VkPhysicalDevice p,const VkDeviceC
               if(!kharvox::sfs::configureSourceRing(*out,deviceProcBase,memory,acquisitionQueue,lockQueueAccess,unlockQueueAccess))stopVulkanStartup("SFS source ring initialization failed");
           }
       }
-      KharvoxXRSetQueueAccessCallbacks(lockQueueAccess,unlockQueueAccess);KharvoxXRSetDevice(p,*out,d.xr);kharvox::native::setQueueAccessCallbacks(lockQueueAccess,unlockQueueAccess);kharvox::native::setDevice(physicalDispatch.instance,p,*out,nextGdpa,nextGipa);}else {logLine("[VK-STARTUP] device creation failed result="+std::to_string(r),true);stopVulkanStartup("Vulkan/OpenXR device initialization failed. Ensure DOOM and the VR runtime use the same GPU. See the KHARVOX log in %TEMP%.");}return r;
+      KharvoxXRSetQueueAccessCallbacks(lockQueueAccess,unlockQueueAccess);KharvoxXRSetDevice(p,*out,d.xr);kharvox::native::setQueueAccessCallbacks(lockQueueAccess,unlockQueueAccess);kharvox::native::setDevice(physicalDispatch.instance,p,*out,nextGdpa,nextGipa,rtx50);}else {logLine("[VK-STARTUP] device creation failed result="+std::to_string(r),true);stopVulkanStartup("Vulkan/OpenXR device initialization failed. Ensure DOOM and the VR runtime use the same GPU. See the KHARVOX log in %TEMP%.");}return r;
 }
-VKAPI_ATTR void VKAPI_CALL vkDestroyDevice(VkDevice d,const VkAllocationCallbacks*a){kharvox::sfs::forgetDevice(d);auto k=key(d);auto s=deviceState(k);if(!s.runtimeAuxiliary){logLine("vkDestroyDevice");kharvox::native::beforeDeviceDestroy(d);KharvoxXRDeviceDestroyed();kharvox::hands::handSceneDeviceDestroyed();kharvox::hudgpu::deviceDestroyed();}kharvox::sfs::shutdown(d);if(s.destroy)s.destroy(d,a);std::lock_guard<std::mutex>l(stateMutex);devices.erase(k);}
+VKAPI_ATTR void VKAPI_CALL vkDestroyDevice(VkDevice d,const VkAllocationCallbacks*a){kharvox::sfs::forgetDevice(d);auto k=key(d);auto s=deviceState(k);if(!s.runtimeAuxiliary){logLine("vkDestroyDevice");kharvox::native::beforeDeviceDestroy(d);KharvoxXRDeviceDestroyed();kharvox::hands::handSceneDeviceDestroyed();kharvox::hudgpu::deviceDestroyed();}kharvox::sfs::shutdown(d);if(s.startupQueueFence)s.xr.destroyFence(d,s.startupQueueFence,nullptr);if(s.destroy)s.destroy(d,a);std::lock_guard<std::mutex>l(stateMutex);devices.erase(k);}
 VKAPI_ATTR void VKAPI_CALL vkGetDeviceQueue(VkDevice d,uint32_t f,uint32_t q,VkQueue*out){auto s=deviceState(key(d));if(out)*out=VK_NULL_HANDLE;if(s.getQueue&&out)s.getQueue(d,f,q,out);std::ostringstream x;x<<"Queue acquired family="<<f<<" index="<<q;logLine(x.str());if(out&&*out){KharvoxXRSetQueue(*out,f,q);kharvox::native::setQueue(*out,f,q);}}
 VKAPI_ATTR void VKAPI_CALL vkGetDeviceQueue2(VkDevice d,const VkDeviceQueueInfo2*i,VkQueue*out){auto s=deviceState(key(d));if(out)*out=VK_NULL_HANDLE;if(s.getQueue2&&out&&i)s.getQueue2(d,i,out);std::ostringstream x;x<<"Queue acquired family="<<(i?i->queueFamilyIndex:0)<<" index="<<(i?i->queueIndex:0);logLine(x.str());if(out&&*out&&i){KharvoxXRSetQueue(*out,i->queueFamilyIndex,i->queueIndex);kharvox::native::setQueue(*out,i->queueFamilyIndex,i->queueIndex);}}
 VKAPI_ATTR VkResult VKAPI_CALL vkCreateSwapchainKHR(VkDevice d,const VkSwapchainCreateInfoKHR*i,const VkAllocationCallbacks*a,VkSwapchainKHR*out){
@@ -1252,13 +1301,13 @@ VKAPI_ATTR VkResult VKAPI_CALL vkQueueSubmit(VkQueue q,uint32_t c,const VkSubmit
     kharvox::native::trace::SubmitScope traceSubmit("engine-submit",q,c,i,f);
     auto s=deviceState(key(q));const auto n=++submitCount;LARGE_INTEGER enter{},returned{};QueryPerformanceCounter(&enter);if(logFrame(n)){std::ostringstream x;x<<"[Submit "<<n<<"] batches="<<c;logLine(x.str());}
     VkResult result=VK_ERROR_DEVICE_LOST;{std::lock_guard<std::recursive_mutex>queueLock(queueAccessMutex);result=s.submit?s.submit(q,c,i,f):VK_ERROR_DEVICE_LOST;kharvox::native::submitted(q,c,i,result);}QueryPerformanceCounter(&returned);
-    const double totalMs=elapsedMilliseconds(enter,returned);if(result==VK_ERROR_DEVICE_LOST)logLine("[DEVICE-LOST] vkQueueSubmit returned VK_ERROR_DEVICE_LOST call="+std::to_string(n));if(extendedLoggingEnabled()&&(traceDiagnosticCall(n)||result!=VK_SUCCESS||totalMs>=10.0)){std::ostringstream x;x<<"[SUBMIT] return call="<<n<<" thread="<<GetCurrentThreadId()<<" queue="<<reinterpret_cast<uint64_t>(q)<<" batches="<<c<<" fence="<<reinterpret_cast<uint64_t>(f)<<" result="<<result<<" totalMs="<<totalMs;logExtended(x.str());}traceSubmit.result(result);return result;
+    const double totalMs=elapsedMilliseconds(enter,returned);if(result==VK_ERROR_DEVICE_LOST){reportLostQueue(s,q);logLine("[DEVICE-LOST] vkQueueSubmit returned VK_ERROR_DEVICE_LOST call="+std::to_string(n));}if(extendedLoggingEnabled()&&(traceDiagnosticCall(n)||result!=VK_SUCCESS||totalMs>=10.0)){std::ostringstream x;x<<"[SUBMIT] return call="<<n<<" thread="<<GetCurrentThreadId()<<" queue="<<reinterpret_cast<uint64_t>(q)<<" batches="<<c<<" fence="<<reinterpret_cast<uint64_t>(f)<<" result="<<result<<" totalMs="<<totalMs;logExtended(x.str());}traceSubmit.result(result);return result;
 }
 VKAPI_ATTR VkResult VKAPI_CALL vkQueueSubmit2(VkQueue q,uint32_t c,const VkSubmitInfo2*i,VkFence f){
     kharvox::native::trace::SubmitScope traceSubmit("engine-submit2",q,c,i,f);
     auto s=deviceState(key(q));const auto n=++submitCount;LARGE_INTEGER enter{},returned{};QueryPerformanceCounter(&enter);if(logFrame(n)){std::ostringstream x;x<<"[Submit2 "<<n<<"] batches="<<c;logLine(x.str());}
     VkResult result=VK_ERROR_DEVICE_LOST;{std::lock_guard<std::recursive_mutex>queueLock(queueAccessMutex);result=s.submit2?s.submit2(q,c,i,f):VK_ERROR_DEVICE_LOST;kharvox::native::submitted2(q,c,i,result);}QueryPerformanceCounter(&returned);
-    const double totalMs=elapsedMilliseconds(enter,returned);if(result==VK_ERROR_DEVICE_LOST)logLine("[DEVICE-LOST] vkQueueSubmit2 returned VK_ERROR_DEVICE_LOST call="+std::to_string(n));if(extendedLoggingEnabled()&&(traceDiagnosticCall(n)||result!=VK_SUCCESS||totalMs>=10.0)){std::ostringstream x;x<<"[SUBMIT2] return call="<<n<<" thread="<<GetCurrentThreadId()<<" queue="<<reinterpret_cast<uint64_t>(q)<<" batches="<<c<<" fence="<<reinterpret_cast<uint64_t>(f)<<" result="<<result<<" totalMs="<<totalMs;logExtended(x.str());}traceSubmit.result(result);return result;
+    const double totalMs=elapsedMilliseconds(enter,returned);if(result==VK_ERROR_DEVICE_LOST){reportLostQueue(s,q);logLine("[DEVICE-LOST] vkQueueSubmit2 returned VK_ERROR_DEVICE_LOST call="+std::to_string(n));}if(extendedLoggingEnabled()&&(traceDiagnosticCall(n)||result!=VK_SUCCESS||totalMs>=10.0)){std::ostringstream x;x<<"[SUBMIT2] return call="<<n<<" thread="<<GetCurrentThreadId()<<" queue="<<reinterpret_cast<uint64_t>(q)<<" batches="<<c<<" fence="<<reinterpret_cast<uint64_t>(f)<<" result="<<result<<" totalMs="<<totalMs;logExtended(x.str());}traceSubmit.result(result);return result;
 }
 VKAPI_ATTR VkResult VKAPI_CALL vkQueuePresentKHR(VkQueue q,const VkPresentInfoKHR*i){
     kharvox::DiagnosticPresentDuration presentDuration;
@@ -1285,6 +1334,28 @@ VKAPI_ATTR VkResult VKAPI_CALL vkQueuePresentKHR(VkQueue q,const VkPresentInfoKH
     }
     const bool sourcePresent=i&&i->swapchainCount&&kharvox::sfs::sourceSwapchain(s.device,i->pSwapchains[0]);
     if(sourcePresent&&(i->swapchainCount!=1||i->pNext))return VK_ERROR_FEATURE_NOT_PRESENT;
+    if(s.startupQueueFence && n<=120){
+        if(n==1 || n==21 || n==120)kharvox::native::logRtx50StartupAa(n);
+        // Wait for earlier work on this presentation queue. The later XR copy
+        // retains the game's original binary semaphore waits and memory dependency.
+        static std::mutex startupFenceMutex;
+        std::lock_guard<std::mutex> guard(startupFenceMutex);
+        const auto prefix="[RTX50-QUEUE] present="+std::to_string(n)+" before-xr ";
+        logLine(prefix+"begin",true);
+        const auto result=kharvox::waitForStartupQueue(s.device,s.startupQueueFence,
+            s.xr.waitForFences,s.xr.resetFences,[&](VkFence fence){
+                std::lock_guard<std::recursive_mutex> queueLock(queueAccessMutex);
+                return s.submit(q,0,nullptr,fence);
+            });
+        if(result==VK_ERROR_DEVICE_LOST)reportLostQueue(s,q);
+        logLine(prefix+"result="+std::to_string(result)
+            +(result==VK_ERROR_DEVICE_LOST?" VK_ERROR_DEVICE_LOST":""),true);
+        if(result==VK_ERROR_DEVICE_LOST){
+            if(i&&i->pResults)std::fill_n(i->pResults,i->swapchainCount,result);
+            tracePresent.result=result;
+            return result;
+        }
+    }
     kharvox::hudgpu::present(n);
     KharvoxCameraCompleteNativeStereoBootstrapAfterRender();
     KharvoxCameraPollDiagnostic();

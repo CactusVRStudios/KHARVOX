@@ -84,6 +84,11 @@ if(BUILD_TESTING AND WIN32)
   add_test(NAME sfs-typed-sampling-gpu COMMAND KharvoxSfsSamplingGpuTests
     "${sfs_fixtures}/sampling.vert.spv" "${sfs_fixtures}/sampling.frag.spv")
   set_tests_properties(sfs-typed-sampling-gpu PROPERTIES TIMEOUT 30)
+  foreach(mode stereo-color stereo-velocity mono-color shared-color)
+    add_test(NAME sfs-rtx50-resolve-${mode}-gpu COMMAND KharvoxSfsSamplingGpuTests
+      "${sfs_fixtures}/sampling.vert.spv" "${sfs_fixtures}/sampling.frag.spv" "resolve-${mode}")
+    set_tests_properties(sfs-rtx50-resolve-${mode}-gpu PROPERTIES TIMEOUT 30)
+  endforeach()
   add_executable(KharvoxSfsRuntimeGpuTests ../../tests/sfs_sampling_gpu_tests.cpp NativeSfs.cpp
     "${sfs_fixtures}/sampling.vert.spv" "${sfs_fixtures}/sampling.frag.spv")
   target_link_libraries(KharvoxSfsRuntimeGpuTests PRIVATE KharvoxSfsCompiler)
@@ -92,6 +97,9 @@ if(BUILD_TESTING AND WIN32)
   add_test(NAME sfs-runtime-gpu COMMAND KharvoxSfsRuntimeGpuTests
     "${sfs_fixtures}/sampling.vert.spv" "${sfs_fixtures}/sampling.frag.spv")
   set_tests_properties(sfs-runtime-gpu PROPERTIES TIMEOUT 30)
+  add_test(NAME sfs-pass-checkpoints-gpu COMMAND KharvoxSfsRuntimeGpuTests
+    "${sfs_fixtures}/sampling.vert.spv" "${sfs_fixtures}/sampling.frag.spv" checkpoints)
+  set_tests_properties(sfs-pass-checkpoints-gpu PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77)
   add_custom_command(OUTPUT "${sfs_fixtures}/affine.frag.spv"
     COMMAND "${KHARVOX_GLSLANG_ROOT}/bin/glslang.exe" -V --target-env vulkan1.1
       "${PROJECT_SOURCE_DIR}/tests/shaders/sfs_affine.frag" -o "${sfs_fixtures}/affine.frag.spv"

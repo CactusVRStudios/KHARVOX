@@ -26,16 +26,17 @@ inline std::vector<StartupControl> nativeStartupControls(bool fresh,bool uncache
  return controls;
 }
 // Shared visual settings, never Native shadow/queue controls in AER.
-inline std::vector<StartupControl> rendererStartupControls(bool native,bool fresh,bool uncached,bool cached,bool disableAsync=false,bool disableAa=false,bool sfs=false){
+inline std::vector<StartupControl> rendererStartupControls(bool native,bool fresh,bool uncached,bool cached,bool disableAsync=false,bool disableAa=false,bool sfs=false,bool rtx50=false){
  if(native)return nativeStartupControls(fresh,uncached,cached,disableAsync,disableAa);
+ // Avoid scheduling DOOM's temporal resolve on the affected SFS startup path.
+ disableAa=disableAa||(sfs&&rtx50);
  auto controls=visualStartupControls(disableAa);
  // Independent of r_antialiasing: registration 0x2327DD, default 1.
  // The history pass at 0x1874673 is skipped when this is zero. Late-bound
  // controller models cannot use camera-only occlusion history reliably.
  // Keep current-frame SSDO, direct shadows and ordinary AER unchanged.
  if(sfs){
-  // SFS renders both eyes in one frame: respect the game's AA selection.
-  // An explicitly enabled debug AA-off override still takes precedence.
+  // In ordinary SFS sessions the game owns the AA selection.
   if(!disableAa)controls.erase(controls.begin());
   controls.push_back({0x672bc30,"r_SSDOTemporalAA","0"});
   // Verified registrations at 0x226436 / 0x2301C6. Disable both flare

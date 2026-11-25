@@ -1,4 +1,5 @@
 #include "../common/DiagnosticLogging.h"
+#include "../common/RuntimeLog.h"
 #include "../common/PoseTrace.h"
 #include "../weapon/WeaponHook.h"
 #include "../weapon/AerDrawModel.h"
@@ -225,23 +226,36 @@ static bool installEngine(bool visualOnly=false){
 }
 static PFN_vkGetDeviceProcAddr traceDeviceNext{};
 static PFN_vkVoidFunction VKAPI_PTR traceDeviceProc(VkDevice device,const char* name){return trace::wrap(name,traceDeviceNext(device,name),true);}
-void setDevice(VkInstance instance,VkPhysicalDevice physical,VkDevice device,PFN_vkGetDeviceProcAddr proc,PFN_vkGetInstanceProcAddr instanceProc){
+void logRtx50StartupAa(uint64_t present){
+ if(rtx50SfsAaOverride.load(std::memory_order_acquire))
+  kharvox::writeRuntimeLog("[RTX50-AA]",std::format("present={} r_antialiasing actual={}",present,shadowAuditValue(0x66dd200,"r_antialiasing")),true);
+}
+void setDevice(VkInstance instance,VkPhysicalDevice physical,VkDevice device,PFN_vkGetDeviceProcAddr proc,PFN_vkGetInstanceProcAddr instanceProc,bool rtx50){
  if(!requested()){
+  const bool sfs=kharvox::sfs::vrEnabled();
+  const bool rtx50Sfs=rtx50 && sfs;
+  rtx50SfsAaOverride.store(rtx50Sfs,std::memory_order_release);
   // Before game queues: install the visual CVar setter and the guarded AER
   // matrix-producer hook. Native stereo replay/quality hooks stay disabled.
-  static const bool visualReady=[](){
-   if(!installEngine(true)){kharvoxnative::log::error("[RENDER-CVAR] AER setter profile/installation failed; visual settings preservation unavailable");return false;}
-   const auto controls=rendererStartupControls(false,false,false,false,false,debugDisableAa(),kharvox::sfs::vrEnabled());
-   const bool ok=initializeStartupControls(true,controls,[](const StartupControl& c,std::string& value){
-    value=shadowAuditValue(c.rva,c.name);return value!="unavailable";
-   },[](const StartupControl& c){return nativeCvarSet(reinterpret_cast<void*>(nativeCvarModule+kharvox::game::rva(c.rva)),c.value,false);
-   },[](const StartupControl& c,const std::string& before,const std::string& after){
-    kharvoxnative::log::info(std::format("[RENDER-CVAR] renderer=AER startup name={} enforced={} before={} actual={} verified={} beforeGameQueue=true",c.name,c.value,before,after,after==c.value));
-   });
-   if(!ok)kharvoxnative::log::error("[RENDER-CVAR] AER startup visual settings readback failed");
-   return ok;
-  }();
-  (void)visualReady;return;
+  static const bool visualReady=installEngine(true);
+  if(!visualReady){
+   kharvoxnative::log::error("[RENDER-CVAR] engine setter installation failed");
+   if(rtx50Sfs)kharvox::writeRuntimeLog("[RTX50-AA]","engine setter unavailable",true);
+   return;
+  }
+  const bool ok=initializeStartupControls(true,protectedRenderControls(),[](const StartupControl& c,std::string& value){
+   value=shadowAuditValue(c.rva,c.name);return value!="unavailable";
+  },[](const StartupControl& c){return nativeCvarSet(reinterpret_cast<void*>(nativeCvarModule+kharvox::game::rva(c.rva)),c.value,false);
+  },[sfs,rtx50Sfs](const StartupControl& c,const std::string& before,const std::string& after){
+   kharvoxnative::log::info(std::format("[RENDER-CVAR] renderer={} startup name={} enforced={} before={} actual={} verified={} beforeGameQueue=true",sfs?"SFS":"AER",c.name,c.value,before,after,after==c.value));
+   if(rtx50Sfs && !std::strcmp(c.name,"r_antialiasing"))
+    kharvox::writeRuntimeLog("[RTX50-AA]",std::format("r_antialiasing before={} actual={} beforeGameQueue=true",before,after),true);
+  });
+  if(!ok){
+   kharvoxnative::log::error("[RENDER-CVAR] startup visual settings readback failed");
+   if(rtx50Sfs)kharvox::writeRuntimeLog("[RTX50-AA]","startup controls verification failed",true);
+  }
+  return;
  }
  auto& v=kharvoxnative::vulkan_state();v.instance=instance;v.physical_device=physical;v.device=device;
  trace::initialize();traceDeviceNext=proc;

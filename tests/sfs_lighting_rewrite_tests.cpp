@@ -8,6 +8,23 @@ using namespace kharvox::sfs;
 static void check(bool b){if(!b)throw std::runtime_error("Lighting rewrite regression");}
 int main(int argc,char** argv){try{
     check(argc==6);
+    for(bool mono:{false,true}){
+        const auto fragment=compileUnblurredSceneColor(mono);
+        unsigned samples=0,bindings=0;
+        bool viewIndex=false;
+        for(size_t i=5;i<fragment.words.size();){
+            const auto* op=&fragment.words[i];
+            const auto length=op[0]>>16;
+            check(length>0&&length<=fragment.words.size()-i);
+            if((op[0]&65535)==88)++samples; // OpImageSampleExplicitLod
+            if((op[0]&65535)==71&&length==4){ // OpDecorate
+                if(op[2]==33){check(op[3]==0||op[3]==2);bindings|=1u<<op[3];}
+                if(op[2]==11&&op[3]==4440)viewIndex=true; // BuiltIn ViewIndex
+            }
+            i+=length;
+        }
+        check(samples==1&&bindings==5&&viewIndex==!mono);
+    }
     for(int i=1;i<6;++i){
         std::ifstream file(argv[i],std::ios::binary|std::ios::ate);check(bool(file));const auto size=file.tellg();check(size>=20&&size%4==0);
         std::vector<uint32_t> words(size_t(size)/4);file.seekg(0);check(bool(file.read(reinterpret_cast<char*>(words.data()),size)));

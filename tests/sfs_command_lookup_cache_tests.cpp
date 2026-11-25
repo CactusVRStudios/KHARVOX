@@ -65,8 +65,10 @@ int main() {
     std::shared_mutex lock;
     std::atomic<bool> stop{false};
     std::atomic<long> mismatches{0}, lookups{0};
+    std::atomic<int> readersStarted{0};
     std::vector<std::thread> readers;
     for (int t = 0; t < 4; ++t) readers.emplace_back([&] {
+        bool firstLookup = true;
         while (!stop.load(std::memory_order_relaxed)) {
             std::shared_lock<std::shared_mutex> guard(lock);
             try {
@@ -77,8 +79,15 @@ int main() {
                 // Legitimate only if the key really is absent right now.
                 if (shared.count(7)) mismatches.fetch_add(1);
             }
+            if (firstLookup) {
+                readersStarted.fetch_add(1);
+                firstLookup = false;
+            }
         }
     });
+    // A fast writer can finish the entire loop before Windows schedules a reader.
+    while (readersStarted.load() != static_cast<int>(readers.size()))
+        std::this_thread::yield();
     for (int i = 0; i < 20000; ++i) {
         std::unique_lock<std::shared_mutex> guard(lock);
         shared.erase(7);

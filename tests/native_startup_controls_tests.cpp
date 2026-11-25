@@ -4,6 +4,15 @@
 using namespace kharvox::native;
 int main(){
  int failures=0,writes=0,reports=0;auto check=[&](bool b){if(!b)++failures;};
+ for(bool sfs:{false,true})for(bool native:{false,true})for(bool manualOff:{false,true}){
+  const auto controls=rendererStartupControls(native,false,false,false,false,manualOff,sfs,true);
+  const auto* aa=nativePresetControl(controls,0x66dd200);
+  const std::string expected=manualOff||(sfs&&!native)?"0":"2";
+  check(aa&&aa->value==expected);
+  check(aa&&setProtectedRenderControl(aa,"6",false,[&](const char* value,bool force){
+   return value==expected&&!force;
+  }));
+ }
  for(bool sfs:{false,true})for(bool native:{false,true})for(bool disableAa:{false,true}){
   const auto profile=rendererStartupControls(native,false,false,false,false,disableAa,sfs);
   const auto* aa=nativePresetControl(profile,0x66dd200);

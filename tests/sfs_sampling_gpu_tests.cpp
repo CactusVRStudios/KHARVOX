@@ -19,6 +19,12 @@
 #ifdef KHARVOX_SFS_TEST_RUNTIME
 static PFN_vkGetDeviceProcAddr downstreamResolver{};
 static uint64_t runtimeResolutions{};
+static PFN_vkCmdSetCheckpointNV driverCheckpoint{};
+static std::vector<uintptr_t> recordedCheckpoints;
+static VKAPI_ATTR void VKAPI_CALL observeCheckpoint(VkCommandBuffer cb,const void* marker){
+    recordedCheckpoints.push_back(reinterpret_cast<uintptr_t>(marker));
+    driverCheckpoint(cb,marker);
+}
 static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL countingResolver(VkDevice device,const char* name){
     ++runtimeResolutions;
     return downstreamResolver(device,name);
@@ -58,6 +64,11 @@ int main(int argc,char** argv){try{
 #endif
 #endif
     check(argc==3||argc==4,"Expected vertex and fragment SPIR-V fixtures");
+    const std::string mode = argc==4 ? argv[3] : "";
+    const bool testResolve = mode.rfind("resolve-", 0)==0;
+    const bool monoResolve = mode=="resolve-mono-color";
+    const bool sharedSource = mode=="resolve-shared-color";
+    const bool readVelocity = mode=="resolve-stereo-velocity";
     auto loader=LoadLibraryW(L"vulkan-1.dll");check(loader,"Vulkan loader unavailable");
     auto gipa=reinterpret_cast<PFN_vkGetInstanceProcAddr>(GetProcAddress(loader,"vkGetInstanceProcAddr"));
     auto createInstance=reinterpret_cast<PFN_vkCreateInstance>(gipa(nullptr,"vkCreateInstance"));
@@ -85,11 +96,28 @@ int main(int argc,char** argv){try{
     VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};features.pNext=&mv;
     vkGetPhysicalDeviceFeatures2(physical,&features);check(mv.multiview,"GPU lacks multiview");
     mv.multiviewGeometryShader=mv.multiviewTessellationShader=VK_FALSE;dci.pNext=&mv;
+#ifdef KHARVOX_SFS_TEST_RUNTIME
+    const char* checkpointExtension=VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME;
+    if(argc==4 && std::string(argv[3])=="checkpoints"){
+        INSTANCE(vkEnumerateDeviceExtensionProperties);
+        uint32_t n{};ok(vkEnumerateDeviceExtensionProperties(physical,nullptr,&n,nullptr));
+        std::vector<VkExtensionProperties> extensions(n);
+        ok(vkEnumerateDeviceExtensionProperties(physical,nullptr,&n,extensions.data()));
+        for(const auto& extension:extensions)if(!std::strcmp(extension.extensionName,checkpointExtension)){
+            dci.enabledExtensionCount=1;dci.ppEnabledExtensionNames=&checkpointExtension;break;
+        }
+        if(!dci.enabledExtensionCount){vkDestroyInstance(instance,nullptr);return 77;}
+    }
+#endif
     VkDevice device{};ok(vkCreateDevice(physical,&dci,nullptr,&device));
 #ifdef KHARVOX_SFS_TEST_RUNTIME
     VkPhysicalDeviceMemoryProperties sfsMemory{};vkGetPhysicalDeviceMemoryProperties(physical,&sfsMemory);
     downstreamResolver=vkGetDeviceProcAddr;
-    check(kharvox::sfs::initialize(device,physical,countingResolver,sfsMemory),"SFS runtime initialization failed");
+    if(dci.enabledExtensionCount){
+        driverCheckpoint=reinterpret_cast<PFN_vkCmdSetCheckpointNV>(vkGetDeviceProcAddr(device,"vkCmdSetCheckpointNV"));
+        check(driverCheckpoint,"Missing enabled NV checkpoint command");
+    }
+    check(kharvox::sfs::initialize(device,props,countingResolver,sfsMemory,driverCheckpoint?observeCheckpoint:nullptr),"SFS runtime initialization failed");
     const auto startupResolutions=runtimeResolutions;
     check(startupResolutions>0,"SFS did not resolve device dispatch");
 #ifdef KHARVOX_SFS_TEST_AFFINE
@@ -135,6 +163,11 @@ int main(int argc,char** argv){try{
     input.imageType=VK_IMAGE_TYPE_2D;input.format=VK_FORMAT_D32_SFLOAT;
     input.extent={8,8,1};input.mipLevels=1;input.arrayLayers=1;input.samples=VK_SAMPLE_COUNT_1_BIT;
     input.usage=VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT|VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    const VkImageAspectFlags aspect = testResolve ? VK_IMAGE_ASPECT_COLOR_BIT : VK_IMAGE_ASPECT_DEPTH_BIT;
+    if(testResolve){
+        input.format=VK_FORMAT_R32G32B32A32_SFLOAT;
+        input.usage=VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    }
     VkImage image{};ok(makeImage(device,input,nullptr,&image,vkCreateImage));
     VkMemoryRequirements req{};vkGetImageMemoryRequirements(device,image,&req);
     VkMemoryAllocateInfo alloc{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};alloc.allocationSize=req.size;
@@ -142,7 +175,7 @@ int main(int argc,char** argv){try{
     VkDeviceMemory imageMemory{};ok(vkAllocateMemory(device,&alloc,nullptr,&imageMemory));ok(vkBindImageMemory(device,image,imageMemory,0));
     VkImageViewCreateInfo original{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};original.image=image;
     original.viewType=VK_IMAGE_VIEW_TYPE_2D;original.format=input.format;
-    original.subresourceRange={VK_IMAGE_ASPECT_DEPTH_BIT,0,1,0,1};
+    original.subresourceRange={aspect,0,1,0,1};
     auto transformed=registry.viewInfo(original);
     VkImageView view{};ok(vkCreateImageView(device,&transformed,nullptr,&view));
 #ifdef KHARVOX_SFS_TEST_RUNTIME
@@ -158,13 +191,22 @@ int main(int argc,char** argv){try{
     attachment.initialLayout=VK_IMAGE_LAYOUT_UNDEFINED;attachment.finalLayout=VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
     VkAttachmentReference reference{0,VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
     VkSubpassDescription subpass{};subpass.pipelineBindPoint=VK_PIPELINE_BIND_POINT_GRAPHICS;subpass.pDepthStencilAttachment=&reference;
+    // Read each real shader output individually. The other MRT location is unused.
+    VkAttachmentReference outputs[2]{{VK_ATTACHMENT_UNUSED,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+                                     {VK_ATTACHMENT_UNUSED,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}};
+    if(testResolve){
+        outputs[readVelocity ? 1 : 0].attachment=0;
+        subpass.pDepthStencilAttachment=nullptr;
+        subpass.colorAttachmentCount=2;
+        subpass.pColorAttachments=outputs;
+    }
     VkRenderPassCreateInfo passInfo{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};passInfo.attachmentCount=1;passInfo.pAttachments=&attachment;passInfo.subpassCount=1;passInfo.pSubpasses=&subpass;
     kharvox::sfs::RenderPassPlan plan(passInfo,true);check(plan.valid(),"Invalid stereo plan");
     VkRenderPass pass{};
 #ifdef KHARVOX_SFS_TEST_RUNTIME
     ok(vkCreateRenderPass(device,&passInfo,nullptr,&pass));
 #else
-    ok(vkCreateRenderPass(device,&plan.info(),nullptr,&pass));
+    ok(vkCreateRenderPass(device,monoResolve ? &passInfo : &plan.info(),nullptr,&pass));
 #endif
     VkFramebufferCreateInfo fbInfo{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};fbInfo.renderPass=pass;fbInfo.attachmentCount=1;fbInfo.pAttachments=&view;fbInfo.width=fbInfo.height=8;fbInfo.layers=1;
     VkFramebuffer framebuffer{};ok(vkCreateFramebuffer(device,&fbInfo,nullptr,&framebuffer));
@@ -177,6 +219,7 @@ int main(int argc,char** argv){try{
     auto makeTexture=[&](bool stereo){
         Texture t;VkImageCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};ci.imageType=VK_IMAGE_TYPE_2D;ci.format=VK_FORMAT_R32_SFLOAT;ci.extent={4,4,1};ci.mipLevels=ci.arrayLayers=1;ci.samples=VK_SAMPLE_COUNT_1_BIT;
         ci.usage=VK_IMAGE_USAGE_SAMPLED_BIT|VK_IMAGE_USAGE_TRANSFER_DST_BIT|(stereo?VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT:0);
+        if(testResolve) ci.format=VK_FORMAT_R32G32B32A32_SFLOAT;
 #ifdef KHARVOX_SFS_TEST_SHADOW
         if(stereo){ci.format=VK_FORMAT_D32_SFLOAT;ci.usage=VK_IMAGE_USAGE_SAMPLED_BIT|VK_IMAGE_USAGE_TRANSFER_DST_BIT|VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;t.aspect=VK_IMAGE_ASPECT_DEPTH_BIT;}
 #endif
@@ -196,6 +239,7 @@ int main(int argc,char** argv){try{
     si.compareEnable=VK_TRUE;si.compareOp=VK_COMPARE_OP_LESS;ok(vkCreateSampler(device,&si,nullptr,&stereoSampler));
 #endif
     VkDescriptorSetLayoutBinding bindings[3]{{0,VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,1,VK_SHADER_STAGE_FRAGMENT_BIT,nullptr},{1,VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,1,VK_SHADER_STAGE_FRAGMENT_BIT,nullptr},{2,VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,1,VK_SHADER_STAGE_VERTEX_BIT,nullptr}};
+    if(testResolve) bindings[0].binding=4;
     VkDescriptorSetLayoutCreateInfo dl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};dl.bindingCount=2;dl.pBindings=bindings;
 #ifdef KHARVOX_SFS_TEST_SHADOW_PROJECTION
     dl.bindingCount=3;
@@ -206,7 +250,8 @@ int main(int argc,char** argv){try{
     VkDescriptorSetAllocateInfo da{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};da.descriptorPool=descriptorPool;da.descriptorSetCount=1;da.pSetLayouts=&layout;
     VkDescriptorSet descriptor{};ok(vkAllocateDescriptorSets(device,&da,&descriptor));
     VkDescriptorImageInfo images[2]{{stereoSampler,stereoTexture.view,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},{sampler,monoTexture.view,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
-    VkWriteDescriptorSet writes[2]{};for(uint32_t i=0;i<2;++i){writes[i].sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;writes[i].dstSet=descriptor;writes[i].dstBinding=i;writes[i].descriptorCount=1;writes[i].descriptorType=VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;writes[i].pImageInfo=&images[i];}vkUpdateDescriptorSets(device,2,writes,0,nullptr);
+    if(sharedSource) images[0]=images[1];
+    VkWriteDescriptorSet writes[2]{};for(uint32_t i=0;i<2;++i){writes[i].sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;writes[i].dstSet=descriptor;writes[i].dstBinding=bindings[i].binding;writes[i].descriptorCount=1;writes[i].descriptorType=VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;writes[i].pImageInfo=&images[i];}vkUpdateDescriptorSets(device,2,writes,0,nullptr);
 #ifdef KHARVOX_SFS_TEST_SHADOW_PROJECTION
     VkBuffer cameraBuffer{};VkDeviceMemory cameraMemory{};
     VkBufferCreateInfo cameraInfo{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};cameraInfo.size=32;cameraInfo.usage=VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
@@ -219,23 +264,32 @@ int main(int argc,char** argv){try{
 #endif
     VkPipelineLayoutCreateInfo pl{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};pl.setLayoutCount=1;pl.pSetLayouts=&layout;
     VkPipelineLayout pipelineLayout{};ok(vkCreatePipelineLayout(device,&pl,nullptr,&pipelineLayout));
-    auto module=[&](const char* path){std::ifstream f(path,std::ios::binary|std::ios::ate);check(bool(f),"Shader fixture missing");auto size=f.tellg();check(size>=20&&size%4==0,"Invalid fixture size");std::vector<uint32_t> words(size_t(size)/4);f.seekg(0);f.read(reinterpret_cast<char*>(words.data()),size);auto compiled=kharvox::sfs::compileStereoShader(words);
+    auto module=[&](const char* path, bool resolveFragment=false){std::ifstream f(path,std::ios::binary|std::ios::ate);check(bool(f),"Shader fixture missing");auto size=f.tellg();check(size>=20&&size%4==0,"Invalid fixture size");std::vector<uint32_t> words(size_t(size)/4);f.seekg(0);f.read(reinterpret_cast<char*>(words.data()),size);auto compiled=resolveFragment?kharvox::sfs::compileSceneColorWithoutVelocity(monoResolve):kharvox::sfs::compileStereoShader(words);
 #ifdef KHARVOX_SFS_TEST_RUNTIME
         compiled.words=words;
 #endif
         VkShaderModuleCreateInfo mi{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};mi.codeSize=compiled.words.size()*4;mi.pCode=compiled.words.data();VkShaderModule m{};ok(vkCreateShaderModule(device,&mi,nullptr,&m));return m;};
-    VkShaderModule vertex=module(argv[1]),fragment=module(argv[2]);
+    VkShaderModule vertex=module(argv[1]),fragment=module(argv[2],testResolve);
     VkPipelineShaderStageCreateInfo stages[2]{};for(auto& stage:stages){stage.sType=VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;stage.pName="main";}stages[0].stage=VK_SHADER_STAGE_VERTEX_BIT;stages[0].module=vertex;stages[1].stage=VK_SHADER_STAGE_FRAGMENT_BIT;stages[1].module=fragment;
     VkPipelineVertexInputStateCreateInfo vi{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};VkPipelineInputAssemblyStateCreateInfo ia{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};ia.topology=VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
     VkViewport viewport{0,0,8,8,0,1};VkRect2D scissor{{0,0},{8,8}};VkPipelineViewportStateCreateInfo vp{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};vp.viewportCount=vp.scissorCount=1;vp.pViewports=&viewport;vp.pScissors=&scissor;
     VkPipelineRasterizationStateCreateInfo raster{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};raster.lineWidth=1;VkPipelineMultisampleStateCreateInfo ms{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};ms.rasterizationSamples=VK_SAMPLE_COUNT_1_BIT;
     VkPipelineDepthStencilStateCreateInfo depth{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};depth.depthTestEnable=depth.depthWriteEnable=VK_TRUE;depth.depthCompareOp=VK_COMPARE_OP_ALWAYS;VkPipelineColorBlendStateCreateInfo blend{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+    VkPipelineColorBlendAttachmentState blendTargets[2]{};
+    if(testResolve){
+        depth.depthTestEnable=depth.depthWriteEnable=VK_FALSE;
+        for(auto& target:blendTargets) target.colorWriteMask=0xf;
+        blend.attachmentCount=2;
+        blend.pAttachments=blendTargets;
+    }
 #ifdef KHARVOX_SFS_TEST_SHADOW_PROJECTION
     raster.depthBiasEnable=shadowPass;depth.depthCompareOp=VK_COMPARE_OP_LESS_OR_EQUAL;
 #endif
     VkGraphicsPipelineCreateInfo pi{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};pi.stageCount=2;pi.pStages=stages;pi.pVertexInputState=&vi;pi.pInputAssemblyState=&ia;pi.pViewportState=&vp;pi.pRasterizationState=&raster;pi.pMultisampleState=&ms;pi.pDepthStencilState=&depth;pi.pColorBlendState=&blend;pi.layout=pipelineLayout;pi.renderPass=pass;
     VkPipeline pipeline{};ok(vkCreateGraphicsPipelines(device,VK_NULL_HANDLE,1,&pi,nullptr,&pipeline));
     VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};bi.size=512;bi.usage=VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    const unsigned outputLayers=monoResolve ? 1u : 2u;
+    if(testResolve) bi.size=outputLayers*8*8*4*sizeof(float);
 #ifdef KHARVOX_SFS_TEST_LIGHTING
     bi.size=768;
 #endif
@@ -252,7 +306,9 @@ int main(int argc,char** argv){try{
         vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,nullptr,0,nullptr,1,&b);
         for(uint32_t eye=0;eye<t.layers;++eye){VkImageSubresourceRange r{t.aspect,0,1,eye,1};
             if(t.aspect==VK_IMAGE_ASPECT_DEPTH_BIT){VkClearDepthStencilValue c{eye?.25f:.75f,0};vkCmdClearDepthStencilImage(command,t.image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,&c,1,&r);}
-            else{VkClearColorValue c{};c.float32[0]=eye?right:left;vkCmdClearColorImage(command,t.image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,&c,1,&r);}}
+            else{VkClearColorValue c{};c.float32[0]=eye?right:left;
+                if(testResolve){c.float32[1]=-1.f;c.float32[2]=2.f;}
+                vkCmdClearColorImage(command,t.image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,&c,1,&r);}}
         b.oldLayout=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;b.newLayout=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;b.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;b.dstAccessMask=VK_ACCESS_SHADER_READ_BIT;
         vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,0,0,nullptr,0,nullptr,1,&b);
     };
@@ -269,9 +325,18 @@ int main(int argc,char** argv){try{
     vkCmdBeginRenderPass(command,&rp,VK_SUBPASS_CONTENTS_INLINE);vkCmdBindPipeline(command,VK_PIPELINE_BIND_POINT_GRAPHICS,pipeline);vkCmdBindDescriptorSets(command,VK_PIPELINE_BIND_POINT_GRAPHICS,pipelineLayout,0,1,&descriptor,0,nullptr);
 #endif
     vkCmdDraw(command,3,1,0,0);vkCmdEndRenderPass(command);
+#ifdef KHARVOX_SFS_TEST_RUNTIME
+    if(driverCheckpoint){
+        const auto count=recordedCheckpoints.size();
+        check(count>=2 && !(recordedCheckpoints[count-2]&1) && recordedCheckpoints.back()==recordedCheckpoints[count-2]+1,
+              "Missing distinct pass-end checkpoint for the bound graphics pipeline");
+    }
+#endif
     VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};barrier.srcAccessMask=VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;barrier.dstAccessMask=VK_ACCESS_TRANSFER_READ_BIT;
-    vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT|VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,1,&barrier,0,nullptr,0,nullptr);
-    VkBufferImageCopy read{};read.imageSubresource={VK_IMAGE_ASPECT_DEPTH_BIT,0,0,2};read.imageExtent={8,8,1};
+    VkPipelineStageFlags writeStages=VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT|VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+    if(testResolve){barrier.srcAccessMask=VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;writeStages=VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;}
+    vkCmdPipelineBarrier(command,writeStages,VK_PIPELINE_STAGE_TRANSFER_BIT,0,1,&barrier,0,nullptr,0,nullptr);
+    VkBufferImageCopy read{};read.imageSubresource={aspect,0,0,outputLayers};read.imageExtent={8,8,1};
     vkCmdCopyImageToBuffer(command,image,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,buffer,1,&read);
 #ifdef KHARVOX_SFS_TEST_LIGHTING
     // Same pipeline, one-layer auxiliary framebuffer: no HMD light/SSDO
@@ -296,7 +361,16 @@ int main(int argc,char** argv){try{
     for(unsigned pixel=128;pixel<192;++pixel)
         check(std::abs(static_cast<float*>(mapped)[pixel]-.383f)<1e-6f,"Mono auxiliary view inherited stereo lighting/projection");
 #endif
-    for(unsigned pixel=0;pixel<128;++pixel){float expected=pixel<64?.375f:.875f;
+    if(testResolve){
+        const float* pixels=static_cast<const float*>(mapped);
+        for(unsigned pixel=0;pixel<64*outputLayers;++pixel){
+            const float red=sharedSource ? .125f : (pixel<64 ? .25f : .75f);
+            const std::array<float,4> expected=readVelocity ? std::array<float,4>{65504.f,1.f,0.f,0.f}
+                                                            : std::array<float,4>{red,0.f,2.f,1.f};
+            for(unsigned channel=0;channel<4;++channel)
+                check(pixels[4*pixel+channel]==expected[channel],"Incorrect RTX50 resolve output");
+        }
+    }else for(unsigned pixel=0;pixel<128;++pixel){float expected=pixel<64?.375f:.875f;
 #ifdef KHARVOX_SFS_TEST_AFFINE
         expected+=pixel<64?.032f:-.032f;
 #endif

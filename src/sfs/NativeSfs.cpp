@@ -17,6 +17,7 @@
 #include "../common/RuntimeLog.h"
 #include "../common/DiagnosticLogging.h"
 #include <windows.h>
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -40,6 +41,9 @@ struct CommandState {
     VkPipeline graphics{};
     struct Descriptor {VkPipelineLayout layout{};VkDescriptorSet set{};std::vector<uint32_t> dynamic;};
     std::vector<Descriptor> descriptors;
+    std::vector<Descriptor> computeDescriptors;
+    std::vector<uint32_t> computeSetOrder;
+    bool computeBindingsInvalidated{};
     CommandBindings bindings;
     PushReplay pushes;
     std::vector<VkImageMemoryBarrier> imageBarriers;
@@ -62,6 +66,12 @@ struct State {
     FrameUniforms renderUniforms;
     uint64_t sourcePoseSamples{};
     bool pending{},completed{true},frameValid{};
+    bool geforceRtx50{};
+    PFN_vkCmdSetCheckpointNV startupCheckpoint{};
+    uint32_t checkpointFrames{};
+    uint32_t nextCheckpoint{};
+    std::unordered_map<VkPipeline,uintptr_t> pipelineMarkers;
+    std::atomic<unsigned> computeRestoreSamples{};
     bool profileTiming{};
     uint64_t profiledFrames{},retireNs{},uploadNs{},maxRetireNs{};
     std::unordered_map<VkShaderModule,std::vector<uint32_t>> shaders;
@@ -123,6 +133,19 @@ template<class T>std::shared_ptr<State> state(T handle){
 // command. Every erase of s->commands below calls CommandLookupCache::invalidate().
 CommandState& commandOf(const std::shared_ptr<State>& s,VkCommandBuffer cb){return CommandLookupCache::find(s.get(),s->commands,cb);}
 
+// The marker is an opaque value, never a pointer into CPU-owned storage.
+void registerCheckpoint(State& s,VkPipeline pipeline,const std::string& shaders,bool graphics){
+    const uintptr_t marker=0x4b48000000000000ULL | (uintptr_t(++s.nextCheckpoint)<<1);
+    s.pipelineMarkers[pipeline]=marker;
+    note("[RTX50-GPU] marker="+std::to_string(marker)+" "+shaders
+        +(graphics?" passEndMarker="+std::to_string(marker+1):""));
+}
+void recordCheckpoint(State& s,VkCommandBuffer cb,VkPipeline pipeline,bool afterPass=false){
+    if(!s.startupCheckpoint)return;
+    auto it=s.pipelineMarkers.find(pipeline);
+    if(it!=s.pipelineMarkers.end())s.startupCheckpoint(cb,reinterpret_cast<const void*>(it->second+uintptr_t(afterPass)));
+}
+
 VkShaderModule compiledModule(const std::shared_ptr<State>& s,VkShaderModule original,uint64_t variant,bool& stereoCompute,bool shadowProjection=false,int indirectEye=-1,bool monoView=false){
     const auto found=s->shaders.find(original);if(found==s->shaders.end())throw std::runtime_error("Untracked game shader module");
     const auto& words=found->second;const auto primary=profileHash(words.data(),uint32_t(words.size()*4));
@@ -141,7 +164,20 @@ VkShaderModule compiledModule(const std::shared_ptr<State>& s,VkShaderModule ori
     options.indirectEye=indirectEye;
     options.monoscopicView=monoView;
     options.vertexProjection=needsHeadsetProjection(input,bool(replacement),shadowProjection);
-    auto shader=compileStereoShader(input,options);
+    const bool colorOnly=s->geforceRtx50 && !replacement && stage==VK_SHADER_STAGE_FRAGMENT_BIT
+        && primary==0x3efef35d8d0ff5aULL && variant==0xba89738522702e28ULL;
+    const bool noAaResolve=s->geforceRtx50 && stage==VK_SHADER_STAGE_FRAGMENT_BIT
+        && primary==0xd75f7da2605fa4c2ULL && variant==0x985d62c4744f1758ULL;
+    CompiledShader shader;
+    if(noAaResolve){
+        shader=compileSceneColorWithoutVelocity(monoView);
+        note("[RTX50-RESOLVE] selected shader="+key+" source=binding4 velocity=disabled");
+    }else if(colorOnly){
+        shader=compileUnblurredSceneColor(monoView);
+        note("[RTX50-COLOR] selected shader="+key);
+    }else{
+        shader=compileStereoShader(input,options);
+    }
     note("shader="+key+" stage="+std::to_string(stage)+" profile="+(replacement?"matched":"generic")+
          " projection="+std::to_string(shader.vertexProjectionApplied)+" screenUi="+std::to_string(shader.screenSpaceUiApplied)+" sharedShadow="+std::to_string(sharedShadow)+" shadowPass="+std::to_string(shadowProjection)+" stereoCompute="+std::to_string(stereoCompute)+
          " clusters="+std::to_string(shader.clusterCorrections)+" world="+std::to_string(shader.worldCorrections)+" refraction="+std::to_string(shader.refractionCorrections)+" temporal="+std::to_string(shader.temporalCorrections)+" ssdo="+std::to_string(shader.ssdoCorrections)+" ssr="+std::to_string(shader.ssrCorrections)+" particleCollision="+std::to_string(shader.particleCollisionApplied));
@@ -249,8 +285,10 @@ VKAPI_ATTR VkResult VKAPI_CALL graphics(VkDevice d,VkPipelineCache cache,uint32_
             }
         }
         auto monoStages=stages;
+        std::string checkpointShaders;
         for(size_t k=0;k<stages.size();++k){auto& stage=stages[k];const auto original=stage.module;
             const auto& code=s->shaders.at(original);const auto variant=profileHash(code.data(),uint32_t(code.size()*4),seed);bool compute{};
+            if(s->startupCheckpoint)checkpointShaders+=" stage"+std::to_string(stage.stage)+"="+shaderKey(profileHash(code.data(),uint32_t(code.size()*4)))+"_"+shaderKey(variant);
             stage.module=compiledModule(s,original,variant,compute,doomShadowProjection(info));
             monoStages[k].module=compiledModule(s,original,variant,compute,doomShadowProjection(info),-1,true);
         }
@@ -259,6 +297,7 @@ VKAPI_ATTR VkResult VKAPI_CALL graphics(VkDevice d,VkPipelineCache cache,uint32_
         if(info.flags&VK_PIPELINE_CREATE_DERIVATIVE_BIT)throw std::runtime_error("SFS derivative pipelines need batch remapping");
         VkResult r;{UnlockedDriverScope unlocked(lock);r=FN(vkCreateGraphicsPipelines)(d,cache,1,&info,a,&out[j]);}if(r!=VK_SUCCESS)return r;
         info.pStages=stages.data();info.renderPass=s->passes.at(info.renderPass);VkPipeline stereo{};{UnlockedDriverScope unlocked(lock);r=FN(vkCreateGraphicsPipelines)(d,cache,1,&info,a,&stereo);}if(r!=VK_SUCCESS){FN(vkDestroyPipeline)(d,out[j],a);out[j]=VK_NULL_HANDLE;return r;}s->stereoPipelines[out[j]]=stereo;
+        if(s->startupCheckpoint)registerCheckpoint(*s,out[j],"graphics"+checkpointShaders,true);
     }return VK_SUCCESS;
 RESULT_END}
 VKAPI_ATTR VkResult VKAPI_CALL compute(VkDevice d,VkPipelineCache cache,uint32_t count,const VkComputePipelineCreateInfo* infos,const VkAllocationCallbacks* a,VkPipeline* out){RESULT_BEGIN
@@ -271,16 +310,18 @@ VKAPI_ATTR VkResult VKAPI_CALL compute(VkDevice d,VkPipelineCache cache,uint32_t
         const bool indirect=stereo&&!loadProfileShader(s->profile,profileHash(code.data(),uint32_t(code.size()*4)),0,VK_SHADER_STAGE_COMPUTE_BIT);
         std::array<VkShaderModule,2> modules{};
         if(indirect)for(int eye=0;eye<2;++eye){bool ignored{};modules[eye]=compiledModule(s,original,0,ignored,false,eye);}
+        const auto checkpointShader=s->startupCheckpoint?shaderKey(profileHash(code.data(),uint32_t(code.size()*4))):std::string{};
         VkResult r;{UnlockedDriverScope unlocked(lock);r=FN(vkCreateComputePipelines)(d,cache,1,&info,a,&out[j]);}if(r!=VK_SUCCESS)return r;
         std::array<VkPipeline,2> eyes{};
         if(indirect)for(int eye=0;eye<2;++eye){info.stage.module=modules[eye];{UnlockedDriverScope unlocked(lock);r=FN(vkCreateComputePipelines)(d,cache,1,&info,a,&eyes[eye]);}
             if(r!=VK_SUCCESS){for(auto p:eyes)if(p)FN(vkDestroyPipeline)(d,p,a);FN(vkDestroyPipeline)(d,out[j],a);out[j]=VK_NULL_HANDLE;return r;}}
         if(indirect)s->indirectPipelines[out[j]]=eyes;
         s->computeStereo[out[j]]=stereo;
+        if(s->startupCheckpoint)registerCheckpoint(*s,out[j],"compute="+checkpointShader,false);
     }return VK_SUCCESS;
 RESULT_END}
-VKAPI_ATTR void VKAPI_CALL destroyPipeline(VkDevice d,VkPipeline pipeline,const VkAllocationCallbacks* a){auto s=state(d);std::unique_lock<std::shared_mutex> lock(s->mutex);auto it=s->stereoPipelines.find(pipeline);if(it!=s->stereoPipelines.end()){FN(vkDestroyPipeline)(d,it->second,a);s->stereoPipelines.erase(it);}auto indirect=s->indirectPipelines.find(pipeline);if(indirect!=s->indirectPipelines.end()){for(auto eye:indirect->second)FN(vkDestroyPipeline)(d,eye,a);s->indirectPipelines.erase(indirect);}s->computeStereo.erase(pipeline);FN(vkDestroyPipeline)(d,pipeline,a);}
-VKAPI_ATTR VkResult VKAPI_CALL beginCommand(VkCommandBuffer cb,const VkCommandBufferBeginInfo* i){try{auto s=state(cb);std::shared_lock<std::shared_mutex> lock(s->mutex);if(i->pInheritanceInfo&&i->pInheritanceInfo->renderPass)return VK_ERROR_FEATURE_NOT_PRESENT;auto& command=commandOf(s,cb);command.stereo=false;command.compute=VK_NULL_HANDLE;command.graphics=VK_NULL_HANDLE;for(auto& descriptor:command.descriptors)descriptor.set=VK_NULL_HANDLE;command.bindings.clear();command.pushes.clear();return FN(vkBeginCommandBuffer)(cb,i);}catch(const std::exception& e){note(e.what());return VK_ERROR_INITIALIZATION_FAILED;}}
+VKAPI_ATTR void VKAPI_CALL destroyPipeline(VkDevice d,VkPipeline pipeline,const VkAllocationCallbacks* a){auto s=state(d);std::unique_lock<std::shared_mutex> lock(s->mutex);auto it=s->stereoPipelines.find(pipeline);if(it!=s->stereoPipelines.end()){FN(vkDestroyPipeline)(d,it->second,a);s->stereoPipelines.erase(it);}auto indirect=s->indirectPipelines.find(pipeline);if(indirect!=s->indirectPipelines.end()){for(auto eye:indirect->second)FN(vkDestroyPipeline)(d,eye,a);s->indirectPipelines.erase(indirect);}s->pipelineMarkers.erase(pipeline);s->computeStereo.erase(pipeline);FN(vkDestroyPipeline)(d,pipeline,a);}
+VKAPI_ATTR VkResult VKAPI_CALL beginCommand(VkCommandBuffer cb,const VkCommandBufferBeginInfo* i){try{auto s=state(cb);std::shared_lock<std::shared_mutex> lock(s->mutex);if(i->pInheritanceInfo&&i->pInheritanceInfo->renderPass)return VK_ERROR_FEATURE_NOT_PRESENT;auto& command=commandOf(s,cb);command.stereo=false;command.compute=VK_NULL_HANDLE;command.graphics=VK_NULL_HANDLE;command.computeSetOrder.clear();command.computeBindingsInvalidated=false;for(auto& descriptor:command.descriptors)descriptor.set=VK_NULL_HANDLE;command.bindings.clear();command.pushes.clear();return FN(vkBeginCommandBuffer)(cb,i);}catch(const std::exception& e){note(e.what());return VK_ERROR_INITIALIZATION_FAILED;}}
 VKAPI_ATTR VkResult VKAPI_CALL allocateCommands(VkDevice d,const VkCommandBufferAllocateInfo* i,VkCommandBuffer* out){RESULT_BEGIN
     auto r=FN(vkAllocateCommandBuffers)(d,i,out);if(r==VK_SUCCESS)for(uint32_t j=0;j<i->commandBufferCount;++j){s->commandPools[out[j]]=i->commandPool;s->commands.try_emplace(out[j]);}return r;
 RESULT_END}
@@ -289,17 +330,45 @@ VKAPI_ATTR void VKAPI_CALL destroyCommandPool(VkDevice d,VkCommandPool pool,cons
 void bindGraphics(const std::shared_ptr<State>& s,VkCommandBuffer cb){
     auto& command=commandOf(s,cb);if(!command.graphics)return;
     auto found=s->stereoPipelines.find(command.graphics);if(found==s->stereoPipelines.end())throw std::runtime_error("Untracked SFS graphics pipeline");
+    recordCheckpoint(*s,cb,command.graphics);
     FN(vkCmdBindPipeline)(cb,VK_PIPELINE_BIND_POINT_GRAPHICS,command.stereo?found->second:command.graphics);
 }
+void restoreComputeBindings(const std::shared_ptr<State>& s,VkCommandBuffer cb,CommandState& command){
+    if(!command.computeBindingsInvalidated)return;
+    command.computeBindingsInvalidated=false;
+    if(s->startupCheckpoint && s->computeRestoreSamples.fetch_add(1,std::memory_order_relaxed)<8)
+        note("[RTX50-GPU] restoring compute state before dispatch sets="+std::to_string(command.computeSetOrder.size()));
+    if(command.compute)FN(vkCmdBindPipeline)(cb,VK_PIPELINE_BIND_POINT_COMPUTE,command.compute);
+    for(auto index:command.computeSetOrder){
+        const auto& binding=command.computeDescriptors[index];
+        FN(vkCmdBindDescriptorSets)(cb,VK_PIPELINE_BIND_POINT_COMPUTE,binding.layout,index,1,&binding.set,
+            uint32_t(binding.dynamic.size()),binding.dynamic.data());
+    }
+}
 VKAPI_ATTR void VKAPI_CALL bindPipeline(VkCommandBuffer cb,VkPipelineBindPoint point,VkPipeline pipeline){COMMAND_BEGIN
-    auto& command=commandOf(s,cb);if(point==VK_PIPELINE_BIND_POINT_COMPUTE){command.compute=pipeline;FN(vkCmdBindPipeline)(cb,point,pipeline);return;}
+    auto& command=commandOf(s,cb);if(point==VK_PIPELINE_BIND_POINT_COMPUTE){
+        command.compute=pipeline;
+        FN(vkCmdBindPipeline)(cb,point,pipeline);return;
+    }
     command.graphics=pipeline;bindGraphics(s,cb);
 COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL bindSets(VkCommandBuffer cb,VkPipelineBindPoint point,VkPipelineLayout layout,uint32_t first,uint32_t count,const VkDescriptorSet* sets,uint32_t dynamicCount,const uint32_t* dynamic){COMMAND_BEGIN
-    auto& descriptors=commandOf(s,cb).descriptors;
-    if(point==VK_PIPELINE_BIND_POINT_GRAPHICS&&descriptors.size()<size_t(first)+count)descriptors.resize(size_t(first)+count);
+    auto& command=commandOf(s,cb);
+    auto& descriptors=point==VK_PIPELINE_BIND_POINT_COMPUTE?command.computeDescriptors:command.descriptors;
+    if(descriptors.size()<size_t(first)+count)descriptors.resize(size_t(first)+count);
     uint32_t offset=0;for(uint32_t j=0;j<count;++j){auto set=sets[j];const auto n=s->setDynamicCounts.at(set);if(n>dynamicCount-offset)throw std::runtime_error("SFS dynamic descriptor offset mismatch");
-        if(point==VK_PIPELINE_BIND_POINT_GRAPHICS){auto& cached=descriptors[first+j];cached.layout=layout;cached.set=set;cached.dynamic.clear();if(n)cached.dynamic.assign(dynamic+offset,dynamic+offset+n);}offset+=n;}
+        auto index=first+j;
+        auto& cached=descriptors[index];cached.layout=layout;cached.set=set;cached.dynamic.clear();if(n)cached.dynamic.assign(dynamic+offset,dynamic+offset+n);
+        if(point==VK_PIPELINE_BIND_POINT_COMPUTE){
+            // Preserve original bind order across incompatible pipeline layouts.
+            auto& order=command.computeSetOrder;
+            if(order.empty()||order.back()!=index){
+                auto old=std::find(order.begin(),order.end(),index);
+                if(old!=order.end())order.erase(old);
+                order.push_back(index);
+            }
+        }
+        offset+=n;}
     if(offset!=dynamicCount)throw std::runtime_error("SFS unexpected dynamic descriptor offsets");FN(vkCmdBindDescriptorSets)(cb,point,layout,first,count,sets,dynamicCount,dynamic);
 COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL bindVertices(VkCommandBuffer cb,uint32_t first,uint32_t count,const VkBuffer* buffers,const VkDeviceSize* offsets){COMMAND_BEGIN
@@ -319,6 +388,7 @@ VKAPI_ATTR void VKAPI_CALL push(VkCommandBuffer cb,VkPipelineLayout layout,VkSha
 COMMAND_END}
 void replayBindings(const std::shared_ptr<State>& s,VkCommandBuffer cb){
     bindGraphics(s,cb);auto& command=commandOf(s,cb);
+    if(command.stereo)command.computeBindingsInvalidated=command.compute || !command.computeSetOrder.empty();
     for(uint32_t index=0;index<command.descriptors.size();++index){const auto& binding=command.descriptors[index];if(binding.set)FN(vkCmdBindDescriptorSets)(cb,VK_PIPELINE_BIND_POINT_GRAPHICS,binding.layout,index,1,&binding.set,uint32_t(binding.dynamic.size()),binding.dynamic.data());}
     command.bindings.replay(s->dispatch,cb);
     command.pushes.replay([&](VkPipelineLayout layout,VkShaderStageFlags flags,uint32_t offset,uint32_t size,const void* values){FN(vkCmdPushConstants)(cb,layout,flags,offset,size,values);});
@@ -326,7 +396,12 @@ void replayBindings(const std::shared_ptr<State>& s,VkCommandBuffer cb){
 VKAPI_ATTR void VKAPI_CALL beginPass(VkCommandBuffer cb,const VkRenderPassBeginInfo* i,VkSubpassContents contents){COMMAND_BEGIN
     auto info=*i;auto& command=commandOf(s,cb);command.stereo=s->framebufferStereo.at(i->framebuffer);if(s->mixedFramebuffers.at(i->framebuffer))s->mixedPasses.fetch_add(1,std::memory_order_relaxed);if(command.stereo)info.renderPass=s->passes.at(i->renderPass);FN(vkCmdBeginRenderPass)(cb,&info,contents);replayBindings(s,cb);
 COMMAND_END}
-VKAPI_ATTR void VKAPI_CALL endPass(VkCommandBuffer cb){COMMAND_BEGIN FN(vkCmdEndRenderPass)(cb);commandOf(s,cb).stereo=false;COMMAND_END}
+VKAPI_ATTR void VKAPI_CALL endPass(VkCommandBuffer cb){COMMAND_BEGIN
+    FN(vkCmdEndRenderPass)(cb);
+    auto& command=commandOf(s,cb);
+    recordCheckpoint(*s,cb,command.graphics,true);
+    command.stereo=false;
+COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL nextPass(VkCommandBuffer cb,VkSubpassContents contents){COMMAND_BEGIN FN(vkCmdNextSubpass)(cb,contents);replayBindings(s,cb);COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL lineWidth(VkCommandBuffer cb,float width){COMMAND_BEGIN
     commandOf(s,cb).bindings.line=width;FN(vkCmdSetLineWidth)(cb,width);
@@ -349,10 +424,12 @@ STENCIL_WRAPPER(stencilWrite,vkCmdSetStencilWriteMask,1)
 STENCIL_WRAPPER(stencilReference,vkCmdSetStencilReference,2)
 #undef STENCIL_WRAPPER
 VKAPI_ATTR void VKAPI_CALL dispatch(VkCommandBuffer cb,uint32_t x,uint32_t y,uint32_t z){COMMAND_BEGIN
-    uint32_t depth{};if(!dispatchDepth(z,s->computeStereo.at(commandOf(s,cb).compute),65535,depth))throw std::runtime_error("Stereo dispatch exceeds limit");FN(vkCmdDispatch)(cb,x,y,depth);
+    auto& command=commandOf(s,cb);restoreComputeBindings(s,cb,command);recordCheckpoint(*s,cb,command.compute);
+    uint32_t depth{};if(!dispatchDepth(z,s->computeStereo.at(command.compute),65535,depth))throw std::runtime_error("Stereo dispatch exceeds limit");FN(vkCmdDispatch)(cb,x,y,depth);
 COMMAND_END}
 VKAPI_ATTR void VKAPI_CALL dispatchIndirect(VkCommandBuffer cb,VkBuffer buffer,VkDeviceSize offset){COMMAND_BEGIN
-    const auto pipeline=commandOf(s,cb).compute;
+    auto& command=commandOf(s,cb);restoreComputeBindings(s,cb,command);
+    const auto pipeline=command.compute;recordCheckpoint(*s,cb,pipeline);
     if(!s->computeStereo.at(pipeline)){
         s->indirectMono.fetch_add(1,std::memory_order_relaxed);
         FN(vkCmdDispatchIndirect)(cb,buffer,offset);return;
@@ -393,9 +470,11 @@ VKAPI_ATTR void VKAPI_CALL uploadImage(VkCommandBuffer cb,VkBuffer buffer,VkImag
 COMMAND_END}
 }
 bool nativeProbeEnabled(){static const bool enabled=[] {char value[8]{};return GetEnvironmentVariableA("KHARVOX_SFS_NATIVE_PROBE",value,8)==1&&value[0]=='1';}();return enabled;}
-bool initialize(VkDevice d,VkPhysicalDevice,PFN_vkGetDeviceProcAddr gdpa,const VkPhysicalDeviceMemoryProperties& memory){
+bool initialize(VkDevice d,const VkPhysicalDeviceProperties& gpu,PFN_vkGetDeviceProcAddr gdpa,const VkPhysicalDeviceMemoryProperties& memory,PFN_vkCmdSetCheckpointNV checkpoint){
     if(!nativeProbeEnabled())return true;
     auto s=std::make_shared<State>();
+    s->startupCheckpoint=checkpoint;
+    s->geforceRtx50=gpu.vendorID==0x10de && std::strstr(gpu.deviceName,"GeForce RTX 50")!=nullptr;
     try{s->device=d;s->dispatch.load(d,gdpa);
         char timing[8]{};s->profileTiming=GetEnvironmentVariableA("KHARVOX_SFS_PROFILE_TIMING",timing,8)==1&&timing[0]=='1';wchar_t path[32768]{};auto n=GetEnvironmentVariableW(L"KHARVOX_SFS_PROFILE",path,32768);if(n&&n<32768)s->profile=path;
         VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};bi.size=sizeof(FrameUniforms);bi.usage=VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;if(FN(vkCreateBuffer)(d,&bi,nullptr,&s->params)!=VK_SUCCESS)return false;
@@ -428,6 +507,7 @@ void prepare(VkDevice d,const native::FramePose& pose,const XrFovf& source){
 void copyCompleted(VkDevice d){if(!vrEnabled())return;auto s=state(d);std::unique_lock<std::shared_mutex> lock(s->mutex);s->completed=true;}
 void beginFrame(VkDevice d,VkSwapchainKHR chain,uint32_t imageIndex){
     if(!vrEnabled())return;auto s=state(d);std::unique_lock<std::shared_mutex> lock(s->mutex);
+    if(s->startupCheckpoint && ++s->checkpointFrames>120)s->startupCheckpoint=nullptr;
     if(s->pending&&s->completed){
     // The prototype shares a uniform buffer across recorded command buffers.
     // Retire all previous readers before writing; a frame ring can replace this

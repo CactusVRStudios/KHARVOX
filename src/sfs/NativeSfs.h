@@ -16,7 +16,7 @@ VkResult presentSource(VkDevice,VkQueue,const VkPresentInfoKHR&,bool);
 void destroySourceSwapchain(VkDevice,VkSwapchainKHR);
 VkImageLayout sourceLayout(VkDevice,VkImage,VkImageLayout);
 bool nativeProbeEnabled();
-bool initialize(VkDevice,VkPhysicalDevice,PFN_vkGetDeviceProcAddr,const VkPhysicalDeviceMemoryProperties&);
+bool initialize(VkDevice,const VkPhysicalDeviceProperties&,PFN_vkGetDeviceProcAddr,const VkPhysicalDeviceMemoryProperties&,PFN_vkCmdSetCheckpointNV=nullptr);
 void shutdown(VkDevice);
 PFN_vkVoidFunction wrapProc(VkDevice d,const char*,PFN_vkVoidFunction);
 void swapchainImages(VkDevice,VkSwapchainKHR,uint32_t,const VkImage*);
@@ -39,7 +39,7 @@ inline VkResult presentSource(VkDevice,VkQueue,const VkPresentInfoKHR&,bool){ret
 inline void destroySourceSwapchain(VkDevice,VkSwapchainKHR){}
 inline VkImageLayout sourceLayout(VkDevice,VkImage,VkImageLayout layout){return layout;}
 inline bool nativeProbeEnabled(){return false;}
-inline bool initialize(VkDevice,VkPhysicalDevice,PFN_vkGetDeviceProcAddr,const VkPhysicalDeviceMemoryProperties&){return true;}
+inline bool initialize(VkDevice,const VkPhysicalDeviceProperties&,PFN_vkGetDeviceProcAddr,const VkPhysicalDeviceMemoryProperties&,PFN_vkCmdSetCheckpointNV=nullptr){return true;}
 inline void shutdown(VkDevice){}
 inline PFN_vkVoidFunction wrapProc(VkDevice d,const char*,PFN_vkVoidFunction next){return next;}
 inline void swapchainImages(VkDevice,VkSwapchainKHR,uint32_t,const VkImage*){}

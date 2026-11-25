@@ -4,14 +4,26 @@ static bool debugDisableAa(){
  char value[8]{};
  return GetEnvironmentVariableA("KHARVOX_DISABLE_AA",value,sizeof(value))==1&&value[0]=='1';
 }
+static std::atomic<bool> rtx50SfsAaOverride{};
+static std::vector<StartupControl> makeProtectedRenderControls(bool rtx50){
+ return rendererStartupControls(requested(),kharvox::rendererDefaults::freshShadows,
+  kharvox::rendererDefaults::uncachedShadows,kharvox::runtimeFileExists(L"native_test_cached_shadows"),
+  kharvox::runtimeFileExists(L"native_test_disable_async_compute"),debugDisableAa(),kharvox::sfs::vrEnabled(),rtx50);
+}
+static const std::vector<StartupControl>& protectedRenderControls(){
+ if(rtx50SfsAaOverride.load(std::memory_order_acquire)){
+  static const auto controls=makeProtectedRenderControls(true);
+  return controls;
+ }
+ static const auto controls=makeProtectedRenderControls(false);
+ return controls;
+}
 static bool(*realFreshShadowSet)(void*,const char*,bool){};
 static uintptr_t freshShadowModule{};
 static std::string shadowAuditValue(uintptr_t rva,const char* expected);
 static bool hookFreshShadowSet(void* object,const char* value,bool force){
  const auto rva=kharvox::game::canonicalRva(reinterpret_cast<uintptr_t>(object)-freshShadowModule);
- static const auto controls=rendererStartupControls(requested(),kharvox::rendererDefaults::freshShadows,
-  kharvox::rendererDefaults::uncachedShadows,kharvox::runtimeFileExists(L"native_test_cached_shadows"),kharvox::runtimeFileExists(L"native_test_disable_async_compute"),debugDisableAa(),kharvox::sfs::vrEnabled());
- const auto* selected=nativePresetControl(controls,rva);
+ const auto* selected=nativePresetControl(protectedRenderControls(),rva);
  if(selected){
   const auto& control=*selected;
   uintptr_t name{};char actual[64]{};const auto length=std::strlen(control.name)+1;

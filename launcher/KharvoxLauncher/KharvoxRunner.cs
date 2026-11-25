@@ -143,7 +143,7 @@ internal sealed class KharvoxLaunchOptions
 
 internal static class KharvoxRunner
 {
-    internal const string BuildId = "2026.11.23-launcher-v1.4b-sleeves";
+    internal const string BuildId = "2026.11.25-launcher-v1.5";
     private const string LayerName = "VK_LAYER_KHARVOX_OPENXR";
     private const string RegistryPath = @"SOFTWARE\Khronos\Vulkan\ImplicitLayers";
     private static readonly CultureInfo Invariant = CultureInfo.InvariantCulture;
@@ -302,8 +302,8 @@ internal static class KharvoxRunner
         using var launchGate = AcquireLaunchGate();
         using var launchState = BeginLaunch();
         EnsureNoRunningDoom();
-        if (FileVersionInfo.GetVersionInfo(dllPath).ProductVersion != "1.4.2")
-            throw new InvalidOperationException("The 1.4b launcher requires its matching 1.4b KharvoxLayer.dll. Extract the complete release into its own folder.");
+        if (FileVersionInfo.GetVersionInfo(dllPath).FileVersion != "1.5.0.1510")
+            throw new InvalidOperationException("KHARVOX 1.5 requires the bundled KharvoxLayer.dll. Extract the complete release into its own folder.");
         using var gameIntro = await VrGameIntroSession.StartAsync(runtimeDir, statusUpdate, disableVrIntro: options.DisableVrIntro).ConfigureAwait(false);
         WriteManifest(manifestPath, dllPath);
         EnsureNativeControllerBindings(options.BackWeapon);
@@ -735,7 +735,7 @@ internal static class KharvoxRunner
                 ? "DOOM exited before a stable VR frame stream was confirmed. Exit code: 0x"
                     + exitCode.GetValueOrDefault().ToString("X8", Invariant) + "."
                 : startup == StartupState.DeviceLost
-                    ? "SteamVR lost the Vulkan device during startup. Restart SteamVR and try once more."
+                    ? "Vulkan reported a GPU device loss during startup (VK_ERROR_DEVICE_LOST). See KHARVOX.log and the Vulkan loader log from the same launch."
                 : startup == StartupState.PresentStreamStalled
                     ? "DOOM's Vulkan present stream stalled during startup. " +
                       "Restart the OpenXR runtime and try once more."
@@ -1047,7 +1047,7 @@ internal static class KharvoxRunner
     {
         foreach (var name in new[] {
             "KHARVOX_EXTENDED_LOGGING", "KHARVOX_SHOW_HANDS",
-            "KHARVOX_HAND_CALIBRATION", "VK_LOADER_DEBUG",
+            "KHARVOX_HAND_CALIBRATION", "VK_LOADER_DEBUG", "DISABLE_RTSS_LAYER",
             "DISABLE_VK_LAYER_VALVE_steam_overlay_1",
             "DISABLE_VK_LAYER_VALVE_steam_fossilize_1",
             "DISABLE_VULKAN_OBS_CAPTURE", "EOS_OVERLAY_DISABLE_VULKAN_WIN64",
@@ -1395,7 +1395,7 @@ internal static class KharvoxRunner
     internal static StartupState AnalyzeStartupLog(string text, string expectedLayerMarker)
     {
         if ((text.Contains("copy submit failed -4") || text.Contains("copy fence wait failed -4")
-                || text.Contains("copy completion failed -4")
+                || text.Contains("copy queue wait failed -4") || text.Contains("copy completion failed -4")
                 || text.Contains("VK_ERROR_DEVICE_LOST")
                 || text.Contains("[SUBMIT] return") && text.Contains("result=-4")
                 || text.Contains("[SUBMIT2] return") && text.Contains("result=-4"))

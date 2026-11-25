@@ -1,6 +1,7 @@
 #include <windows.h>
 #include "../src/sfs/SourceRing.h"
 #include "../src/openxr/CopyGpuTiming.h"
+#include "../src/vulkan/StartupQueueFence.h"
 #ifdef KHARVOX_SFS_RING_RUNTIME
 #include "../src/sfs/NativeSfs.h"
 #endif
@@ -13,6 +14,30 @@
 #include <fstream>
 static void check(bool value,const char* message){if(!value)throw std::runtime_error(message);}
 static void ok(VkResult result){if(result!=VK_SUCCESS)throw std::runtime_error("Vulkan result "+std::to_string(result));}
+#ifdef KHARVOX_SFS_TEST_INDIRECT
+static PFN_vkGetDeviceProcAddr driverProc;
+static PFN_vkCmdBindPipeline driverBind;
+static PFN_vkCmdBindDescriptorSets driverSets;
+static PFN_vkCmdSetCheckpointNV driverMarker;
+static unsigned computeBinds,computeSetBinds,markers;
+static VKAPI_ATTR void VKAPI_CALL observedBind(VkCommandBuffer cb,VkPipelineBindPoint point,VkPipeline pipeline){
+ if(point==VK_PIPELINE_BIND_POINT_COMPUTE)++computeBinds;
+ driverBind(cb,point,pipeline);
+}
+static VKAPI_ATTR void VKAPI_CALL observedSets(VkCommandBuffer cb,VkPipelineBindPoint point,VkPipelineLayout layout,
+ uint32_t first,uint32_t count,const VkDescriptorSet* sets,uint32_t dynamicCount,const uint32_t* offsets){
+ if(point==VK_PIPELINE_BIND_POINT_COMPUTE)++computeSetBinds;
+ driverSets(cb,point,layout,first,count,sets,dynamicCount,offsets);
+}
+static VKAPI_ATTR void VKAPI_CALL observedMarker(VkCommandBuffer cb,const void* marker){
+ ++markers;driverMarker(cb,marker);
+}
+static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL observedProc(VkDevice d,const char* name){
+ if(!std::strcmp(name,"vkCmdBindPipeline"))return reinterpret_cast<PFN_vkVoidFunction>(observedBind);
+ if(!std::strcmp(name,"vkCmdBindDescriptorSets"))return reinterpret_cast<PFN_vkVoidFunction>(observedSets);
+ return driverProc(d,name);
+}
+#endif
 int main(int argc,char** argv){try{
 #ifdef KHARVOX_SFS_RING_RUNTIME
  SetEnvironmentVariableA("KHARVOX_SFS_NATIVE_PROBE","1");
@@ -40,10 +65,31 @@ int main(int argc,char** argv){try{
   multiview.multiviewGeometryShader=VK_FALSE;multiview.multiviewTessellationShader=VK_FALSE;
   deviceInfo.pNext=&multiview;
 #endif
+#ifdef KHARVOX_SFS_TEST_INDIRECT
+ INSTANCE(vkEnumerateDeviceExtensionProperties);
+ uint32_t extensionCount{};ok(vkEnumerateDeviceExtensionProperties(physical,nullptr,&extensionCount,nullptr));
+ std::vector<VkExtensionProperties> extensions(extensionCount);ok(vkEnumerateDeviceExtensionProperties(physical,nullptr,&extensionCount,extensions.data()));
+ const char* markerExtension=VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME;
+ for(const auto& ext:extensions)if(!std::strcmp(ext.extensionName,markerExtension)){
+     deviceInfo.enabledExtensionCount=1;deviceInfo.ppEnabledExtensionNames=&markerExtension;break;
+ }
+#endif
  VkDevice device{};ok(vkCreateDevice(physical,&deviceInfo,nullptr,&device));
 #ifdef KHARVOX_SFS_RING_RUNTIME
  VkPhysicalDeviceMemoryProperties runtimeMemory{};vkGetPhysicalDeviceMemoryProperties(physical,&runtimeMemory);
- check(kharvox::sfs::initialize(device,physical,vkGetDeviceProcAddr,runtimeMemory),"SFS init failed");
+ auto sfsProc=vkGetDeviceProcAddr;
+ PFN_vkCmdSetCheckpointNV marker{};
+#ifdef KHARVOX_SFS_TEST_INDIRECT
+ driverProc=vkGetDeviceProcAddr;
+ driverBind=reinterpret_cast<PFN_vkCmdBindPipeline>(driverProc(device,"vkCmdBindPipeline"));
+ driverSets=reinterpret_cast<PFN_vkCmdBindDescriptorSets>(driverProc(device,"vkCmdBindDescriptorSets"));
+ if(deviceInfo.enabledExtensionCount){
+     driverMarker=reinterpret_cast<PFN_vkCmdSetCheckpointNV>(driverProc(device,"vkCmdSetCheckpointNV"));
+     check(driverMarker,"Missing enabled checkpoint command");marker=observedMarker;
+ }
+ sfsProc=observedProc;
+#endif
+ check(kharvox::sfs::initialize(device,props,sfsProc,runtimeMemory,marker),"SFS init failed");
  auto resolve=[&](const char* name){return kharvox::sfs::wrapProc(device,name,vkGetDeviceProcAddr(device,name));};
 #else
  auto resolve=[&](const char* name){return vkGetDeviceProcAddr(device,name);};
@@ -130,6 +176,12 @@ int main(int argc,char** argv){try{
 #endif
  VkSemaphoreCreateInfo semaphoreInfo{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};VkSemaphore acquired{},rendered{};ok(vkCreateSemaphore(device,&semaphoreInfo,nullptr,&acquired));ok(vkCreateSemaphore(device,&semaphoreInfo,nullptr,&rendered));
  VkFenceCreateInfo fenceInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};VkFence completed{},acquireFence{};ok(vkCreateFence(device,&fenceInfo,nullptr,&completed));ok(vkCreateFence(device,&fenceInfo,nullptr,&acquireFence));
+ VkFence startupFence{};
+ fenceInfo.flags=VK_FENCE_CREATE_SIGNALED_BIT;
+ ok(vkCreateFence(device,&fenceInfo,nullptr,&startupFence));
+ auto startupSubmit=[&](VkFence fence){return vkQueueSubmit(queue,0,nullptr,fence);};
+ auto unexpectedSubmit=[](VkFence){throw std::runtime_error("Pending startup fence reused");return VK_ERROR_UNKNOWN;};
+ check(kharvox::waitForStartupQueue(device,completed,vkWaitForFences,vkResetFences,unexpectedSubmit)==VK_TIMEOUT,"Unsignaled startup marker should be skipped");
  auto present=[&](uint32_t index,bool consumed,uint32_t waits){VkPresentInfoKHR info{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};info.swapchainCount=1;info.pSwapchains=&chain;info.pImageIndices=&index;info.waitSemaphoreCount=waits;info.pWaitSemaphores=waits?&rendered:nullptr;VkResult perImage=VK_NOT_READY;info.pResults=&perImage;ok(ring.present(queue,info,consumed));ok(perImage);};
  VkPhysicalDeviceProperties timingProperties{};vkGetPhysicalDeviceProperties(physical,&timingProperties);
  kharvox::CopyGpuTiming timing;timing.initialize(device,vkGetDeviceProcAddr,timingProperties.limits.timestampPeriod,families[family].timestampValidBits);
@@ -140,6 +192,11 @@ int main(int argc,char** argv){try{
   auto barrier=[&](VkImageLayout oldLayout,VkImageLayout newLayout,VkAccessFlags src,VkAccessFlags dst){VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};b.image=images[index];b.oldLayout=oldLayout;b.newLayout=newLayout;b.srcAccessMask=src;b.dstAccessMask=dst;b.srcQueueFamilyIndex=b.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;b.subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,2};vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,0,0,nullptr,0,nullptr,1,&b);};
 #ifdef KHARVOX_SFS_RING_RUNTIME
   VkClearValue initialClear{};VkRenderPassBeginInfo passBegin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};passBegin.renderPass=pass;passBegin.framebuffer=framebuffers[index];passBegin.renderArea.extent={4,4};passBegin.clearValueCount=1;passBegin.pClearValues=&initialClear;
+#ifdef KHARVOX_SFS_TEST_INDIRECT
+  // DOOM can bind compute state before a pass that SFS converts to multiview.
+  vkCmdBindPipeline(command,VK_PIPELINE_BIND_POINT_COMPUTE,pipeline);
+  vkCmdBindDescriptorSets(command,VK_PIPELINE_BIND_POINT_COMPUTE,pipelineLayout,0,1,&sets[index],0,nullptr);
+#endif
   vkCmdBeginRenderPass(command,&passBegin,VK_SUBPASS_CONTENTS_INLINE);vkCmdEndRenderPass(command);
   barrier(VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,VK_ACCESS_TRANSFER_WRITE_BIT);
 #else
@@ -152,8 +209,15 @@ int main(int argc,char** argv){try{
   // GPU writes the indirect grid. Never map/read the counts back on the CPU.
   const uint32_t counts[4]{frame%4?4u:0u,4,3,0};vkCmdUpdateBuffer(command,indirectBuffer,0,sizeof(counts),counts);
   VkMemoryBarrier countsReady{VK_STRUCTURE_TYPE_MEMORY_BARRIER};countsReady.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;countsReady.dstAccessMask=VK_ACCESS_INDIRECT_COMMAND_READ_BIT;vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,0,1,&countsReady,0,nullptr,0,nullptr);
-  vkCmdBindPipeline(command,VK_PIPELINE_BIND_POINT_COMPUTE,pipeline);vkCmdBindDescriptorSets(command,VK_PIPELINE_BIND_POINT_COMPUTE,pipelineLayout,0,1,&sets[index],0,nullptr);
+  computeBinds=computeSetBinds=0;
+  if(frame%2){
+      vkCmdDispatch(command,0,1,1);
+      check(computeBinds==1 && computeSetBinds==1,"Direct dispatch did not restore the pre-pass bindings");
+  }
   vkCmdDispatchIndirect(command,indirectBuffer,0);
+  // Three binds select the two indirect eye variants and restore the caller's pipeline.
+  check(computeBinds==4 && computeSetBinds==1,"Compute bindings lost across multiview pass");
+  if(driverMarker)check(markers>0,"Missing Vulkan startup checkpoint");
   barrier(VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_LAYOUT_GENERAL,VK_ACCESS_SHADER_WRITE_BIT,VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT);
   // Direct dispatch must still use the original pipeline after the wrapper.
   vkCmdDispatch(command,4,4,1);
@@ -168,6 +232,7 @@ int main(int argc,char** argv){try{
   barrier(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,VK_IMAGE_LAYOUT_GENERAL,VK_ACCESS_TRANSFER_READ_BIT,VK_ACCESS_MEMORY_READ_BIT);
   VkMemoryBarrier host{VK_STRUCTURE_TYPE_MEMORY_BARRIER};host.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;host.dstAccessMask=VK_ACCESS_HOST_READ_BIT;vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&host,0,nullptr,0,nullptr);timing.end(command);ok(vkEndCommandBuffer(command));
   VkPipelineStageFlags stage=VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;VkSubmitInfo draw{VK_STRUCTURE_TYPE_SUBMIT_INFO};draw.waitSemaphoreCount=1;draw.pWaitSemaphores=&acquired;draw.pWaitDstStageMask=&stage;draw.commandBufferCount=1;draw.pCommandBuffers=&command;draw.signalSemaphoreCount=1;draw.pSignalSemaphores=&rendered;ok(vkQueueSubmit(queue,1,&draw,VK_NULL_HANDLE));
+  ok(kharvox::waitForStartupQueue(device,startupFence,vkWaitForFences,vkResetFences,startupSubmit));
   if(frame%2){VkSubmitInfo consume{VK_STRUCTURE_TYPE_SUBMIT_INFO};consume.waitSemaphoreCount=1;consume.pWaitSemaphores=&rendered;consume.pWaitDstStageMask=&stage;ok(vkQueueSubmit(queue,1,&consume,VK_NULL_HANDLE));}
   present(index,frame%2,1);
   VkSubmitInfo finish{VK_STRUCTURE_TYPE_SUBMIT_INFO};ok(vkQueueSubmit(queue,1,&finish,completed));ok(vkWaitForFences(device,1,&completed,VK_TRUE,10000000000ull));ok(vkResetFences(device,1,&completed));
@@ -185,6 +250,7 @@ int main(int argc,char** argv){try{
  chainInfo.oldSwapchain=chain;VkSwapchainKHR replacement{};ok(ring.create(chainInfo,&replacement));check(ring.acquire(chain,0,acquired,VK_NULL_HANDLE,&unavailable)==VK_ERROR_OUT_OF_DATE_KHR,"Retired chain acquired");
  for(auto index:leased)present(index,false,0);
  ok(vkDeviceWaitIdle(device));
+ vkDestroyFence(device,startupFence,nullptr);
 #ifdef KHARVOX_SFS_TEST_INDIRECT
  vkDestroyPipeline(device,pipeline,nullptr);vkDestroyShaderModule(device,shader,nullptr);vkDestroyPipelineLayout(device,pipelineLayout,nullptr);vkDestroyDescriptorPool(device,descriptors,nullptr);vkDestroyDescriptorSetLayout(device,descriptorLayout,nullptr);vkDestroyBuffer(device,indirectBuffer,nullptr);vkFreeMemory(device,indirectMemory,nullptr);
  vkDestroyPipeline(device,sharedPipeline,nullptr);vkDestroyShaderModule(device,sharedShader,nullptr);vkDestroyPipelineLayout(device,sharedPipelineLayout,nullptr);vkDestroyDescriptorSetLayout(device,sharedLayout,nullptr);

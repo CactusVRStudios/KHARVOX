@@ -9,7 +9,7 @@ internal static class VulkanSfs
     internal const string Key = "VULKAN_SFS";
     internal static string Label => "SFS";
     internal static string Description => "SFS is the default renderer. If you encounter rendering problems, use AER as a fallback. The desktop window stays black; use the headset for menus.";
-    internal const string Blocker = "This package does not contain a complete SFS build. Extract the complete KHARVOX 1.0 release or select AER.";
+    internal const string Blocker = "This package does not contain a complete SFS build. Extract the complete KHARVOX release or select AER.";
 
     internal static void EnsureAvailable(string? runtime = null)
     {
@@ -23,10 +23,7 @@ internal static class VulkanSfs
         var hash = BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "");
         if (lines.Length != 2 || lines[0] != "KHARVOX_NATIVE_SFS_1" ||
             !hash.Equals(lines[1], StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException("The SFS build manifest does not match KharvoxLayer.dll. Rebuild or restore the complete SFS test package.");
-        foreach (var name in new[] { "SPIRV-Cross.txt", "glslang.txt", "SPIRV-Tools.txt" })
-            if (!File.Exists(Path.Combine(runtime, "sfs-compiler-licenses", name)))
-                throw new InvalidOperationException("SFS compiler license files are missing from the test package.");
+            throw new InvalidOperationException("The SFS build manifest does not match KharvoxLayer.dll. Extract the complete KHARVOX release.");
         var profile = Path.Combine(runtime, "sfs-profile");
         if (!Directory.Exists(profile) || Directory.GetFiles(profile, "*.spv").Length != 75)
             throw new InvalidOperationException("The local DOOM SFS profile must contain all 75 compiled shaders (sfs-profile).");
